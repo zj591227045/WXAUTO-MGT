@@ -189,6 +189,23 @@ class StatusMonitor:
                 [instance_id]
             )
             
+            # 获取系统资源指标
+            if new_status == InstanceStatus.ONLINE:
+                await self._fetch_system_metrics(instance_id, client)
+                
+                # 记录运行时间
+                start_time = status_result.get("startTime", 0)
+                if start_time > 0:
+                    uptime = now - start_time
+                    self.record_metric(instance_id, MetricType.RESPONSE_TIME, uptime)
+                
+                # 记录消息统计数据
+                msg_stats = status_result.get("messageStats", {})
+                recv_count = msg_stats.get("received", 0)
+                sent_count = msg_stats.get("sent", 0)
+                total_count = recv_count + sent_count
+                self.record_metric(instance_id, MetricType.MESSAGE_COUNT, total_count)
+            
             return status_data
             
         except Exception as e:
@@ -412,13 +429,13 @@ class StatusMonitor:
         Returns:
             List[Dict]: 状态记录列表
         """
-        if limit > 0:
+        if instance_id is not None:
             query = f"SELECT * FROM status_logs WHERE instance_id = ? ORDER BY create_time DESC LIMIT {limit} OFFSET {offset}"
             params = (instance_id,)
         else:
-            query = "SELECT * FROM status_logs ORDER BY create_time DESC LIMIT ? OFFSET ?"
-            params = (limit, offset)
-        
+            query = f"SELECT * FROM status_logs ORDER BY create_time DESC LIMIT {limit} OFFSET {offset}"
+            params = ()
+            
         try:
             rows = await db_manager.fetchall(query, params)
             return [dict(row) for row in rows]
@@ -457,6 +474,30 @@ class StatusMonitor:
         except Exception as e:
             logger.error(f"获取性能指标历史记录失败: {e}")
             return []
+
+    async def _fetch_system_metrics(self, instance_id: str, client: WxAutoApiClient) -> None:
+        """
+        获取系统资源指标
+        
+        Args:
+            instance_id: 实例ID
+            client: API客户端实例
+        """
+        try:
+            # 获取系统资源指标
+            system_metrics = await client.get_system_metrics()
+            
+            # 记录CPU使用率
+            if "cpu_usage" in system_metrics:
+                self.record_metric(instance_id, MetricType.CPU_USAGE, system_metrics["cpu_usage"])
+            
+            # 记录内存使用率
+            if "memory_usage" in system_metrics:
+                self.record_metric(instance_id, MetricType.MEMORY_USAGE, system_metrics["memory_usage"])
+                
+            logger.debug(f"更新实例 {instance_id} 系统指标: CPU={system_metrics.get('cpu_usage', 0)}%, 内存={system_metrics.get('memory_usage', 0)}MB")
+        except Exception as e:
+            logger.error(f"获取系统资源指标失败: {e}")
 
 
 # 创建全局状态监控服务实例

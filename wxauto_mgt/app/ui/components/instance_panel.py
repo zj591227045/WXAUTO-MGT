@@ -152,7 +152,7 @@ class InstanceManagerPanel(QWidget):
         
         # 更新实例状态
         await self._update_instance_status_async()
-
+    
     def _add_instance_by_id(self, instance_id):
         """根据实例ID添加实例到表格"""
         instance_config = config_manager.get_instance_config(instance_id)
@@ -168,7 +168,7 @@ class InstanceManagerPanel(QWidget):
     def _update_status_label(self, count):
         """更新状态标签"""
         self.status_label.setText(f"共 {count} 个实例")
-
+    
     def _update_instance_status(self):
         """更新实例状态信息"""
         import asyncio
@@ -391,7 +391,7 @@ class InstanceManagerPanel(QWidget):
             # 在主线程中执行
             from PySide6.QtCore import QTimer
             QTimer.singleShot(0, show_exception)
-
+    
     def _edit_instance(self, checked=False, instance_id=None):
         """
         编辑实例
@@ -429,14 +429,14 @@ class InstanceManagerPanel(QWidget):
 
     async def _update_instance_async(self, instance_id, updated_data):
         """异步更新实例"""
-        # 这里假设config_manager有update_instance方法
+            # 这里假设config_manager有update_instance方法
         result = await config_manager.update_instance(instance_id, updated_data)
-        
+            
         if result:
             logger.info(f"成功更新实例: {updated_data.get('name')} ({instance_id})")
             self.instance_updated.emit(instance_id)
             QMetaObject.invokeMethod(self, "refresh_instances", 
-                                   Qt.ConnectionType.QueuedConnection)
+                Qt.ConnectionType.QueuedConnection)
         else:
             error_message = f"无法更新实例: {updated_data.get('name')}"
             QMetaObject.invokeMethod(self, "show_error_message", 
@@ -478,24 +478,24 @@ class InstanceManagerPanel(QWidget):
     async def _delete_instance_async(self, instance_id):
         """异步删除实例"""
         result = await config_manager.remove_instance(instance_id)
-        
+            
         if result:
             logger.info(f"成功删除实例: {instance_id}")
             self.instance_removed.emit(instance_id)
             QMetaObject.invokeMethod(self, "refresh_instances", 
-                                   Qt.ConnectionType.QueuedConnection)
+                                    Qt.ConnectionType.QueuedConnection)
         else:
             error_message = f"无法删除实例: {instance_id}"
             QMetaObject.invokeMethod(self, "show_error_message", 
-                                   Qt.ConnectionType.QueuedConnection,
-                                   Q_ARG(str, error_message))
+                                    Qt.ConnectionType.QueuedConnection,
+                                    Q_ARG(str, error_message))
     
     @Slot(str)
     def show_error_message(self, message):
         """显示错误消息"""
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.warning(self, "错误", message)
-
+    
     def _initialize_instance(self, checked=False, instance_id=None):
         """
         初始化实例
@@ -523,8 +523,8 @@ class InstanceManagerPanel(QWidget):
             if not instance_config:
                 logger.error(f"找不到实例配置: {instance_id}")
                 self.show_error_message(f"找不到实例配置: {instance_id}")
-                return
-            
+            return
+        
             # 创建新的API客户端
             base_url = instance_config.get("base_url")
             api_key = instance_config.get("api_key")

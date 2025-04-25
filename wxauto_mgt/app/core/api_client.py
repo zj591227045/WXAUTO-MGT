@@ -189,6 +189,37 @@ class WxAutoApiClient:
             self._connected = False
             raise
     
+    async def get_system_metrics(self) -> Dict:
+        """
+        获取系统资源使用情况
+        
+        Returns:
+            Dict: 系统资源指标，包括CPU和内存使用率
+        """
+        try:
+            # 获取系统资源数据
+            result = await self._request("GET", "system/resources")
+            
+            # 提取数据
+            data = result.get("data", {})
+            cpu_data = data.get("cpu", {})
+            memory_data = data.get("memory", {})
+            
+            # 构建指标字典
+            metrics = {
+                "cpu_usage": cpu_data.get("usage_percent", 0),
+                "memory_usage": memory_data.get("used", 0)  # 使用已用内存量(MB)
+            }
+            
+            logger.debug(f"获取系统资源指标: CPU={metrics['cpu_usage']}%, 内存={metrics['memory_usage']}MB")
+            return metrics
+        except ApiError as e:
+            logger.error(f"获取系统资源指标失败: {e}")
+            return {
+                "cpu_usage": 0,
+                "memory_usage": 0
+            }
+    
     # 消息发送相关接口 --------------------
     
     async def send_message(self, receiver: str, message: str, at_list: Optional[List[str]] = None, 

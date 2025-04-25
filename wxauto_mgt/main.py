@@ -294,7 +294,8 @@ async def main_async():
         
         # 启动Qt主循环
         logger.info("程序已启动")
-        return await loop.run_forever()
+        loop.run_forever()
+        return 0
     except Exception as e:
         logger.exception(f"程序运行出错: {e}")
         return 1

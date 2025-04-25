@@ -908,7 +908,7 @@ class ConfigManager:
         return config
     
     async def add_instance(self, instance_id: str, name: str, base_url: str, 
-                         api_key: str, enabled: bool = True, api_prefix: str = 'api/wechat') -> bool:
+                         api_key: str, enabled: bool = True) -> bool:
         """
         添加WxAuto实例配置
         
@@ -918,21 +918,11 @@ class ConfigManager:
             base_url: API基础URL
             api_key: API密钥
             enabled: 是否启用
-            api_prefix: API路径前缀，默认为'api/wechat'
             
         Returns:
             bool: 是否成功添加
         """
         try:
-            # 验证API密钥
-            if not api_key or not api_key.strip():
-                logger.error(f"添加实例时API密钥为空: {instance_id}")
-                return False
-                
-            # 记录API密钥信息，方便调试
-            masked_key = api_key[:3] + "***" + api_key[-3:] if len(api_key) > 6 else "***"
-            logger.debug(f"准备添加实例 {instance_id}，API密钥: {masked_key}，API前缀: {api_prefix}")
-                
             # 获取当前实例列表
             instances = self.get('instances', [])
             
@@ -945,8 +935,7 @@ class ConfigManager:
                         'name': name,
                         'base_url': base_url,
                         'api_key': api_key,
-                        'enabled': enabled,
-                        'api_prefix': api_prefix
+                        'enabled': enabled
                     }
                     break
             else:
@@ -956,8 +945,7 @@ class ConfigManager:
                     'name': name,
                     'base_url': base_url,
                     'api_key': api_key,
-                    'enabled': enabled,
-                    'api_prefix': api_prefix
+                    'enabled': enabled
                 })
             
             # 更新配置
@@ -966,10 +954,50 @@ class ConfigManager:
             # 保存到数据库
             await self.save_config()
             
-            logger.info(f"已添加/更新实例配置: {instance_id}，API密钥长度: {len(api_key)}，API前缀: {api_prefix}")
+            logger.info(f"已添加/更新实例配置: {instance_id}")
             return True
         except Exception as e:
             logger.error(f"添加实例配置失败: {e}")
+            return False
+    
+    async def update_instance(self, instance_id: str, updated_data: dict) -> bool:
+        """
+        更新WxAuto实例配置
+        
+        Args:
+            instance_id: 实例ID
+            updated_data: 更新的实例数据字典，包含name、base_url、api_key、enabled等字段
+            
+        Returns:
+            bool: 是否成功更新
+        """
+        try:
+            # 获取当前实例列表
+            instances = self.get('instances', [])
+            
+            # 查找并更新实例
+            for i, instance in enumerate(instances):
+                if instance.get('instance_id') == instance_id:
+                    # 更新实例数据，保留原有字段
+                    for key, value in updated_data.items():
+                        instances[i][key] = value
+                    
+                    # 确保实例ID不会被修改
+                    instances[i]['instance_id'] = instance_id
+                    
+                    # 更新配置
+                    self.set('instances', instances)
+                    
+                    # 保存到数据库
+                    await self.save_config()
+                    
+                    logger.info(f"已更新实例配置: {instance_id}")
+                    return True
+            
+            logger.warning(f"未找到待更新的实例: {instance_id}")
+            return False
+        except Exception as e:
+            logger.error(f"更新实例配置失败: {e}")
             return False
     
     async def remove_instance(self, instance_id: str) -> bool:

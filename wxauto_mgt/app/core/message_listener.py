@@ -110,22 +110,29 @@ class MessageListener:
     async def _load_listeners_from_db(self) -> None:
         """从数据库加载监听对象"""
         try:
-            rows = await db_manager.fetchall("SELECT instance_id, who, last_message_time, create_time FROM listeners")
+            # 查询所有监听对象
+            rows = await db_manager.fetchall(
+                "SELECT instance_id, who, last_message_time, create_time FROM listeners"
+            )
             
+            if not rows:
+                logger.info("数据库中没有监听对象")
+                return
+            
+            # 加载到内存
             async with self._lock:
-                self._listeners.clear()
                 for row in rows:
                     instance_id = row['instance_id']
                     wxid = row['who']
-                    last_time = row['last_message_time']
-                    create_time = row['create_time']
+                    key = (instance_id, wxid)
                     
-                    self._listeners[(instance_id, wxid)] = {
-                        'last_time': last_time,
-                        'create_time': create_time
+                    self._listeners[key] = {
+                        'last_time': row['last_message_time'],
+                        'create_time': row['create_time']
                     }
             
             logger.info(f"从数据库加载了 {len(rows)} 个监听对象")
+            
         except Exception as e:
             logger.error(f"从数据库加载监听对象失败: {e}")
     

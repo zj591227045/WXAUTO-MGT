@@ -246,7 +246,7 @@ class MainWindow(QMainWindow):
             # 执行清理操作
             event.accept()
         else:
-            event.ignore()
+            event.ignore() 
 
     def _delayed_config_save(self):
         """延迟执行的配置保存任务"""

@@ -113,5 +113,6 @@ venv.bak/
 
 # Application specific
 config/local_config.json
-data/
+wxauto_mgt/data
+wxauto_mgt/data/backup
 logs/ 
