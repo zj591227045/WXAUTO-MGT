@@ -127,29 +127,31 @@ class MainWindow(QMainWindow):
     
     def _create_tool_bar(self):
         """创建工具栏"""
-        self.tool_bar = QToolBar("工具栏", self)
-        self.tool_bar.setIconSize(QSize(24, 24))
-        self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
+        # 暂时禁用工具栏
+        pass
+        # self.tool_bar = QToolBar("工具栏", self)
+        # self.tool_bar.setIconSize(QSize(24, 24))
+        # self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
         
-        # 添加实例按钮
-        add_instance_action = QAction("添加实例", self)
-        add_instance_action.triggered.connect(self._add_instance)
-        self.tool_bar.addAction(add_instance_action)
+        # # 添加实例按钮
+        # add_instance_action = QAction("添加实例", self)
+        # add_instance_action.triggered.connect(self._add_instance)
+        # self.tool_bar.addAction(add_instance_action)
         
-        # 消息监听按钮
-        messages_action = QAction("消息监听", self)
-        messages_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(1))
-        self.tool_bar.addAction(messages_action)
+        # # 消息监听按钮
+        # messages_action = QAction("消息监听", self)
+        # messages_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(1))
+        # self.tool_bar.addAction(messages_action)
         
-        # 状态监控按钮
-        status_action = QAction("状态监控", self)
-        status_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(2))
-        self.tool_bar.addAction(status_action)
+        # # 状态监控按钮
+        # status_action = QAction("状态监控", self)
+        # status_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(2))
+        # self.tool_bar.addAction(status_action)
         
-        # 设置按钮
-        settings_action = QAction("设置", self)
-        settings_action.triggered.connect(self._open_settings)
-        self.tool_bar.addAction(settings_action)
+        # # 设置按钮
+        # settings_action = QAction("设置", self)
+        # settings_action.triggered.connect(self._open_settings)
+        # self.tool_bar.addAction(settings_action)
     
     def _create_tabs(self):
         """创建功能选项卡"""
