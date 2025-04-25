@@ -283,28 +283,27 @@ class DBManager:
                 await self._connection.execute("PRAGMA synchronous=NORMAL")
                 await self._connection.execute("PRAGMA foreign_keys=ON")
                 self._connection.row_factory = aiosqlite.Row
-            
-            # 检查连接是否有效（不能使用 closed 属性，aiosqlite不支持）
-            try:
-                # 简单查询测试连接是否有效
-                async with self._connection.execute("SELECT 1") as cursor:
-                    await cursor.fetchone()
-            except Exception as e:
-                logger.warning(f"数据库连接无效，重新连接: {e}")
+                self._active_connections = 1
+            else:
+                # 检查连接是否有效
                 try:
-                    await self._connection.close()
-                except:
-                    pass
-                self._connection = await aiosqlite.connect(self._db_path)
-                await self._connection.execute("PRAGMA journal_mode=WAL")
-                await self._connection.execute("PRAGMA synchronous=NORMAL")
-                await self._connection.execute("PRAGMA foreign_keys=ON")
-                self._connection.row_factory = aiosqlite.Row
-                
-            self._active_connections += 1
-            if self._active_connections > self._max_connections:
-                logger.warning(f"活跃连接数较多: {self._active_connections}")
-                
+                    # 简单查询测试连接是否有效
+                    async with self._connection.execute("SELECT 1") as cursor:
+                        await cursor.fetchone()
+                except Exception as e:
+                    logger.warning(f"数据库连接无效，重新连接: {e}")
+                    try:
+                        await self._connection.close()
+                    except:
+                        pass
+                    self._connection = await aiosqlite.connect(self._db_path)
+                    await self._connection.execute("PRAGMA journal_mode=WAL")
+                    await self._connection.execute("PRAGMA synchronous=NORMAL")
+                    await self._connection.execute("PRAGMA foreign_keys=ON")
+                    self._connection.row_factory = aiosqlite.Row
+                    self._active_connections = 1
+            
+            # 我们使用单一连接，不要增加计数
             return self._connection
     
     async def close(self) -> None:

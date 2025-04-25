@@ -146,13 +146,12 @@ class InstanceManagerPanel(QWidget):
             QTimer.singleShot(0, lambda id=instance_id: self._add_instance_by_id(id))
         
         # 更新状态标签
-        QMetaObject.invokeMethod(self, "_update_status_label",
-                               Qt.ConnectionType.QueuedConnection,
-                               Q_ARG(int, len(instances)))
+        QTimer.singleShot(0, lambda: self._update_status_label(len(instances)))
         
         # 更新实例状态
         await self._update_instance_status_async()
     
+    @Slot(str)
     def _add_instance_by_id(self, instance_id):
         """根据实例ID添加实例到表格"""
         instance_config = config_manager.get_instance_config(instance_id)
@@ -340,12 +339,9 @@ class InstanceManagerPanel(QWidget):
                 # 发送实例添加信号
                 self.instance_added.emit(instance_data["instance_id"])
                 
-                # 更新UI
-                QMetaObject.invokeMethod(
-                    self, "_add_instance_by_id",
-                    Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, instance_data["instance_id"])
-                )
+                # 更新UI - 使用QTimer代替QMetaObject.invokeMethod
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, lambda id=instance_data["instance_id"]: self._add_instance_by_id(id))
                 
                 # 在UI上显示成功提示
                 def show_success():
@@ -435,13 +431,10 @@ class InstanceManagerPanel(QWidget):
         if result:
             logger.info(f"成功更新实例: {updated_data.get('name')} ({instance_id})")
             self.instance_updated.emit(instance_id)
-            QMetaObject.invokeMethod(self, "refresh_instances", 
-                Qt.ConnectionType.QueuedConnection)
+            QTimer.singleShot(0, lambda: self.refresh_instances())
         else:
             error_message = f"无法更新实例: {updated_data.get('name')}"
-            QMetaObject.invokeMethod(self, "show_error_message", 
-                                   Qt.ConnectionType.QueuedConnection,
-                                   Q_ARG(str, error_message))
+            QTimer.singleShot(0, lambda: self.show_error_message(error_message))
     
     def _delete_instance(self, checked=False, instance_id=None):
         """
@@ -482,13 +475,10 @@ class InstanceManagerPanel(QWidget):
         if result:
             logger.info(f"成功删除实例: {instance_id}")
             self.instance_removed.emit(instance_id)
-            QMetaObject.invokeMethod(self, "refresh_instances", 
-                                    Qt.ConnectionType.QueuedConnection)
+            QTimer.singleShot(0, lambda: self.refresh_instances())
         else:
             error_message = f"无法删除实例: {instance_id}"
-            QMetaObject.invokeMethod(self, "show_error_message", 
-                                    Qt.ConnectionType.QueuedConnection,
-                                    Q_ARG(str, error_message))
+            QTimer.singleShot(0, lambda: self.show_error_message(error_message))
     
     @Slot(str)
     def show_error_message(self, message):
@@ -552,8 +542,7 @@ class InstanceManagerPanel(QWidget):
             logger.info(f"实例初始化成功: {instance_id}")
             
             # 在主线程更新UI
-            QMetaObject.invokeMethod(self, "refresh_instances", 
-                                   Qt.ConnectionType.QueuedConnection)
+            QTimer.singleShot(0, lambda: self.refresh_instances())
             
             # 执行状态检查
             await self._check_instance_status(instance_id, client)
