@@ -13,6 +13,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, Set
 import json
+import time
 
 # 将项目根目录添加到Python路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -72,8 +73,11 @@ class MessageListenerTester:
                     f"最大监听数={self.listener.max_listeners}, "
                     f"超时时间={self.listener.timeout_minutes}分钟")
         
-        self.monitored_chats: Set[str] = set()  # 记录已监听的聊天
+        self.monitored_chats = set()  # 记录已监听的聊天
+        self.historical_chats = set()  # 记录历史上监听过的所有聊天
+        self.processed_message_ids = set()  # 用于去重
         self.start_time = datetime.now()
+        self.iteration_count = 0  # 迭代计数器
         self.message_stats = {
             "total_unread": 0,
             "total_monitored": 0,
@@ -83,7 +87,7 @@ class MessageListenerTester:
         
     def get_listener_count(self) -> int:
         """获取当前监听器数量"""
-        return len(self.listener._listeners) if hasattr(self.listener, '_listeners') else 0
+        return len(self.listener.listeners) if hasattr(self.listener, 'listeners') else 0
         
     async def run_test(self, duration_minutes: int = 30):
         """
@@ -112,15 +116,15 @@ class MessageListenerTester:
             logger.info("消息监听服务已启动")
             
             end_time = datetime.now() + timedelta(minutes=duration_minutes)
-            iteration_count = 0
+            self.iteration_count = 0
             
             while datetime.now() < end_time:
-                iteration_count += 1
-                logger.info(f"\n=== 开始第 {iteration_count} 次测试迭代 ===")
+                self.iteration_count += 1
+                logger.info(f"\n=== 开始第 {self.iteration_count} 次测试迭代 ===")
                 await self._test_iteration()
                 
                 # 每10次迭代输出一次详细统计
-                if iteration_count % 10 == 0:
+                if self.iteration_count % 10 == 0:
                     await self._print_interim_stats()
                 
                 await asyncio.sleep(5)  # 每5秒执行一次测试循环
@@ -177,13 +181,21 @@ class MessageListenerTester:
                         # 添加新的监听对象
                         logger.info(f"尝试添加新的监听对象: {chat_name}")
                         success = await self.listener.add_listener(
-                            instance_id="test_instance",
-                            wxid=chat_name
+                            chat_name,
+                            save_pic=True,
+                            save_video=True,
+                            save_file=True,
+                            save_voice=True,
+                            parse_url=True
                         )
                         if success:
                             logger.info(f"成功添加新的监听对象: {chat_name}")
                             self.monitored_chats.add(chat_name)
-                            self.message_stats["new_chats_added"] += 1
+                            # 如果这是一个全新的聊天，添加到历史列表
+                            if chat_name not in self.historical_chats:
+                                self.historical_chats.add(chat_name)
+                                self.message_stats["new_chats_added"] += 1
+                            logger.debug(f"历史监听聊天总数更新为: {len(self.historical_chats)}")
                         else:
                             logger.warning(f"添加监听对象失败: {chat_name}")
             else:
@@ -194,14 +206,40 @@ class MessageListenerTester:
             logger.info(f"当前监听对象数量: {listener_count}")
             if listener_count > 0:
                 logger.debug("当前监听列表:")
-                for i, (instance_id, wxid) in enumerate(self.listener._listeners.keys(), 1):
-                    logger.debug(f"  {i}. [{instance_id}] {wxid}")
+                for i, who in enumerate(self.listener.listeners.keys(), 1):
+                    logger.debug(f"  {i}. {who}")
             
             # 3. 获取待处理消息
             pending_messages = await self.listener.get_pending_messages()
             if pending_messages:
-                self.message_stats["total_monitored"] += len(pending_messages)
-                logger.info(f"待处理消息数量: {len(pending_messages)}")
+                # 使用消息ID做去重，只计数新的消息
+                new_message_ids = set()
+                found_new_messages_marker = False
+                
+                for msg in pending_messages:
+                    msg_id = msg.get('message_id')
+                    content = msg.get('content', '')
+                    
+                    # 检查是否包含"以下为新消息"标记
+                    if isinstance(content, str) and "以下为新消息" in content:
+                        found_new_messages_marker = True
+                        self.processed_message_ids.add(msg_id)  # 先标记处理标记消息
+                        continue  # 跳过这条消息本身
+                    
+                    # 如果找到标记后才处理后续消息，或者始终没有找到标记则正常处理
+                    if (found_new_messages_marker or 
+                        not any("以下为新消息" in m.get('content', '') for m in pending_messages)):
+                        if msg_id and msg_id not in self.processed_message_ids:
+                            new_message_ids.add(msg_id)
+                            self.processed_message_ids.add(msg_id)
+                
+                # 只累加新消息的数量
+                new_message_count = len(new_message_ids)
+                if new_message_count > 0:
+                    self.message_stats["total_monitored"] += new_message_count
+                    logger.info(f"待处理消息中有 {new_message_count} 条新消息")
+                
+                logger.info(f"待处理消息总数: {len(pending_messages)}")
                 logger.debug("待处理消息详情:")
                 for i, msg in enumerate(pending_messages[:5], 1):  # 只显示前5条
                     logger.debug(f"消息 {i}:")
@@ -212,17 +250,46 @@ class MessageListenerTester:
             
             # 4. 检查并移除超时的监听对象
             logger.debug("开始检查超时的监听对象...")
-            removed_count = await self.listener._remove_inactive_listeners()
+            # 手动实现超时检查逻辑，因为原始方法可能有问题
+            removed_count = 0
+            current_time = time.time()
+            
+            # 获取当前监听对象列表的副本
+            listeners_copy = list(self.listener.listeners.items())
+            logger.debug(f"当前有 {len(listeners_copy)} 个监听对象")
+            
+            for who, info in listeners_copy:
+                # 检查是否超时 (2分钟无消息则超时)
+                time_diff = current_time - info.last_message_time
+                timeout_seconds = self.listener.timeout_minutes * 60
+                logger.debug(f"监听对象 {who} 最后活动时间: {time_diff:.1f}秒前 (超时阈值: {timeout_seconds}秒)")
+                
+                if time_diff > timeout_seconds:
+                    logger.info(f"监听对象 {who} 已超时 ({time_diff:.1f}秒 > {timeout_seconds}秒)，准备移除")
+                    # 确保调用API移除监听对象
+                    api_success = await self.api_client.remove_listener(who)
+                    if api_success:
+                        logger.info(f"成功调用API移除监听对象: {who}")
+                    else:
+                        logger.warning(f"调用API移除监听对象失败: {who}")
+                    
+                    # 仍然从内部状态移除
+                    await self.listener.remove_listener(who)
+                    removed_count += 1
+                    # 从我们的跟踪集合中也移除
+                    if who in self.monitored_chats:
+                        self.monitored_chats.remove(who)
+                else:
+                    logger.debug(f"监听对象 {who} 未超时 ({time_diff:.1f}秒 <= {timeout_seconds}秒)")
+            
             if removed_count > 0:
                 self.message_stats["timeout_removed"] += removed_count
                 logger.info(f"移除了 {removed_count} 个超时的监听对象")
                 # 更新监听列表
-                self.monitored_chats = {
-                    wxid for _, wxid in self.listener._listeners.keys()
-                }
+                self.monitored_chats = set(self.listener.listeners.keys())
                 logger.debug("更新后的监听列表:")
-                for wxid in self.monitored_chats:
-                    logger.debug(f"  - {wxid}")
+                for who in self.monitored_chats:
+                    logger.debug(f"  - {who}")
             else:
                 logger.debug("没有发现超时的监听对象")
             
@@ -254,7 +321,7 @@ class MessageListenerTester:
         
         logger.info("\n监听对象统计:")
         logger.info(f"- 最终监听对象数量: {self.get_listener_count()}")
-        logger.info(f"- 历史监听过的聊天总数: {len(self.monitored_chats)}")
+        logger.info(f"- 历史监听过的聊天总数: {len(self.historical_chats)}")
         logger.info(f"- 新增监听对象次数: {self.message_stats['new_chats_added']}")
         logger.info(f"- 超时移除对象次数: {self.message_stats['timeout_removed']}")
         
@@ -268,6 +335,10 @@ class MessageListenerTester:
         logger.info(f"- 待处理消息数: {total_messages - processed_messages}")
         if total_messages > 0:
             logger.info(f"- 消息处理率: {(processed_messages/total_messages)*100:.1f}%")
+        
+        # 记录数据库内容
+        logger.info("\n数据库内容:")
+        self.message_store.log_database_content()
 
 async def main():
     """主函数"""

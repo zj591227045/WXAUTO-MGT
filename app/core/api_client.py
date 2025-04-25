@@ -130,32 +130,58 @@ class WxAutoApiClient:
             logger.error(f"获取未读消息失败: {e}")
             return []
             
-    async def add_listener(self, instance_id: str, wxid: str, **kwargs) -> bool:
+    async def add_listener(self, who: str, **kwargs) -> bool:
         """添加监听对象"""
         try:
-            data = {'who': wxid, **kwargs}
-            self._post('/api/message/listen/add', json=data)
+            # 将参数转换为API期望的格式
+            api_params = {
+                'who': who,
+                'savepic': kwargs.get('save_pic', False),
+                'savevideo': kwargs.get('save_video', False),
+                'savefile': kwargs.get('save_file', False),
+                'savevoice': kwargs.get('save_voice', False),
+                'parseurl': kwargs.get('parse_url', False),
+                'exact': kwargs.get('exact', False)
+            }
+            
+            # 删除None值参数
+            api_params = {k: v for k, v in api_params.items() if v is not None}
+            
+            logger.debug(f"添加监听对象参数: {api_params}")
+            result = self._post('/api/message/listen/add', json=api_params)
+            logger.info(f"成功添加监听对象 {who}")
             return True
         except Exception as e:
             logger.error(f"添加监听对象失败: {e}")
             return False
             
-    async def remove_listener(self, instance_id: str, wxid: str) -> bool:
+    async def remove_listener(self, who: str) -> bool:
         """移除监听对象"""
         try:
-            data = {'who': wxid}
+            data = {'who': who}
             self._post('/api/message/listen/remove', json=data)
+            logger.debug(f"成功移除监听对象 {who}")
             return True
         except Exception as e:
             logger.error(f"移除监听对象失败: {e}")
             return False
             
-    async def get_listener_messages(self, instance_id: str, wxid: str) -> List[Dict]:
+    async def get_listener_messages(self, instance_id: Optional[str], who: str) -> List[Dict]:
         """获取监听对象的消息"""
         try:
-            params = {'who': wxid}
+            # 只使用who参数，避免传递None
+            params = {'who': who}
+            logger.debug(f"获取监听对象[{who}]消息，参数: {params}")
             data = self._get('/api/message/listen/get', params=params)
-            return data.get('messages', {}).get(wxid, [])
+            
+            if 'messages' not in data:
+                logger.warning(f"获取监听对象[{who}]消息响应格式异常: {data}")
+                return []
+                
+            messages_data = data.get('messages', {}).get(who, [])
+            if messages_data:
+                logger.info(f"获取到监听对象[{who}]的 {len(messages_data)} 条消息")
+            return messages_data
         except Exception as e:
             logger.error(f"获取监听消息失败: {e}")
             return [] 

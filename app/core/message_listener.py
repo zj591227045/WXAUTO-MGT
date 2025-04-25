@@ -142,15 +142,21 @@ class MessageListener:
             if not messages:
                 return
             
+            logger.info(f"从主窗口获取到 {len(messages)} 条未读消息")
             # 处理每条未读消息
             for msg in messages:
                 chat_name = msg.get('chat_name')
                 if chat_name:
                     # 将发送者添加到监听列表
-                    await self.add_listener(chat_name)
+                    await self.add_listener(chat_name, 
+                                           save_pic=True, 
+                                           save_video=True, 
+                                           save_file=True,
+                                           save_voice=True,
+                                           parse_url=True)
                     
                     # 保存消息到存储
-                    await self.message_store.save_message({
+                    save_data = {
                         'instance_id': None,
                         'chat_name': chat_name,
                         'message_type': msg.get('type'),
@@ -159,9 +165,14 @@ class MessageListener:
                         'sender_remark': msg.get('sender_remark'),
                         'message_id': msg.get('id'),
                         'mtype': msg.get('mtype')
-                    })
+                    }
                     
-                    logger.debug(f"收到来自 {chat_name} 的新消息")
+                    logger.debug(f"准备保存主窗口消息: {save_data}")
+                    save_result = await self.message_store.save_message(save_data)
+                    if save_result:
+                        logger.info(f"成功保存来自 {chat_name} 的新消息")
+                    else:
+                        logger.error(f"保存来自 {chat_name} 的新消息失败")
         
         except Exception as e:
             logger.error(f"处理主窗口消息时出错: {e}")
@@ -175,15 +186,17 @@ class MessageListener:
                 
                 try:
                     # 获取该监听对象的新消息
+                    logger.debug(f"开始获取监听对象 {who} 的新消息")
                     messages = await self.api_client.get_listener_messages(None, who)
                     
                     if messages:
                         # 更新最后消息时间
                         info.last_message_time = time.time()
+                        logger.info(f"获取到监听对象 {who} 的 {len(messages)} 条新消息")
                         
                         # 保存消息到存储
                         for msg in messages:
-                            await self.message_store.save_message({
+                            save_data = {
                                 'instance_id': None,
                                 'chat_name': who,
                                 'message_type': msg.get('type'),
@@ -192,22 +205,31 @@ class MessageListener:
                                 'sender_remark': msg.get('sender_remark'),
                                 'message_id': msg.get('id'),
                                 'mtype': msg.get('mtype')
-                            })
-                        
-                        logger.debug(f"从 {who} 获取到 {len(messages)} 条新消息")
+                            }
+                            
+                            logger.debug(f"准备保存监听消息: {save_data}")
+                            save_result = await self.message_store.save_message(save_data)
+                            if save_result:
+                                logger.info(f"成功保存来自 {who} 的监听消息")
+                            else:
+                                logger.error(f"保存来自 {who} 的监听消息失败")
+                    else:
+                        logger.debug(f"监听对象 {who} 没有新消息")
                     
                     # 更新检查时间
                     info.last_check_time = time.time()
                 
                 except Exception as e:
                     logger.error(f"检查监听对象 {who} 的消息时出错: {e}")
+                    logger.debug(f"错误详情", exc_info=True)
     
-    async def add_listener(self, who: str) -> bool:
+    async def add_listener(self, who: str, **kwargs) -> bool:
         """
         添加监听对象
         
         Args:
             who: 监听对象的标识
+            **kwargs: 其他参数，如save_pic, save_video等
             
         Returns:
             bool: 是否添加成功
@@ -224,6 +246,12 @@ class MessageListener:
                 logger.warning(f"监听对象数量已达到上限 ({self.max_listeners})")
                 return False
             
+            # 调用API添加监听
+            api_success = await self.api_client.add_listener(who, **kwargs)
+            if not api_success:
+                logger.error(f"调用API添加监听对象失败: {who}")
+                return False
+                
             # 添加新的监听对象
             self.listeners[who] = ListenerInfo(
                 who=who,
@@ -251,12 +279,20 @@ class MessageListener:
         current_time = time.time()
         
         async with self._lock:
-            for (instance_id, who), info in list(self.listeners.items()):
+            for who, info in list(self.listeners.items()):
                 # 检查是否超时
                 if current_time - info.last_message_time > self.timeout_minutes * 60:
                     logger.debug(f"监听对象 {who} 已超时，准备移除")
-                    await self.remove_listener(who)
-                    removed_count += 1
+                    # 确保调用API移除监听对象
+                    api_success = await self.api_client.remove_listener(who)
+                    if not api_success:
+                        logger.warning(f"调用API移除监听对象 {who} 失败")
+                    
+                    # 从内部状态移除
+                    if who in self.listeners:
+                        del self.listeners[who]
+                        logger.info(f"移除超时监听对象: {who}")
+                        removed_count += 1
         
         return removed_count
     
@@ -274,7 +310,14 @@ class MessageListener:
         Returns:
             List[Message]: 待处理的消息列表
         """
-        return await self.message_store.get_unprocessed_messages(limit)
+        try:
+            logger.debug(f"获取待处理消息，数量限制: {limit}")
+            messages = await self.message_store.get_unprocessed_messages(limit)
+            logger.info(f"获取到 {len(messages)} 条待处理消息")
+            return messages
+        except Exception as e:
+            logger.error(f"获取待处理消息时出错: {e}")
+            return []
     
     async def mark_message_processed(self, message_id: str):
         """
