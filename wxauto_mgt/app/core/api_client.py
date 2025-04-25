@@ -40,30 +40,28 @@ class WxAutoApiClient:
     WxAuto API客户端类，负责与WxAuto HTTP API进行通信
     """
     
-    def __init__(self, base_url: str, api_key: str, timeout: int = 30, retry_limit: int = 3, retry_delay: int = 2, api_prefix: str = 'api/wechat'):
+    def __init__(self, base_url: str, api_key: str, timeout: int = 30, retry_limit: int = 3, retry_delay: int = 2):
         """
         初始化WxAuto API客户端
         
         Args:
-            base_url: API基础URL，例如 http://localhost:8080/api
+            base_url: API基础URL，例如 http://localhost:8080
             api_key: API密钥
             timeout: 请求超时时间（秒）
             retry_limit: 请求重试次数
             retry_delay: 请求重试延迟（秒）
-            api_prefix: API路径前缀，默认为'api/wechat'
         """
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
         self.retry_limit = retry_limit
         self.retry_delay = retry_delay
-        self.api_prefix = api_prefix
         self.session = None
         self._initialized = False
         self._connected = False
         self._client_id = str(uuid.uuid4())
         
-        logger.debug(f"初始化WxAuto API客户端: {base_url}, 客户端ID: {self._client_id}, API前缀: {api_prefix}")
+        logger.debug(f"初始化WxAuto API客户端: {base_url}, 客户端ID: {self._client_id}")
     
     async def _ensure_session(self) -> None:
         """确保HTTP会话已创建"""
@@ -106,20 +104,14 @@ class WxAutoApiClient:
             logger.error("API密钥未设置")
             raise ApiError(401, "API密钥未设置")
             
-        # 使用配置的API前缀，并确保路径正确
-        if self.api_prefix and not endpoint.startswith(self.api_prefix):
-            # 如果端点不是以api_prefix开头，且不是完整路径
-            if not endpoint.startswith(('http://', 'https://', '/')):
-                # 在endpoint中移除可能的前导斜杠
-                clean_endpoint = endpoint.lstrip('/')
-                # 使用配置的API前缀
-                endpoint = f"{self.api_prefix}/{clean_endpoint}"
+        # 确保endpoint以/api开头
+        if not endpoint.startswith('/api'):
+            endpoint = f'/api/{endpoint.lstrip("/")}'
         
-        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        url = f"{self.base_url}{endpoint}"
         retry_count = 0
         
         # 为每个请求创建特定的请求头，确保包含当前的API密钥
-        # 根据API文档，认证头应该是X-API-Key而不是Authorization: Bearer
         headers = {"X-API-Key": self.api_key}
         logger.debug(f"正在发送请求至 {url}，使用API密钥: {self.api_key[:3]}***{self.api_key[-3:] if len(self.api_key)>6 else ''}")
         
@@ -160,9 +152,8 @@ class WxAutoApiClient:
             Dict: 初始化结果
         """
         try:
-            logger.info(f"正在初始化微信实例, URL: {self.base_url}, API前缀: {self.api_prefix}")
-            # 使用简单端点，前缀由_request处理
-            result = await self._request("POST", "initialize")
+            logger.info(f"正在初始化微信实例, URL: {self.base_url}")
+            result = await self._request("POST", "/api/wechat/initialize")
             self._initialized = True
             logger.info("微信实例初始化成功")
             return result
@@ -180,8 +171,7 @@ class WxAutoApiClient:
             Dict: 微信状态信息
         """
         try:
-            # 使用简单端点，前缀由_request处理
-            result = await self._request("GET", "status")
+            result = await self._request("GET", "/api/wechat/status")
             self._connected = result.get("isOnline", False)
             return result
         except ApiError as e:
@@ -608,7 +598,7 @@ class WxAutoInstanceManager:
         self.instances = {}  # 实例字典，键为实例ID，值为WxAutoApiClient实例
         logger.debug("初始化WxAuto实例管理器")
     
-    def add_instance(self, instance_id: str, base_url: str, api_key: str, timeout: int = 30, api_prefix: str = 'api/wechat', retry_limit: int = 3, retry_delay: int = 2) -> WxAutoApiClient:
+    def add_instance(self, instance_id: str, base_url: str, api_key: str, timeout: int = 30, retry_limit: int = 3, retry_delay: int = 2) -> WxAutoApiClient:
         """
         添加新的WxAuto实例
         
@@ -617,7 +607,6 @@ class WxAutoInstanceManager:
             base_url: API基础URL
             api_key: API密钥
             timeout: 请求超时时间（秒）
-            api_prefix: API路径前缀
             retry_limit: 请求重试次数
             retry_delay: 请求重试延迟（秒）
             
@@ -628,9 +617,9 @@ class WxAutoInstanceManager:
             logger.warning(f"实例 {instance_id} 已存在，将替换现有实例")
             asyncio.create_task(self.instances[instance_id].close())
         
-        client = WxAutoApiClient(base_url, api_key, timeout, retry_limit, retry_delay, api_prefix)
+        client = WxAutoApiClient(base_url, api_key, timeout, retry_limit, retry_delay)
         self.instances[instance_id] = client
-        logger.info(f"已添加WxAuto实例: {instance_id} ({base_url}), API前缀: {api_prefix}")
+        logger.info(f"已添加WxAuto实例: {instance_id} ({base_url})")
         return client
     
     def get_instance(self, instance_id: str) -> Optional[WxAutoApiClient]:

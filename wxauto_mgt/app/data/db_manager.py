@@ -185,6 +185,42 @@ class DBManager:
             """
             conn.execute(performance_metrics_schema)
             
+            # 警报规则表
+            logger.info("创建警报规则表...")
+            alert_rules_schema = """
+            CREATE TABLE IF NOT EXISTS alert_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                instance_id TEXT NOT NULL,
+                metric_type TEXT NOT NULL,
+                threshold REAL NOT NULL,
+                threshold_type TEXT NOT NULL,  -- 'gte' 或 'lte'
+                notify_methods TEXT NOT NULL,  -- JSON格式的通知方式列表
+                enabled INTEGER DEFAULT 1,
+                create_time INTEGER DEFAULT (strftime('%s', 'now')),
+                last_update INTEGER DEFAULT (strftime('%s', 'now'))
+            )
+            """
+            conn.execute(alert_rules_schema)
+            
+            # 警报历史表
+            logger.info("创建警报历史表...")
+            alert_history_schema = """
+            CREATE TABLE IF NOT EXISTS alert_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id INTEGER NOT NULL,
+                instance_id TEXT NOT NULL,
+                metric_type TEXT NOT NULL,
+                metric_value REAL NOT NULL,
+                threshold REAL NOT NULL,
+                threshold_type TEXT NOT NULL,
+                notify_methods TEXT NOT NULL,
+                status TEXT NOT NULL,  -- 'triggered' 或 'resolved'
+                create_time INTEGER DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (rule_id) REFERENCES alert_rules(id)
+            )
+            """
+            conn.execute(alert_history_schema)
+            
             # 监听对象表
             logger.info("创建监听对象表...")
             listeners_schema = """

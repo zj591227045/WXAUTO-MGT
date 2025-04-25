@@ -7,14 +7,19 @@
 
 import asyncio
 import time
+import json
+import aiohttp
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union, Any
+from datetime import datetime
+import logging
 
 from app.core.api_client import WxAutoApiClient, instance_manager
 from app.data.db_manager import db_manager
 from app.utils.logging import get_logger
+from app.core.config_manager import config_manager, ConfigManager
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 class InstanceStatus(Enum):
@@ -28,12 +33,13 @@ class InstanceStatus(Enum):
 class MetricType(Enum):
     """性能指标类型枚举"""
     MESSAGE_COUNT = "message_count"            # 消息数量
-    MESSAGE_PROCESSED = "message_processed"    # 已处理消息
-    MESSAGE_FAILED = "message_failed"          # 处理失败消息
-    QUEUE_SIZE = "queue_size"                  # 队列大小
-    RESPONSE_TIME = "response_time"            # 响应时间
-    CPU_USAGE = "cpu_usage"                    # CPU使用率
+    UPTIME = "uptime"                         # 运行时间
+    CPU_USAGE = "cpu_usage"                   # CPU使用率
     MEMORY_USAGE = "memory_usage"              # 内存使用率
+    MESSAGE_TOTAL = "message_total"            # 消息总数
+    MESSAGE_PROCESSED = "message_processed"      # 已处理消息数
+    MESSAGE_FAILED = "message_failed"            # 处理失败消息数
+    MESSAGE_QUEUE = "message_queue"              # 消息队列大小
 
 
 class StatusMonitor:
@@ -51,9 +57,12 @@ class StatusMonitor:
         self.check_interval = check_interval
         self.running = False
         self._status_task = None
-        self._instance_statuses = {}  # 格式: {instance_id: {"status": InstanceStatus, "last_check": timestamp, "details": {...}}}
-        self._performance_metrics = {}  # 格式: {instance_id: {metric_type: [values]}}
+        self._instance_statuses = {}  # 实例状态缓存
+        self._instance_metrics = {}   # 实例性能指标缓存
         self._status_listeners = set()  # 状态变更监听器
+        
+        # 获取API配置
+        self._config = ConfigManager()._config
         
         logger.debug(f"初始化状态监控服务: 检查间隔={check_interval}秒")
     
@@ -72,8 +81,7 @@ class StatusMonitor:
         for instance_id in instance_manager.list_instances():
             self._instance_statuses[instance_id] = {
                 "status": InstanceStatus.UNKNOWN,
-                "last_check": 0,
-                "details": {}
+                "uptime": 0
             }
         
         # 启动状态检查任务
@@ -128,7 +136,7 @@ class StatusMonitor:
         
         for instance_id, client in instance_manager.list_instances().items():
             try:
-                status_data = await self.check_instance_status(instance_id, client)
+                status_data = await self.check_instance_status(instance_id)
                 results[instance_id] = status_data
             except Exception as e:
                 logger.error(f"检查实例 {instance_id} 状态失败: {e}")
@@ -139,127 +147,135 @@ class StatusMonitor:
         
         return results
     
-    async def check_instance_status(self, instance_id: str, client: WxAutoApiClient) -> Dict:
-        """
-        检查单个实例的状态
+    async def _make_api_request(self, instance_id: str, endpoint: str) -> Optional[Dict]:
+        """发送API请求
         
         Args:
             instance_id: 实例ID
-            client: API客户端实例
+            endpoint: API端点
             
         Returns:
-            Dict: 状态信息
+            响应数据字典，如果请求失败则返回None
         """
-        now = int(time.time())
-        old_status = self._instance_statuses.get(instance_id, {}).get("status", InstanceStatus.UNKNOWN)
-        
         try:
-            # 获取微信状态
-            status_result = await client.get_status()
+            # 获取实例配置
+            instance = instance_manager.get_instance(instance_id)
+            if not instance:
+                logger.error(f"实例不存在: {instance_id}")
+                return None
+                
+            api_url = instance.base_url
+            headers = {"X-API-Key": instance.api_key}
             
-            # 解析状态信息
-            is_online = status_result.get("isOnline", False)
+            full_url = f"{api_url}{endpoint}"
+            logger.debug(f"发送API请求: {full_url}")
+            logger.debug(f"请求头: {headers}")
             
-            if is_online:
-                new_status = InstanceStatus.ONLINE
+            async with aiohttp.ClientSession() as session:
+                async with session.get(full_url, headers=headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        logger.error(f"API请求失败: 状态码={response.status}, URL={full_url}")
+                        response_text = await response.text()
+                        logger.error(f"响应内容: {response_text}")
+                        return None
+        except Exception as e:
+            logger.error(f"发送API请求时出错: {str(e)}, URL={api_url}{endpoint}")
+            return None
+            
+    async def check_instance_status(self, instance_id: str) -> Dict[str, Any]:
+        """检查实例状态
+        
+        Args:
+            instance_id: 实例ID
+            
+        Returns:
+            包含状态信息的字典
+        """
+        try:
+            # 获取健康状态
+            health_data = await self._make_api_request(instance_id, "/api/health")
+            if not health_data:
+                status = "error"
+                uptime = 0
             else:
-                new_status = InstanceStatus.OFFLINE
-            
-            # 构建状态数据
+                # 从响应数据中正确提取状态信息
+                data = health_data.get("data", {})
+                raw_status = data.get("wechat_status", "error")
+                
+                # 状态值映射
+                if raw_status == "not_initialized":
+                    status = "未初始化"
+                elif raw_status == "connected":
+                    status = "状态正常"
+                else:
+                    status = raw_status
+                    
+                uptime = data.get("uptime", 0)
+                
+            # 获取系统资源信息
+            resources_data = await self._make_api_request(instance_id, "/api/system/resources")
+            if not resources_data:
+                cpu_usage = 0
+                memory_usage = 0
+                memory_total = 0
+            else:
+                data = resources_data.get("data", {})
+                cpu_data = data.get("cpu", {})
+                memory_data = data.get("memory", {})
+                
+                # 获取CPU使用率
+                cpu_usage = cpu_data.get("usage_percent", 0)
+                
+                # 获取内存使用情况
+                memory_total = memory_data.get("total", 0)  # MB
+                memory_used = memory_data.get("used", 0)   # MB
+                memory_usage = memory_data.get("usage_percent", 0)
+                
+            # 更新状态缓存
             status_data = {
-                "status": new_status,
-                "last_check": now,
-                "details": status_result
+                "status": status,
+                "raw_status": raw_status,  # 保存原始状态值以便UI层使用
+                "last_check": datetime.now().timestamp()
             }
-            
-            # 更新状态字典
             self._instance_statuses[instance_id] = status_data
             
-            # 记录状态变更
-            if old_status != new_status:
-                await self._record_status_change(instance_id, old_status, new_status, status_result)
-                # 通知监听器
-                await self._notify_status_listeners(instance_id, old_status, new_status)
-            
-            # 更新数据库中的实例状态
-            await db_manager.update(
-                "instances", 
-                {"last_online_time": now if new_status == InstanceStatus.ONLINE else None},
-                "instance_id = ?",
-                [instance_id]
-            )
-            
-            # 获取系统资源指标
-            if new_status == InstanceStatus.ONLINE:
-                await self._fetch_system_metrics(instance_id, client)
-                
-                # 记录运行时间
-                start_time = status_result.get("startTime", 0)
-                if start_time > 0:
-                    uptime = now - start_time
-                    self.record_metric(instance_id, MetricType.RESPONSE_TIME, uptime)
-                
-                # 记录消息统计数据
-                msg_stats = status_result.get("messageStats", {})
-                recv_count = msg_stats.get("received", 0)
-                sent_count = msg_stats.get("sent", 0)
-                total_count = recv_count + sent_count
-                self.record_metric(instance_id, MetricType.MESSAGE_COUNT, total_count)
+            # 更新性能指标缓存
+            metrics_data = {
+                "uptime": uptime,
+                "message_count": 0,  # 暂时设置为0
+                "cpu_usage": cpu_usage,
+                "memory_usage": memory_used,  # 使用已用内存量（MB）
+                "memory_total": memory_total,  # 总内存量（MB）
+                "memory_percent": memory_usage,  # 内存使用率（%）
+                "last_update": datetime.now().timestamp()
+            }
+            self._instance_metrics[instance_id] = metrics_data
             
             return status_data
             
         except Exception as e:
-            # 发生错误
-            new_status = InstanceStatus.ERROR
-            
-            # 构建错误状态数据
+            logger.error(f"检查实例状态失败: {e}")
             status_data = {
-                "status": new_status,
-                "last_check": now,
-                "details": {"error": str(e)}
+                "status": "error",
+                "uptime": 0,
+                "error": str(e)
             }
-            
-            # 更新状态字典
             self._instance_statuses[instance_id] = status_data
-            
-            # 记录状态变更
-            if old_status != new_status:
-                await self._record_status_change(instance_id, old_status, new_status, {"error": str(e)})
-                # 通知监听器
-                await self._notify_status_listeners(instance_id, old_status, new_status)
-            
-            raise
-    
-    async def _record_status_change(self, instance_id: str, old_status: InstanceStatus, 
-                                  new_status: InstanceStatus, details: Dict) -> None:
-        """
-        记录状态变更
-        
-        Args:
-            instance_id: 实例ID
-            old_status: 旧状态
-            new_status: 新状态
-            details: 状态详情
-        """
-        try:
-            # 保存到数据库
-            await db_manager.insert("status_logs", {
-                "instance_id": instance_id,
-                "status": new_status.value,
-                "details": str(details),
-                "create_time": int(time.time())
-            })
-            
-            logger.info(f"实例 {instance_id} 状态从 {old_status.value} 变更为 {new_status.value}")
-        except Exception as e:
-            logger.error(f"记录状态变更失败: {e}")
-    
+            return status_data
+
+    async def _get_message_count(self, instance_id: str) -> int:
+        """获取消息数量"""
+        # 暂时返回0，因为消息历史功能尚未实现
+        return 0
+
     def add_status_listener(self, listener) -> None:
         """
         添加状态变更监听器
         
         Args:
-            listener: 监听器函数，接收参数 (instance_id, old_status, new_status)
+            listener: 监听器函数，接收参数 (instance_id, status_data)
         """
         self._status_listeners.add(listener)
     
@@ -273,24 +289,22 @@ class StatusMonitor:
         if listener in self._status_listeners:
             self._status_listeners.remove(listener)
     
-    async def _notify_status_listeners(self, instance_id: str, old_status: InstanceStatus, 
-                                     new_status: InstanceStatus) -> None:
+    async def _notify_status_listeners(self, instance_id: str, status_data: Dict) -> None:
         """
         通知所有状态变更监听器
         
         Args:
             instance_id: 实例ID
-            old_status: 旧状态
-            new_status: 新状态
+            status_data: 状态信息
         """
         for listener in self._status_listeners:
             try:
                 if asyncio.iscoroutinefunction(listener):
-                    await listener(instance_id, old_status, new_status)
+                    await listener(instance_id, status_data)
                 else:
-                    listener(instance_id, old_status, new_status)
+                    listener(instance_id, status_data)
             except Exception as e:
-                logger.error(f"调用状态监听器失败: {e}")
+                logger.error(f"通知状态监听器失败: {e}")
     
     def record_metric(self, instance_id: str, metric_type: Union[MetricType, str], value: float) -> None:
         """
@@ -310,19 +324,11 @@ class StatusMonitor:
                 return
         
         # 初始化实例指标字典
-        if instance_id not in self._performance_metrics:
-            self._performance_metrics[instance_id] = {}
-        
-        # 初始化指标类型列表
-        if metric_type not in self._performance_metrics[instance_id]:
-            self._performance_metrics[instance_id][metric_type] = []
+        if instance_id not in self._instance_metrics:
+            self._instance_metrics[instance_id] = {}
         
         # 添加指标值
-        self._performance_metrics[instance_id][metric_type].append(value)
-        
-        # 最多保留100个值
-        if len(self._performance_metrics[instance_id][metric_type]) > 100:
-            self._performance_metrics[instance_id][metric_type].pop(0)
+        self._instance_metrics[instance_id][metric_type] = value
         
         # 异步保存到数据库
         asyncio.create_task(self._save_metric_to_db(instance_id, metric_type, value))
@@ -358,17 +364,17 @@ class StatusMonitor:
             failed_count: 处理失败消息数
         """
         # 记录各项指标
-        self.record_metric(instance_id, MetricType.MESSAGE_COUNT, message_count)
+        self.record_metric(instance_id, MetricType.MESSAGE_TOTAL, message_count)
         self.record_metric(instance_id, MetricType.MESSAGE_PROCESSED, processed_count)
         self.record_metric(instance_id, MetricType.MESSAGE_FAILED, failed_count)
         
         # 计算队列大小
         queue_size = message_count - processed_count - failed_count
-        self.record_metric(instance_id, MetricType.QUEUE_SIZE, queue_size)
+        self.record_metric(instance_id, MetricType.MESSAGE_QUEUE, queue_size)
         
         logger.debug(f"记录实例 {instance_id} 消息统计: 总数={message_count}, 已处理={processed_count}, 失败={failed_count}, 队列={queue_size}")
     
-    def get_instance_status(self, instance_id: str) -> Optional[Dict]:
+    async def get_instance_status(self, instance_id: str) -> Optional[Dict]:
         """
         获取实例状态
         
@@ -378,6 +384,11 @@ class StatusMonitor:
         Returns:
             Optional[Dict]: 状态信息，如果不存在则返回None
         """
+        if not self.running:
+            await self.start()
+            
+        if instance_id not in self._instance_statuses:
+            await self.check_instance_status(instance_id)
         return self._instance_statuses.get(instance_id)
     
     def get_all_instance_statuses(self) -> Dict[str, Dict]:
@@ -389,32 +400,19 @@ class StatusMonitor:
         """
         return self._instance_statuses.copy()
     
-    def get_instance_metrics(self, instance_id: str, metric_type: Optional[Union[MetricType, str]] = None) -> Dict:
+    async def get_instance_metrics(self, instance_id: str) -> Dict:
         """
         获取实例性能指标
         
         Args:
             instance_id: 实例ID
-            metric_type: 指标类型，如果为None则返回所有类型
             
         Returns:
             Dict: 性能指标字典
         """
-        if instance_id not in self._performance_metrics:
-            return {}
-        
-        if metric_type is None:
-            return self._performance_metrics[instance_id].copy()
-        
-        # 转换为枚举类型
-        if isinstance(metric_type, str):
-            try:
-                metric_type = MetricType(metric_type)
-            except ValueError:
-                logger.warning(f"未知的指标类型: {metric_type}")
-                return {}
-        
-        return {metric_type: self._performance_metrics[instance_id].get(metric_type, [])}
+        if instance_id not in self._instance_metrics:
+            await self.check_instance_status(instance_id)
+        return self._instance_metrics.get(instance_id, {})
     
     async def get_status_history(self, instance_id: Optional[str] = None, 
                              limit: int = 100, offset: int = 0) -> List[Dict]:
@@ -443,7 +441,7 @@ class StatusMonitor:
             logger.error(f"获取状态历史记录失败: {e}")
             return []
     
-    async def get_performance_history(self, instance_id: str, metric_type: Union[MetricType, str],
+    async def get_metrics_history(self, instance_id: str, metric_type: Union[MetricType, str],
                                   limit: int = 100, offset: int = 0) -> List[Dict]:
         """
         获取性能指标历史记录
@@ -455,49 +453,30 @@ class StatusMonitor:
             offset: 返回记录偏移量
             
         Returns:
-            List[Dict]: 性能指标记录列表
+            List[Dict]: 指标记录列表
         """
-        # 转换为枚举值
-        if isinstance(metric_type, MetricType):
-            metric_type = metric_type.value
+        # 转换为枚举类型
+        if isinstance(metric_type, str):
+            try:
+                metric_type = MetricType(metric_type)
+            except ValueError:
+                logger.warning(f"未知的指标类型: {metric_type}")
+                return []
+                
+        query = """
+            SELECT * FROM performance_metrics 
+            WHERE instance_id = ? AND metric_type = ? 
+            ORDER BY create_time DESC 
+            LIMIT ? OFFSET ?
+        """
+        params = (instance_id, metric_type.value, limit, offset)
         
         try:
-            query = """
-            SELECT * FROM performance_metrics 
-            WHERE instance_id = ? AND metric_type = ?
-            ORDER BY create_time DESC LIMIT ? OFFSET ?
-            """
-            params = (instance_id, metric_type, limit, offset)
-            
             rows = await db_manager.fetchall(query, params)
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"获取性能指标历史记录失败: {e}")
             return []
-
-    async def _fetch_system_metrics(self, instance_id: str, client: WxAutoApiClient) -> None:
-        """
-        获取系统资源指标
-        
-        Args:
-            instance_id: 实例ID
-            client: API客户端实例
-        """
-        try:
-            # 获取系统资源指标
-            system_metrics = await client.get_system_metrics()
-            
-            # 记录CPU使用率
-            if "cpu_usage" in system_metrics:
-                self.record_metric(instance_id, MetricType.CPU_USAGE, system_metrics["cpu_usage"])
-            
-            # 记录内存使用率
-            if "memory_usage" in system_metrics:
-                self.record_metric(instance_id, MetricType.MEMORY_USAGE, system_metrics["memory_usage"])
-                
-            logger.debug(f"更新实例 {instance_id} 系统指标: CPU={system_metrics.get('cpu_usage', 0)}%, 内存={system_metrics.get('memory_usage', 0)}MB")
-        except Exception as e:
-            logger.error(f"获取系统资源指标失败: {e}")
 
 
 # 创建全局状态监控服务实例

@@ -25,7 +25,12 @@ from app.core.config_manager import config_manager
 from app.core.message_listener import message_listener
 from app.core.status_monitor import status_monitor
 from app.data.db_manager import db_manager
-from app.utils.logging import log_manager
+from app.utils.logging import log_manager, get_logger
+
+# 初始化日志系统（如果尚未初始化）
+if not log_manager._initialized:
+    log_manager.initialize(log_level="DEBUG")
+logger = get_logger()
 
 
 def handle_exception(exc_type, exc_value, exc_traceback):
@@ -42,7 +47,6 @@ def handle_exception(exc_type, exc_value, exc_traceback):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
     
-    logger = log_manager.get_logger()
     logger.critical("未捕获的异常", exc_info=(exc_type, exc_value, exc_traceback))
 
 
@@ -245,85 +249,54 @@ async def cleanup_services():
         return False
 
 
-async def main_async():
-    """异步主函数"""
-    # 设置未捕获异常处理器
-    sys.excepthook = handle_exception
-    
-    # 初始化日志系统
-    log_manager.initialize(log_level="DEBUG")
-    logger = log_manager.get_logger()
-    
-    # 创建Qt应用
-    app = QApplication(sys.argv)
-    app.setApplicationName("WxAuto管理工具")
-    
-    loop = qasync.QEventLoop(app)
-    asyncio.set_event_loop(loop)
-    
-    # 设置信号处理
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(handle_shutdown(app)))
-    
-    logger.info("WxAuto管理程序启动中...")
-    
+async def main():
+    """主程序入口"""
     try:
+        # 设置未捕获异常处理器
+        sys.excepthook = handle_exception
+        
+        # 初始化Qt应用
+        app = QApplication.instance()
+        if not app:
+            app = QApplication(sys.argv)
+            app.setApplicationName("WxAuto管理工具")
+        
+        # 设置事件循环
+        loop = qasync.QEventLoop(app)
+        asyncio.set_event_loop(loop)
+        
         # 初始化服务
-        init_success = False
-        retry_count = 0
-        max_retries = 3
-        
-        while not init_success and retry_count < max_retries:
-            init_success = await init_services()
-            if not init_success:
-                retry_count += 1
-                if retry_count < max_retries:
-                    logger.warning(f"初始化服务失败，正在重试 ({retry_count}/{max_retries})...")
-                    await asyncio.sleep(1)  # 等待1秒后重试
-        
-        if not init_success:
-            logger.error("初始化服务失败，程序退出")
+        if not await init_services():
+            logger.error("服务初始化失败")
             return 1
-        
-        # 创建并显示主窗口
+            
+        # 创建主窗口
         window = MainWindow()
         window.show()
         
-        # 在Qt主循环结束前执行清理任务
+        # 设置信号处理
+        loop.add_signal_handler(signal.SIGINT, loop.stop)
+        
+        # 设置清理回调
         app.aboutToQuit.connect(lambda: asyncio.create_task(cleanup_services()))
         
-        # 启动Qt主循环
-        logger.info("程序已启动")
-        loop.run_forever()
-        return 0
+        # 运行事件循环
+        with loop:
+            logger.info("程序已启动")
+            return await loop.run_forever()
+            
     except Exception as e:
-        logger.exception(f"程序运行出错: {e}")
+        logger.error(f"程序启动失败: {e}")
         return 1
     finally:
+        # 确保在程序退出时执行清理
         await cleanup_services()
         log_manager.shutdown()
 
 
-async def handle_shutdown(app):
-    """处理程序关闭"""
-    logger = log_manager.get_logger()
-    logger.info("正在关闭程序...")
-    app.quit()
-
-
-def main():
-    """程序入口点"""
+if __name__ == "__main__":
     try:
-        # 初始化异步事件循环
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # 运行主函数
-        return loop.run_until_complete(main_async())
+        sys.exit(asyncio.run(main()))
     except Exception as e:
         print(f"程序启动失败: {e}")
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main()) 
+        sys.exit(1) 

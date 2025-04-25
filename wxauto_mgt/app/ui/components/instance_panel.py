@@ -522,8 +522,8 @@ class InstanceManagerPanel(QWidget):
             
             logger.debug(f"创建新API客户端: {instance_id}, API密钥: {api_key[:3]}***{api_key[-3:] if api_key and len(api_key)>6 else ''})")
             
-            # 使用正确的API前缀
-            client = instance_manager.add_instance(instance_id, base_url, api_key, timeout, api_prefix="api/wechat")
+            # 创建新的API客户端，不再使用固定的API前缀
+            client = instance_manager.add_instance(instance_id, base_url, api_key, timeout)
         
         # 执行初始化
         asyncio.create_task(self._initialize_instance_async(instance_id, client))
