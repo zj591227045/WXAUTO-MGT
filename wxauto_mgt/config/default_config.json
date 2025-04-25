@@ -1,0 +1,20 @@
+{
+  "app": {
+    "name": "WxAuto管理程序",
+    "version": "0.1.0",
+    "log_level": "INFO",
+    "ui_theme": "default"
+  },
+  "message_listener": {
+    "poll_interval": 5,
+    "max_listeners": 30,
+    "listener_timeout_minutes": 30
+  },
+  "status_monitor": {
+    "check_interval": 60
+  },
+  "db": {
+    "path": "./data/wxauto_mgt.db"
+  },
+  "instances": []
+} 
