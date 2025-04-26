@@ -230,7 +230,7 @@ class MainWindow(QMainWindow):
         try:
             # 从配置存储中获取所有实例
             instances = await config_store.get_config('system', 'instances', [])
-            
+                
             if instances:
                 logger.info(f"启动时强制保存 {len(instances)} 个实例配置")
                 

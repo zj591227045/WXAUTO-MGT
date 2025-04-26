@@ -685,13 +685,29 @@ class ConfigManager:
         return instances.get(instance_id)
     
     def get_enabled_instances(self) -> List[Dict]:
-        """获取已启用的实例列表"""
-        instances = self.get("instances", {})
-        return [
-            {"id": instance_id, **config}
-            for instance_id, config in instances.items()
-            if config.get("enabled", True)
-        ]
+        """获取已启用的实例列表（同步方法）"""
+        # 注意：这是一个同步方法，但需要访问数据库
+        # 为避免异步/同步混合带来的复杂性，此处使用直接查询
+        try:
+            # 直接执行SQL查询（同步方式）
+            conn = db_manager.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM instances WHERE enabled = 1")
+            result = cursor.fetchall()
+            cursor.close()
+            
+            # 将结果转换为字典列表
+            instances = []
+            if result:
+                column_names = [desc[0] for desc in cursor.description]
+                for row in result:
+                    instance = dict(zip(column_names, row))
+                    instances.append(instance)
+            
+            return instances
+        except Exception as e:
+            logger.error(f"获取已启用实例列表时出错: {e}")
+            return []
     
     async def disable_instance(self, instance_id: str) -> bool:
         """禁用实例"""

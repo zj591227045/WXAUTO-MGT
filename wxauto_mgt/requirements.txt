@@ -20,7 +20,7 @@ black>=22.10.0
 isort>=5.10.1
 
 # 打包
-pyinstaller>=5.6.0
+pyinstaller>=5.6.0 
 
 # 其他依赖
 requests>=2.31.0

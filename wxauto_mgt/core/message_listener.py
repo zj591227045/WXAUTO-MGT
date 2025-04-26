@@ -65,6 +65,9 @@ class MessageListener:
         self.running = True
         logger.info("启动消息监听服务")
         
+        # 从数据库加载监听对象
+        await self._load_listeners_from_db()
+        
         # 创建主要任务
         main_window_task = asyncio.create_task(self._main_window_check_loop())
         listeners_task = asyncio.create_task(self._listeners_check_loop())
@@ -146,8 +149,12 @@ class MessageListener:
             
             logger.info(f"从实例 {instance_id} 主窗口获取到 {len(messages)} 条未读消息")
             
+            # 过滤消息
+            filtered_messages = self._filter_messages(messages)
+            logger.info(f"过滤后主窗口有 {len(filtered_messages)} 条未读消息")
+            
             # 处理每条未读消息
-            for msg in messages:
+            for msg in filtered_messages:
                 chat_name = msg.get('chat_name')
                 if chat_name:
                     # 将发送者添加到监听列表
@@ -190,15 +197,19 @@ class MessageListener:
                 try:
                     # 获取该监听对象的新消息
                     logger.debug(f"开始获取实例 {instance_id} 监听对象 {who} 的新消息")
-                    messages = await api_client.get_listener_messages(instance_id, who)
+                    messages = await api_client.get_listener_messages(who)
                     
                     if messages:
                         # 更新最后消息时间
                         info.last_message_time = time.time()
                         logger.info(f"获取到实例 {instance_id} 监听对象 {who} 的 {len(messages)} 条新消息")
                         
+                        # 处理消息：筛选掉"以下为新消息"及之前的消息
+                        filtered_messages = self._filter_messages(messages)
+                        logger.debug(f"过滤后剩余 {len(filtered_messages)} 条新消息")
+                        
                         # 保存消息到数据库
-                        for msg in messages:
+                        for msg in filtered_messages:
                             save_data = {
                                 'instance_id': instance_id,
                                 'chat_name': who,
@@ -221,6 +232,39 @@ class MessageListener:
                 except Exception as e:
                     logger.error(f"检查实例 {instance_id} 监听对象 {who} 的消息时出错: {e}")
                     logger.debug(f"错误详情", exc_info=True)
+    
+    def _filter_messages(self, messages: List[dict]) -> List[dict]:
+        """
+        过滤消息列表，处理"以下为新消息"分隔符
+        
+        Args:
+            messages: 原始消息列表
+            
+        Returns:
+            List[dict]: 过滤后的消息列表
+        """
+        if not messages:
+            return []
+            
+        # 查找是否有"以下为新消息"标记
+        new_message_index = -1
+        for i, msg in enumerate(messages):
+            content = msg.get('content', '')
+            msg_type = msg.get('type', '')
+            sender = msg.get('sender', '')
+            
+            # 检查是否是系统消息且内容为"以下为新消息"
+            if (msg_type == 'sys' or sender == 'SYS') and '以下为新消息' in content:
+                new_message_index = i
+                logger.debug(f"找到'以下为新消息'分隔符，位于消息列表的第 {i+1} 条")
+                break
+        
+        # 如果找到分隔符，只返回分隔符之后的消息
+        if new_message_index >= 0:
+            return messages[new_message_index + 1:]
+        
+        # 如果没有找到分隔符，返回所有消息
+        return messages
     
     async def add_listener(self, instance_id: str, who: str, **kwargs) -> bool:
         """
@@ -334,6 +378,10 @@ class MessageListener:
             bool: 是否保存成功
         """
         try:
+            # 确保包含create_time字段
+            if 'create_time' not in message_data:
+                message_data['create_time'] = int(time.time())
+                
             await db_manager.insert('messages', message_data)
             return True
         except Exception as e:
@@ -352,12 +400,28 @@ class MessageListener:
             bool: 是否保存成功
         """
         try:
+            current_time = int(time.time())
             data = {
                 'instance_id': instance_id,
                 'who': who,
-                'last_message_time': int(time.time())
+                'last_message_time': current_time,
+                'create_time': current_time
             }
-            await db_manager.insert('listeners', data)
+            
+            # 先检查是否已存在
+            query = "SELECT id FROM listeners WHERE instance_id = ? AND who = ?"
+            exists = await db_manager.fetchone(query, (instance_id, who))
+            
+            if exists:
+                # 已存在，执行更新操作
+                update_query = "UPDATE listeners SET last_message_time = ? WHERE instance_id = ? AND who = ?"
+                await db_manager.execute(update_query, (current_time, instance_id, who))
+                logger.debug(f"更新监听对象: {instance_id} - {who}")
+            else:
+                # 不存在，插入新记录
+                await db_manager.insert('listeners', data)
+                logger.debug(f"插入监听对象: {instance_id} - {who}")
+                
             return True
         except Exception as e:
             logger.error(f"保存监听对象到数据库失败: {e}")
@@ -406,6 +470,51 @@ class MessageListener:
                     if info.active
                 ]
         return result
+
+    async def _load_listeners_from_db(self):
+        """从数据库加载保存的监听对象"""
+        try:
+            logger.info("从数据库加载监听对象")
+            
+            # 查询所有监听对象
+            query = "SELECT instance_id, who, last_message_time FROM listeners"
+            listeners = await db_manager.fetchall(query)
+            
+            if not listeners:
+                logger.info("数据库中没有监听对象")
+                return
+                
+            # 加载到内存
+            async with self._lock:
+                for listener in listeners:
+                    instance_id = listener.get('instance_id')
+                    who = listener.get('who')
+                    last_message_time = listener.get('last_message_time', time.time())
+                    
+                    # 跳过无效记录
+                    if not instance_id or not who:
+                        continue
+                        
+                    # 初始化实例的监听字典
+                    if instance_id not in self.listeners:
+                        self.listeners[instance_id] = {}
+                    
+                    # 添加监听对象
+                    self.listeners[instance_id][who] = ListenerInfo(
+                        instance_id=instance_id,
+                        who=who,
+                        last_message_time=float(last_message_time),
+                        last_check_time=time.time()
+                    )
+            
+            # 计算加载的监听对象数量
+            total = sum(len(listeners) for listeners in self.listeners.values())
+            logger.info(f"从数据库加载了 {total} 个监听对象")
+            
+        except Exception as e:
+            logger.error(f"从数据库加载监听对象时出错: {e}")
+            # 出错时也要确保监听器字典被初始化
+            self.listeners = {}
 
 # 创建全局实例
 message_listener = MessageListener() 

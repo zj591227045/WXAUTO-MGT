@@ -59,10 +59,10 @@ class AddInstanceDialog(QDialog):
         form_layout.addRow("API地址:", self.url_edit)
         
         # API密钥
-        self.api_key_edit = QLineEdit()
-        self.api_key_edit.setPlaceholderText("WxAuto API密钥")
-        self.api_key_edit.setEchoMode(QLineEdit.Password)
-        form_layout.addRow("API密钥:", self.api_key_edit)
+        self.key_edit = QLineEdit()
+        self.key_edit.setPlaceholderText("WxAuto API密钥")
+        self.key_edit.setEchoMode(QLineEdit.Password)
+        form_layout.addRow("API密钥:", self.key_edit)
         
         # 高级选项
         self.advanced_group = QGroupBox("高级选项")
@@ -81,6 +81,20 @@ class AddInstanceDialog(QDialog):
         self.retry_spin.setValue(3)
         self.retry_spin.setSuffix(" 次")
         advanced_layout.addRow("失败重试:", self.retry_spin)
+        
+        # 轮询间隔
+        self.poll_interval_spin = QSpinBox()
+        self.poll_interval_spin.setRange(1, 60)
+        self.poll_interval_spin.setValue(5)
+        self.poll_interval_spin.setSuffix(" 秒")
+        advanced_layout.addRow("轮询间隔:", self.poll_interval_spin)
+        
+        # 消息超时时间
+        self.timeout_minutes_spin = QSpinBox()
+        self.timeout_minutes_spin.setRange(1, 1440)  # 1分钟到24小时
+        self.timeout_minutes_spin.setValue(30)
+        self.timeout_minutes_spin.setSuffix(" 分钟")
+        advanced_layout.addRow("消息超时:", self.timeout_minutes_spin)
         
         # 启用实例
         self.enabled_check = QCheckBox("启用该实例")
@@ -113,27 +127,33 @@ class AddInstanceDialog(QDialog):
         random_id = f"wxauto_{uuid.uuid4().hex[:8]}"
         self.id_edit.setText(random_id)
     
-    def get_instance_data(self) -> Dict:
+    def get_instance_data(self):
         """
         获取实例数据
         
         Returns:
-            Dict: 实例数据字典
+            dict: 实例数据
         """
-        # 获取或生成实例ID
-        instance_id = self.id_edit.text().strip()
-        if not instance_id:
-            instance_id = f"wxauto_{uuid.uuid4().hex[:8]}"
-        
-        return {
-            "instance_id": instance_id,
+        # 基本数据
+        data = {
+            "instance_id": f"wxauto_{uuid.uuid4().hex[:8]}",
             "name": self.name_edit.text().strip(),
             "base_url": self.url_edit.text().strip(),
-            "api_key": self.api_key_edit.text().strip(),
+            "api_key": self.key_edit.text().strip(),
+            "enabled": 1 if self.enabled_check.isChecked() else 0,
+        }
+        
+        # 高级配置
+        extra_config = {
             "timeout": self.timeout_spin.value(),
             "retry_limit": self.retry_spin.value(),
-            "enabled": self.enabled_check.isChecked()
+            "poll_interval": self.poll_interval_spin.value(),
+            "timeout_minutes": self.timeout_minutes_spin.value()
         }
+        
+        data["config"] = extra_config
+        
+        return data
     
     def accept(self):
         """验证并接受对话框"""
@@ -148,9 +168,9 @@ class AddInstanceDialog(QDialog):
             self.url_edit.setFocus()
             return
         
-        if not self.api_key_edit.text().strip():
+        if not self.key_edit.text().strip():
             QMessageBox.warning(self, "验证错误", "请输入API密钥")
-            self.api_key_edit.setFocus()
+            self.key_edit.setFocus()
             return
         
         super().accept()
@@ -197,9 +217,9 @@ class EditInstanceDialog(QDialog):
         form_layout.addRow("API地址:", self.url_edit)
         
         # API密钥
-        self.api_key_edit = QLineEdit()
-        self.api_key_edit.setEchoMode(QLineEdit.Password)
-        form_layout.addRow("API密钥:", self.api_key_edit)
+        self.key_edit = QLineEdit()
+        self.key_edit.setEchoMode(QLineEdit.Password)
+        form_layout.addRow("API密钥:", self.key_edit)
         
         # 高级选项
         self.advanced_group = QGroupBox("高级选项")
@@ -218,6 +238,20 @@ class EditInstanceDialog(QDialog):
         self.retry_spin.setValue(3)
         self.retry_spin.setSuffix(" 次")
         advanced_layout.addRow("失败重试:", self.retry_spin)
+        
+        # 轮询间隔
+        self.poll_interval_spin = QSpinBox()
+        self.poll_interval_spin.setRange(1, 60)
+        self.poll_interval_spin.setValue(5)
+        self.poll_interval_spin.setSuffix(" 秒")
+        advanced_layout.addRow("轮询间隔:", self.poll_interval_spin)
+        
+        # 消息超时时间
+        self.timeout_minutes_spin = QSpinBox()
+        self.timeout_minutes_spin.setRange(1, 1440)  # 1分钟到24小时
+        self.timeout_minutes_spin.setValue(30)
+        self.timeout_minutes_spin.setSuffix(" 分钟")
+        advanced_layout.addRow("消息超时:", self.timeout_minutes_spin)
         
         # 启用实例
         self.enabled_check = QCheckBox("启用该实例")
@@ -248,7 +282,7 @@ class EditInstanceDialog(QDialog):
         self.id_label.setText(self._instance_data.get("instance_id", ""))
         self.name_edit.setText(self._instance_data.get("name", ""))
         self.url_edit.setText(self._instance_data.get("base_url", ""))
-        self.api_key_edit.setText(self._instance_data.get("api_key", ""))
+        self.key_edit.setText(self._instance_data.get("api_key", ""))
         self.timeout_spin.setValue(self._instance_data.get("timeout", 30))
         self.retry_spin.setValue(self._instance_data.get("retry_limit", 3))
         self.enabled_check.setChecked(self._instance_data.get("enabled", True))
@@ -264,7 +298,7 @@ class EditInstanceDialog(QDialog):
             "instance_id": self.id_label.text(),
             "name": self.name_edit.text().strip(),
             "base_url": self.url_edit.text().strip(),
-            "api_key": self.api_key_edit.text().strip(),
+            "api_key": self.key_edit.text().strip(),
             "timeout": self.timeout_spin.value(),
             "retry_limit": self.retry_spin.value(),
             "enabled": self.enabled_check.isChecked()
@@ -283,9 +317,9 @@ class EditInstanceDialog(QDialog):
             self.url_edit.setFocus()
             return
         
-        if not self.api_key_edit.text().strip():
+        if not self.key_edit.text().strip():
             QMessageBox.warning(self, "验证错误", "请输入API密钥")
-            self.api_key_edit.setFocus()
+            self.key_edit.setFocus()
             return
         
         super().accept() 

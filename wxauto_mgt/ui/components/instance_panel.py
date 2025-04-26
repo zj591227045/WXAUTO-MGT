@@ -121,10 +121,10 @@ class InstanceManagerPanel(QWidget):
     @asyncSlot()
     async def refresh_instances(self):
         """刷新实例列表"""
-        # 清空表格
-        self.instance_table.setRowCount(0)
-        
         try:
+            # 清空表格
+            self.instance_table.setRowCount(0)
+            
             # 直接从数据库获取实例列表
             from wxauto_mgt.data.db_manager import db_manager
             
@@ -141,7 +141,7 @@ class InstanceManagerPanel(QWidget):
                 logger.debug(f"未找到启用的实例，执行查询所有实例: {query}")
                 instances = await db_manager.fetchall(query)
                 logger.debug(f"查询所有实例结果: {instances}")
-                
+            
             logger.debug(f"加载了 {len(instances)} 个实例")
             
             if not instances:
@@ -373,23 +373,23 @@ class InstanceManagerPanel(QWidget):
                 - timeout (int, optional): 超时时间，默认30秒
                 - config (dict, optional): 额外配置信息
         """
-        # 参数验证
-        required_fields = ["instance_id", "name", "base_url", "api_key"]
-        missing_fields = [field for field in required_fields if not instance_data.get(field)]
-        if missing_fields:
-            error_msg = f"缺少必要的实例配置字段: {', '.join(missing_fields)}"
-            logger.error(error_msg)
-            await self._show_error_async("参数错误", error_msg)
-            return False
-
-        # 验证URL格式
-        if not instance_data["base_url"].startswith(("http://", "https://")):
-            error_msg = "base_url 必须以 http:// 或 https:// 开头"
-            logger.error(f"实例 {instance_data['name']} ({instance_data['instance_id']}): {error_msg}")
-            await self._show_error_async("参数错误", error_msg)
-            return False
-
         try:
+            # 参数验证
+            required_fields = ["instance_id", "name", "base_url", "api_key"]
+            missing_fields = [field for field in required_fields if not instance_data.get(field)]
+            if missing_fields:
+                error_msg = f"缺少必要的实例配置字段: {', '.join(missing_fields)}"
+                logger.error(error_msg)
+                await self._show_error_async("参数错误", error_msg)
+                return False
+
+            # 验证URL格式
+            if not instance_data["base_url"].startswith(("http://", "https://")):
+                error_msg = "base_url 必须以 http:// 或 https:// 开头"
+                logger.error(f"实例 {instance_data['name']} ({instance_data['instance_id']}): {error_msg}")
+                await self._show_error_async("参数错误", error_msg)
+                return False
+
             logger.info(f"开始添加实例: {instance_data['name']} ({instance_data['instance_id']})")
             
             # 检查实例ID是否已存在
@@ -400,7 +400,6 @@ class InstanceManagerPanel(QWidget):
                 await self._show_error_async("添加失败", error_msg)
                 return False
 
-            # 调用添加实例方法
             try:
                 # 获取额外配置
                 extra_config = {}
@@ -439,6 +438,24 @@ class InstanceManagerPanel(QWidget):
                     instance_data["api_key"],
                     instance_data.get("timeout", 30)
                 )
+                
+                # 发送实例添加信号
+                self.instance_added.emit(instance_data["instance_id"])
+                
+                # 更新UI
+                QTimer.singleShot(0, lambda id=instance_data["instance_id"]: self._add_instance_by_id(id))
+                
+                # 显示成功提示
+                await self._show_success_async(
+                    "添加成功",
+                    f"已成功添加实例: {instance_data['name']}"
+                )
+                
+                # 强制刷新实例列表
+                QTimer.singleShot(500, self.refresh_instances)
+                
+                logger.info(f"实例添加成功: {instance_data['name']} ({instance_data['instance_id']})")
+                return True
             except Exception as e:
                 import traceback
                 # 如果API客户端添加失败，回滚ConfigManager的更改
@@ -452,25 +469,7 @@ class InstanceManagerPanel(QWidget):
                 logger.error(f"异常堆栈: {traceback.format_exc()}")
                 await self._show_error_async("添加失败", error_msg)
                 return False
-
-            # 发送实例添加信号
-            self.instance_added.emit(instance_data["instance_id"])
-            
-            # 更新UI
-            QTimer.singleShot(0, lambda id=instance_data["instance_id"]: self._add_instance_by_id(id))
-            
-            # 显示成功提示
-            await self._show_success_async(
-                "添加成功",
-                f"已成功添加实例: {instance_data['name']}"
-            )
-            
-            # 强制刷新实例列表
-            QTimer.singleShot(500, self.refresh_instances)
-            
-            logger.info(f"实例添加成功: {instance_data['name']} ({instance_data['instance_id']})")
-            return True
-
+                
         except Exception as e:
             import traceback
             error_msg = f"添加实例时发生未知错误: {str(e)}"
@@ -490,7 +489,7 @@ class InstanceManagerPanel(QWidget):
         def show():
             QMessageBox.information(self, title, message)
         QTimer.singleShot(0, show)
-
+    
     def _edit_instance(self, checked=False, instance_id=None):
         """
         编辑实例
@@ -524,17 +523,21 @@ class InstanceManagerPanel(QWidget):
 
     async def _update_instance_async(self, instance_id, updated_data):
         """异步更新实例"""
+        try:
             # 这里假设config_manager有update_instance方法
-        result = await config_manager.update_instance(instance_id, updated_data)
-            
-        if result:
-            logger.info(f"成功更新实例: {updated_data.get('name')} ({instance_id})")
-            self.instance_updated.emit(instance_id)
-            QTimer.singleShot(0, lambda: self.refresh_instances())
-        else:
-            error_message = f"无法更新实例: {updated_data.get('name')}"
-            QTimer.singleShot(0, lambda: self.show_error_message(error_message))
-    
+            result = await config_manager.update_instance(instance_id, updated_data)
+                
+            if result:
+                logger.info(f"成功更新实例: {updated_data.get('name')} ({instance_id})")
+                self.instance_updated.emit(instance_id)
+                QTimer.singleShot(0, lambda: self.refresh_instances())
+            else:
+                error_message = f"无法更新实例: {updated_data.get('name')}"
+                QTimer.singleShot(0, lambda: self.show_error_message(error_message))
+        except Exception as e:
+            logger.error(f"更新实例时出错: {e}")
+            QTimer.singleShot(0, lambda: self.show_error_message(f"更新实例时出错: {str(e)}"))
+
     def _delete_instance(self, checked=False, instance_id=None):
         """
         删除实例
@@ -569,15 +572,19 @@ class InstanceManagerPanel(QWidget):
 
     async def _delete_instance_async(self, instance_id):
         """异步删除实例"""
-        result = await config_manager.remove_instance(instance_id)
-            
-        if result:
-            logger.info(f"成功删除实例: {instance_id}")
-            self.instance_removed.emit(instance_id)
-            QTimer.singleShot(0, lambda: self.refresh_instances())
-        else:
-            error_message = f"无法删除实例: {instance_id}"
-            QTimer.singleShot(0, lambda: self.show_error_message(error_message))
+        try:
+            result = await config_manager.remove_instance(instance_id)
+                
+            if result:
+                logger.info(f"成功删除实例: {instance_id}")
+                self.instance_removed.emit(instance_id)
+                QTimer.singleShot(0, lambda: self.refresh_instances())
+            else:
+                error_message = f"无法删除实例: {instance_id}"
+                QTimer.singleShot(0, lambda: self.show_error_message(error_message))
+        except Exception as e:
+            logger.error(f"删除实例时出错: {e}")
+            QTimer.singleShot(0, lambda: self.show_error_message(f"删除实例时出错: {str(e)}"))
     
     @Slot(str)
     def show_error_message(self, message):
@@ -607,22 +614,27 @@ class InstanceManagerPanel(QWidget):
         # 获取API客户端
         client = instance_manager.get_instance(instance_id)
         if not client:
-            # 从配置获取实例信息
-            instance_config = config_manager.get_instance_config(instance_id)
-            if not instance_config:
-                logger.error(f"找不到实例配置: {instance_id}")
-                self.show_error_message(f"找不到实例配置: {instance_id}")
-            return
-        
-            # 创建新的API客户端
-            base_url = instance_config.get("base_url")
-            api_key = instance_config.get("api_key")
-            timeout = instance_config.get("timeout", 30)
-            
-            logger.debug(f"创建新API客户端: {instance_id}, API密钥: {api_key[:3]}***{api_key[-3:] if api_key and len(api_key)>6 else ''})")
-            
-            # 创建新的API客户端，不再使用固定的API前缀
-            client = instance_manager.add_instance(instance_id, base_url, api_key, timeout)
+            try:
+                # 从配置获取实例信息
+                instance_config = config_manager.get_instance_config(instance_id)
+                if not instance_config:
+                    logger.error(f"找不到实例配置: {instance_id}")
+                    self.show_error_message(f"找不到实例配置: {instance_id}")
+                    return
+                
+                # 创建新的API客户端
+                base_url = instance_config.get("base_url")
+                api_key = instance_config.get("api_key")
+                timeout = instance_config.get("timeout", 30)
+                
+                logger.debug(f"创建新API客户端: {instance_id}, API密钥: {api_key[:3]}***{api_key[-3:] if api_key and len(api_key)>6 else ''})")
+                
+                # 创建新的API客户端，不再使用固定的API前缀
+                client = instance_manager.add_instance(instance_id, base_url, api_key, timeout)
+            except Exception as e:
+                logger.error(f"创建API客户端失败: {e}")
+                self.show_error_message(f"创建API客户端失败: {str(e)}")
+                return
         
         # 执行初始化
         asyncio.create_task(self._initialize_instance_async(instance_id, client))

@@ -113,10 +113,10 @@ async def init_services():
         
         # 初始化消息监听
         try:
-            auto_start = await config_store.get_config('system', 'message_listener_auto_start', False)
-            if auto_start:
-                logger.info("正在启动消息监听...")
-                await message_listener.start()
+            # 设置消息监听服务默认为启用状态
+            logger.info("正在启动消息监听...")
+            await message_listener.start()
+            logger.info("消息监听服务已启动")
         except Exception as e:
             logger.error(f"初始化消息监听失败: {str(e)}")
             # 不中断启动流程
