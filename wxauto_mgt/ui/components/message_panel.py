@@ -11,6 +11,9 @@ from datetime import datetime
 from collections import defaultdict
 import asyncio
 import time
+import logging
+import sys
+from io import StringIO
 
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QMetaObject, Q_ARG
 from PySide6.QtGui import QIcon, QAction, QColor, QIntValidator
@@ -24,7 +27,7 @@ from qasync import asyncSlot
 
 from wxauto_mgt.core.api_client import instance_manager
 from wxauto_mgt.core.message_listener import MessageListener, message_listener
-from wxauto_mgt.utils.logging import get_logger
+from wxauto_mgt.utils.logger import setup_logger
 from wxauto_mgt.core.config_manager import config_manager
 
 # 尝试导入配置存储，如果不可用则忽略
@@ -33,8 +36,156 @@ try:
 except ImportError:
     config_store = None
 
-logger = get_logger()
+# 设置日志
+logger = setup_logger(__name__)
 
+# 创建一个自定义的日志处理器类，用于捕获日志到UI
+class QTextEditLogger(logging.Handler):
+    def __init__(self, parent, text_widget):
+        super().__init__()
+        self.text_widget = text_widget
+        self.parent = parent
+        self.setLevel(logging.DEBUG)  # 设置为DEBUG以捕获所有日志
+        self.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        self.log_cache = set()  # 用于去重的缓存
+        self.message_timestamps = {}  # 记录最近消息的时间戳，用于防止短时间内重复
+        # 记录每种事件类型最后显示的时间，用于进一步去重
+        self.event_timestamps = {}
+        # 添加关键事件关键词过滤集合
+        self.key_events = {
+            "轮询": "执行主窗口消息检查",
+            "新消息": "获取到新消息",
+            "收到新消息": "获取到新消息",
+            "收到消息": "获取到新消息",
+            "获取到新消息": "获取到新消息",
+            "获取消息": "获取到新消息",
+            "添加监听对象": "添加监听对象",
+            "成功添加监听对象": "添加监听对象",
+            "保存未读消息": "保存未读消息",
+            "保存消息": "保存未读消息",
+            "插入记录成功": "保存未读消息",
+            "数据库保存": "保存未读消息",
+            "手动移除监听对象": "手动移除监听对象",
+            "移除监听对象": "移除监听对象",
+            "已超时": "超时移除监听对象",
+            "超时移除": "超时移除监听对象",
+            "即将移除": "超时移除监听对象"
+        }
+        # 事件分组的最小间隔时间(秒)
+        self.event_grouping_interval = {
+            "获取到新消息": 5,   # 获取消息类事件5秒内只显示一条
+            "保存未读消息": 3,   # 保存消息类事件3秒内只显示一条
+            "添加监听对象": 2,   # 添加对象类事件2秒内只显示一条
+            "移除监听对象": 2,   # 移除对象类事件2秒内只显示一条
+            "超时移除监听对象": 2 # 超时移除类事件2秒内只显示一条
+        }
+        # 保存已显示事件类型，确保每类事件只在特定时间内显示一次
+        self.shown_event_types = {}  # 改为字典，存储 {事件类型: 最后显示时间}
+        # 添加额外的调试信息
+        logger.debug("日志处理器初始化完成，关键事件过滤词已设置")
+
+    def emit(self, record):
+        # 快速检查 - 如果不是关键事件且级别低于INFO，直接返回
+        if record.levelno < logging.INFO:
+            # 稍后我们会再次检查是否为关键事件，如果是则应该显示
+            pass
+        
+        # 获取日志消息
+        msg = self.format(record)
+        
+        # 检查是否为关键事件
+        is_key_event = False
+        event_type = None
+        
+        # 遍历所有关键词，检查是否匹配
+        for keyword, event_name in self.key_events.items():
+            if keyword in msg:
+                is_key_event = True
+                event_type = event_name
+                break
+        
+        # 首先处理非关键事件的普通日志
+        if not is_key_event:
+            # 检查是否是最近3秒内的重复消息
+            current_time = time.time()
+            message_key = msg
+            
+            if message_key in self.message_timestamps:
+                last_time = self.message_timestamps[message_key]
+                if current_time - last_time < 3:
+                    return  # 重复消息，不显示
+            
+            # 更新时间戳
+            self.message_timestamps[message_key] = current_time
+            
+            # 清理过期的时间戳记录（超过30秒）
+            expired_keys = [k for k, v in self.message_timestamps.items() if current_time - v > 30]
+            for k in expired_keys:
+                del self.message_timestamps[k]
+            
+            # 如果是DEBUG级别，不显示
+            if record.levelno < logging.INFO:
+                return
+                
+            # 过滤掉自动刷新的非关键日志
+            if "自动刷新" in msg:
+                return
+        
+        # 处理关键事件 - 使用专门的去重逻辑
+        else:
+            current_time = time.time()
+            
+            # 对于特定类型的事件，如果在指定时间间隔内，不重复显示同类事件
+            if event_type in self.event_timestamps:
+                last_event_time = self.event_timestamps[event_type]
+                interval = self.event_grouping_interval.get(event_type, 2)  # 默认2秒
+                
+                if current_time - last_event_time < interval:
+                    # 在指定时间间隔内的同类事件，不显示
+                    return
+            
+            # 更新事件时间戳
+            self.event_timestamps[event_type] = current_time
+            
+            # 清理过期的事件时间戳（超过1分钟）
+            expired_events = [k for k, v in self.event_timestamps.items() if current_time - v > 60]
+            for k in expired_events:
+                del self.event_timestamps[k]
+                
+            # 创建关键事件显示消息
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            msg = f"{timestamp} - [关键事件] {event_type}"
+        
+        # 获取日志颜色
+        color = "black"
+        if record.levelno >= logging.ERROR:
+            color = "red"
+        elif record.levelno >= logging.WARNING:
+            color = "orange"
+        elif record.levelno == logging.INFO:
+            color = "green"
+        
+        # 关键事件使用蓝色
+        if is_key_event:
+            color = "blue"
+            # 调试用
+            # print(f"显示关键事件: {event_type} - {msg}")
+        
+        # 更新UI（在主线程中）
+        QMetaObject.invokeMethod(
+            self.text_widget,
+            "append",
+            Qt.QueuedConnection,
+            Q_ARG(str, f"<font color='{color}'>{msg}</font>")
+        )
+        
+        # 确保滚动到底部
+        QMetaObject.invokeMethod(
+            self.text_widget.verticalScrollBar(),
+            "setValue",
+            Qt.QueuedConnection,
+            Q_ARG(int, self.text_widget.verticalScrollBar().maximum())
+        )
 
 class MessageListenerPanel(QWidget):
     """
@@ -73,11 +224,22 @@ class MessageListenerPanel(QWidget):
         poll_interval_ms = self.poll_interval * 1000
         self.countdown_timer.start(poll_interval_ms)  # 每 poll_interval 秒更新一次倒计时
         
+        # 日志清理计时器 - 每10分钟清理一次过长日志
+        self.log_cleanup_timer = QTimer()
+        self.log_cleanup_timer.timeout.connect(self._auto_cleanup_logs)
+        self.log_cleanup_timer.start(10 * 60 * 1000)  # 10分钟
+        
         # 初始化实例下拉框
         self._init_instance_filter()
         
         # 初始化
         self.refresh_listeners()
+        
+        # 初始化日志系统
+        self._init_logging()
+        
+        # 刷新系统状态显示
+        QTimer.singleShot(500, self._refresh_system_status)
         
         logger.debug("消息监听面板已初始化")
     
@@ -160,7 +322,7 @@ class MessageListenerPanel(QWidget):
         
         splitter.addWidget(listener_group)
         
-        # 下部分：消息列表和消息内容
+        # 下部分：消息列表和日志
         message_splitter = QSplitter(Qt.Horizontal)
         
         # 消息列表分组
@@ -168,11 +330,15 @@ class MessageListenerPanel(QWidget):
         message_layout = QVBoxLayout(message_group)
         
         # 消息表格
-        self.message_table = QTableWidget(0, 5)  # 0行，5列
-        self.message_table.setHorizontalHeaderLabels(["时间", "发送者", "接收者", "类型", "状态"])
+        self.message_table = QTableWidget(0, 6)  # 0行，6列
+        self.message_table.setHorizontalHeaderLabels(["时间", "发送者", "接收者", "类型", "状态", "内容"])
         self.message_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.message_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.message_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.message_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.message_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.message_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.message_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)  # 内容列自适应宽度
         self.message_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.message_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.message_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -205,16 +371,32 @@ class MessageListenerPanel(QWidget):
         
         message_splitter.addWidget(message_group)
         
-        # 消息内容分组
-        content_group = QGroupBox("消息内容")
-        content_layout = QVBoxLayout(content_group)
+        # 右侧：日志窗口
+        log_area = QWidget()
+        log_layout = QVBoxLayout(log_area)
         
-        # 消息内容编辑框
-        self.content_text = QTextEdit()
-        self.content_text.setReadOnly(True)
-        content_layout.addWidget(self.content_text)
+        # 日志工具栏
+        log_toolbar = QHBoxLayout()
         
-        message_splitter.addWidget(content_group)
+        # 清空日志按钮
+        self.clear_log_btn = QPushButton("清空日志")
+        self.clear_log_btn.clicked.connect(self._clear_log)
+        log_toolbar.addWidget(self.clear_log_btn)
+        
+        # 刷新状态按钮
+        self.refresh_status_btn = QPushButton("刷新状态")
+        self.refresh_status_btn.clicked.connect(self._refresh_system_status)
+        log_toolbar.addWidget(self.refresh_status_btn)
+        
+        log_toolbar.addStretch()
+        log_layout.addLayout(log_toolbar)
+        
+        # 日志窗口
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        log_layout.addWidget(self.log_text)
+        
+        message_splitter.addWidget(log_area)
         
         splitter.addWidget(message_splitter)
         
@@ -364,11 +546,12 @@ class MessageListenerPanel(QWidget):
             logger.error(f"保存实例配置时出错: {e}")
     
     @asyncSlot()
-    async def refresh_listeners(self, force_reload=False):
+    async def refresh_listeners(self, force_reload=False, silent=False):
         """刷新监听对象列表
         
         Args:
             force_reload: 是否强制从数据库重新加载
+            silent: 是否静默操作，不输出非关键日志
         """
         try:
             # 如果强制刷新，先清空内存中的数据
@@ -380,7 +563,8 @@ class MessageListenerPanel(QWidget):
                     # 清空并强制从数据库重新加载
                     message_listener.listeners = {}
                     await message_listener._load_listeners_from_db()
-                    logger.debug("已强制重新加载监听对象数据")
+                    if not silent:
+                        logger.debug("已强制重新加载监听对象数据")
                 except Exception as e:
                     logger.error(f"强制刷新监听对象失败: {e}")
             
@@ -422,7 +606,8 @@ class MessageListenerPanel(QWidget):
                             self.timeout_edit.setText(str(self.timeout_minutes))
                             message_listener.timeout_minutes = self.timeout_minutes
                         
-                        logger.debug(f"从实例 {instance_id} 加载配置: {config}")
+                        if not silent:
+                            logger.debug(f"从实例 {instance_id} 加载配置: {config}")
                     except Exception as e:
                         logger.error(f"解析实例配置时出错: {e}")
             
@@ -500,149 +685,14 @@ class MessageListenerPanel(QWidget):
             self.status_label.setText(f"共 {total_listeners} 个监听对象")
             
         except Exception as e:
-            logger.error(f"刷新监听对象列表失败: {e}")
-            logger.exception(e)
-    
-    def _calculate_countdown(self, listener_info):
-        """计算监听超时倒计时"""
-        if not listener_info or not hasattr(listener_info, 'last_message_time'):
-            return "未知"
-        
-        # 检查是否已标记为不活跃
-        if hasattr(listener_info, 'active') and not listener_info.active:
-            return "将移除"
-            
-        # 检查是否在启动时已处理过
-        if hasattr(listener_info, 'processed_at_startup') and listener_info.processed_at_startup:
-            return "已处理"
-        
-        # 检查是否在启动宽限期内
-        from wxauto_mgt.core.message_listener import message_listener
-        current_time = time.time()
-        if hasattr(message_listener, 'startup_timestamp') and message_listener.startup_timestamp > 0:
-            grace_period = 10  # 10秒宽限期
-            time_since_startup = current_time - message_listener.startup_timestamp
-            if time_since_startup < grace_period:
-                return "初始化中"
-        
-        last_message_time = listener_info.last_message_time
-        if not last_message_time:
-            return "未知"
-            
-        # 计算剩余时间（秒）
-        remaining_seconds = (last_message_time + self.timeout_minutes * 60) - current_time
-        
-        if remaining_seconds <= 0:
-            # 只返回状态，不在这里设置标记
-            return "已超时"
-        
-        # 格式化为分:秒
-        minutes = int(remaining_seconds // 60)
-        seconds = int(remaining_seconds % 60)
-        
-        return f"{minutes}分{seconds}秒"
-    
-    def _update_countdown(self):
-        """更新所有监听对象的倒计时"""
-        try:
-            # 获取消息监听器引用
-            from wxauto_mgt.core.message_listener import message_listener
-            
-            # 如果消息监听器正在启动过程中处理超时对象，则暂时跳过UI触发的处理
-            if hasattr(message_listener, '_starting_up') and message_listener._starting_up:
-                logger.debug("消息监听器正在启动中，暂时跳过UI触发的超时处理")
-                return
-            
-            # 检查启动宽限期 - 启动后10秒内不执行超时移除
-            current_time = time.time()
-            if hasattr(message_listener, 'startup_timestamp') and message_listener.startup_timestamp > 0:
-                grace_period = 10  # 10秒宽限期
-                time_since_startup = current_time - message_listener.startup_timestamp
-                if time_since_startup < grace_period:
-                    remaining = grace_period - time_since_startup
-                    logger.debug(f"正在启动宽限期内，还剩{remaining:.1f}秒，暂时跳过超时处理")
-                    # 更新所有显示，但不执行超时处理
-                    for row in range(self.listener_table.rowCount()):
-                        try:
-                            instance_id = self.listener_table.item(row, 0).text()
-                            who = self.listener_table.item(row, 1).text()
-                            
-                            listener_info = self.listener_data.get((instance_id, who))
-                            if listener_info:
-                                # 在宽限期内，所有倒计时都显示为"初始化中"
-                                self.listener_table.item(row, 3).setText("初始化中")
-                        except Exception as e:
-                            logger.debug(f"宽限期内更新显示时出错: {e}")
-                    return
-                else:
-                    logger.debug("宽限期已结束，开始正常超时检查")
-                
-            need_refresh = False
-            to_remove = []
-            
-            for row in range(self.listener_table.rowCount()):
-                try:
-                    instance_id = self.listener_table.item(row, 0).text()
-                    who = self.listener_table.item(row, 1).text()
-                    
-                    listener_info = self.listener_data.get((instance_id, who))
-                    if listener_info:
-                        countdown = self._calculate_countdown(listener_info)
-                        self.listener_table.item(row, 3).setText(countdown)
-                        
-                        # 检查是否需要移除（已超时且未标记为已处理移除）
-                        if countdown == "已超时" and not getattr(listener_info, 'marked_for_removal', False):
-                            # 检查是否在启动时已经处理过
-                            if hasattr(listener_info, 'processed_at_startup') and listener_info.processed_at_startup:
-                                logger.debug(f"监听对象 {instance_id}:{who} 在启动时已处理，不需再处理")
-                                continue
-                                
-                            # 标记为已处理，避免重复移除
-                            listener_info.marked_for_removal = True
-                            # 添加到待移除列表
-                            to_remove.append((instance_id, who))
-                            need_refresh = True
-                            logger.info(f"监听对象 {instance_id}:{who} 已超时，将执行移除操作")
-                except Exception as e:
-                    logger.debug(f"更新倒计时时出错: {e}")
-            
-            # 异步移除超时的监听对象
-            if to_remove:
-                # 批量移除并最后只刷新一次
-                async def remove_batch():
-                    try:
-                        for instance_id, who in to_remove:
-                            await self._remove_listener(instance_id, who, show_dialog=False)
-                        
-                        # 完成后强制刷新一次
-                        await self.refresh_listeners(force_reload=True)
-                        logger.info("已完成所有超时监听对象的移除操作")
-                    except Exception as e:
-                        logger.error(f"批量移除超时监听对象时出错: {e}")
-                        logger.exception(e)
-                
-                # 启动批量移除任务
-                task = asyncio.create_task(remove_batch())
-                # 添加完成回调以记录任何异常
-                task.add_done_callback(lambda t: logger.error(f"移除超时监听对象任务出错: {t.exception()}") if t.exception() else None)
-        except Exception as e:
-            logger.error(f"更新倒计时出错: {e}")
-            logger.exception(e)
-    
-    @asyncSlot()
-    async def _toggle_listener(self):
-        """切换监听服务状态"""
-        try:
-            if message_listener.running:
-                logger.info("停止消息监听服务")
-                await message_listener.stop()
-                self.start_btn.setText("启动监听")
+            # 捕获并记录常见连接错误，但不输出详细堆栈，减少日志量
+            if "Connection refused" in str(e) or "Not connected" in str(e):
+                if not silent:
+                    logger.error(f"刷新监听对象列表失败(连接问题): {e}")
             else:
-                logger.info("启动消息监听服务")
-                await message_listener.start()
-                self.start_btn.setText("停止监听")
-                # 启动后立即刷新一次监听对象
-                self.refresh_listeners()
+                logger.error(f"刷新监听对象列表失败: {e}")
+                if not silent:
+                    logger.exception(e)
         except Exception as e:
             logger.error(f"切换监听服务状态时出错: {e}")
             QMessageBox.critical(self, "操作失败", f"切换监听服务状态时出错: {str(e)}")
@@ -680,7 +730,8 @@ class MessageListenerPanel(QWidget):
     async def _add_listener_async(self, instance_id: str, chat_name: str, **kwargs):
         """异步添加监听对象"""
         try:
-            logger.info(f"正在添加监听对象: 实例={instance_id}, 聊天={chat_name}")
+            # 确保使用能匹配关键词的日志格式
+            logger.info(f"添加监听对象: 实例={instance_id}, 聊天={chat_name}")
             
             # 调用消息监听器添加监听对象
             success = await message_listener.add_listener(
@@ -731,7 +782,13 @@ class MessageListenerPanel(QWidget):
             show_dialog: 是否显示对话框
         """
         try:
-            logger.info(f"正在移除监听对象: 实例={instance_id}, 聊天={who}")
+            # 如果是超时移除，不需要输出详细日志，由_update_countdown统一记录
+            is_timeout_removal = not show_dialog
+            
+            if not is_timeout_removal:
+                logger.info(f"手动移除监听对象: 实例={instance_id}, 聊天={who}")
+            else:
+                logger.info(f"超时移除监听对象: 实例={instance_id}, 聊天={who}")
             
             # 确保message_listener已经初始化
             from wxauto_mgt.core.message_listener import message_listener
@@ -740,26 +797,36 @@ class MessageListenerPanel(QWidget):
             success = await message_listener.remove_listener(instance_id, who)
             
             if success:
-                logger.info(f"成功移除监听对象: {who}")
+                if not is_timeout_removal:
+                    logger.info(f"成功移除监听对象: {who}")
+                else:
+                    logger.info(f"成功超时移除监听对象: {who}")
                 # 发送信号
                 self.listener_removed.emit(instance_id, who)
                 # 强制刷新监听对象列表
-                await self.refresh_listeners(force_reload=True)
+                if not is_timeout_removal:
+                    await self.refresh_listeners(force_reload=True)
                 if show_dialog:
                     QMessageBox.information(self, "移除成功", f"成功移除监听对象: {who}")
             else:
-                logger.warning(f"移除监听对象失败: {who}")
+                if not is_timeout_removal:
+                    logger.warning(f"移除监听对象失败: {who}")
                 # 尝试强制刷新
-                await self.refresh_listeners(force_reload=True)
+                if not is_timeout_removal:
+                    await self.refresh_listeners(force_reload=True)
                 if show_dialog:
                     QMessageBox.warning(self, "移除失败", f"无法移除监听对象: {who}")
         except Exception as e:
-            logger.error(f"移除监听对象时出错: {e}")
-            logger.exception(e)  # 记录完整的错误堆栈
-            if show_dialog:
-                QMessageBox.critical(self, "操作失败", f"移除监听对象时出错: {str(e)}")
+            # 只在手动移除时记录详细错误
+            if not show_dialog:
+                logger.error(f"超时移除监听对象时出错: {str(e)}")
+            else:
+                logger.error(f"手动移除监听对象时出错: {e}")
+                logger.exception(e)  # 只在手动移除时记录完整的错误堆栈
+                if show_dialog:
+                    QMessageBox.critical(self, "操作失败", f"移除监听对象时出错: {str(e)}")
     
-    async def _view_listener_messages(self, checked=False, instance_id=None, wxid=None):
+    async def _view_listener_messages(self, checked=False, instance_id=None, wxid=None, silent=False):
         """
         查看监听对象的消息
         
@@ -767,6 +834,7 @@ class MessageListenerPanel(QWidget):
             checked: 按钮是否被选中
             instance_id: 实例ID
             wxid: 微信ID
+            silent: 是否静默操作，不输出非关键日志
         """
         try:
             # 记住当前选中的行
@@ -787,11 +855,13 @@ class MessageListenerPanel(QWidget):
                 logger.error("查看消息时缺少实例ID或微信ID")
                 return
             
-            logger.debug(f"正在查看消息: 实例={instance_id}, 聊天={wxid}")
+            if not silent:
+                logger.debug(f"正在查看消息: 实例={instance_id}, 聊天={wxid}")
             
             # 获取消息列表
             messages = await self._get_messages(instance_id, wxid)
-            logger.debug(f"获取到 {len(messages)} 条消息")
+            if not silent:
+                logger.debug(f"获取到 {len(messages)} 条消息")
             
             # 按照多个维度进行去重处理
             unique_messages = {}
@@ -820,7 +890,8 @@ class MessageListenerPanel(QWidget):
                 reverse=True
             )
             
-            logger.debug(f"去重后剩余 {len(sorted_messages)} 条消息")
+            if not silent:
+                logger.debug(f"去重后剩余 {len(sorted_messages)} 条消息")
             
             # 在UI线程中直接更新表格
             def update_ui():
@@ -842,10 +913,10 @@ class MessageListenerPanel(QWidget):
                         self.message_table.selectRow(new_selected_row)
                         self._on_message_selected(new_selected_row, 0)
                     
-                    # 更新状态标签
-                    count = len(sorted_messages)
+                    # 更新状态标签 - 使用可见消息计数
+                    visible_count = self._get_visible_message_count()
                     listener_count = self.listener_table.rowCount()
-                    self.status_label.setText(f"共 {listener_count} 个监听对象，{count} 条消息")
+                    self.status_label.setText(f"共 {listener_count} 个监听对象，{visible_count} 条消息")
                 except Exception as e:
                     logger.error(f"更新UI时出错: {e}")
             
@@ -853,8 +924,14 @@ class MessageListenerPanel(QWidget):
             QTimer.singleShot(0, update_ui)
             
         except Exception as e:
-            logger.error(f"查看监听对象消息时出错: {e}")
-            logger.error(f"错误详细信息", exc_info=True)
+            # 区分常见连接错误和其他错误
+            if "Connection refused" in str(e) or "Not connected" in str(e):
+                if not silent:
+                    logger.error(f"查看监听对象消息时出错(连接问题): {e}")
+            else:
+                logger.error(f"查看监听对象消息时出错: {e}")
+                if not silent:
+                    logger.error(f"错误详细信息", exc_info=True)
     
     @asyncSlot()
     async def _auto_refresh(self):
@@ -862,16 +939,31 @@ class MessageListenerPanel(QWidget):
         if not self.auto_refresh_check.isChecked():
             return
             
-        # 刷新监听对象列表
-        await self.refresh_listeners()
-        
-        # 更新倒计时
-        self._update_countdown()
-        
-        # 刷新消息列表（如果有选中的监听对象）
-        if self.selected_listener:
-            instance_id, wxid = self.selected_listener
-            await self._view_listener_messages(instance_id=instance_id, wxid=wxid)
+        try:    
+            # 刷新监听对象列表 - 使用静默模式，不产生大量日志
+            await self.refresh_listeners(force_reload=False, silent=True)
+            
+            # 更新倒计时
+            self._update_countdown()
+            
+            # 刷新消息列表（如果有选中的监听对象）- 使用静默模式
+            if self.selected_listener:
+                instance_id, wxid = self.selected_listener
+                await self._view_listener_messages(instance_id=instance_id, wxid=wxid, silent=True)
+                
+            # 添加简短状态更新到日志窗口
+            refresh_time = datetime.now().strftime('%H:%M:%S')
+            listener_count = self.listener_table.rowCount()
+            message_count = self._get_visible_message_count()
+            self.log_text.append(f"<font color='blue'>{refresh_time} - 自动刷新完成: {listener_count}个监听对象, {message_count}条消息</font>")
+            
+            # 滚动到底部
+            scrollbar = self.log_text.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+        except Exception as e:
+            # 只记录严重错误，普通连接错误不记录
+            if "Connection refused" not in str(e) and "Not connected" not in str(e):
+                logger.error(f"自动刷新出错: {e}")
     
     @Slot("QVariant")
     def _add_message_to_table_safe(self, message):
@@ -963,10 +1055,12 @@ class MessageListenerPanel(QWidget):
             QMessageBox.critical(self, "刷新失败", f"更新消息显示时出错: {str(e)}")
     
     @Slot(int)
-    def _update_status_count(self, count):
+    def _update_status_count(self, count=None):
         """更新状态栏消息计数"""
         try:
-            self.status_label.setText(f"共 {self.listener_table.rowCount()} 个监听对象，{count} 条消息")
+            # 使用计算得到的可见消息数量
+            visible_count = self._get_visible_message_count()
+            self.status_label.setText(f"共 {self.listener_table.rowCount()} 个监听对象，{visible_count} 条消息")
         except Exception as e:
             logger.error(f"更新状态标签时出错: {e}")
     
@@ -996,7 +1090,11 @@ class MessageListenerPanel(QWidget):
             
             # 执行查询
             messages = await db_manager.fetchall(query, (instance_id, wxid))
-            logger.debug(f"获取到 {len(messages)} 条消息")
+            
+            # 记录获取到的消息数量 - 使用匹配关键词的格式
+            if messages and len(messages) > 0:
+                # 避免重复日志，使用统一的"获取到新消息"关键词
+                logger.info(f"获取到新消息: 实例={instance_id}, 聊天={wxid}, 数量={len(messages)}")
             
             # 格式化消息
             formatted_messages = []
@@ -1031,78 +1129,78 @@ class MessageListenerPanel(QWidget):
     
     def _add_message_to_table(self, message: Dict):
         """
-        将消息添加到表格
+        添加消息到表格
         
         Args:
-            message: 消息数据字典
+            message: 消息字典
         """
-        row = self.message_table.rowCount()
-        self.message_table.insertRow(row)
-        
-        # 时间
-        timestamp = message.get("timestamp", 0)
         try:
-            # 转换时间戳为日期时间字符串
-            if timestamp > 0:
-                time_str = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-            else:
-                time_str = "未知时间"
-        except Exception as e:
-            logger.error(f"时间戳转换错误: {timestamp}, {e}")
-            time_str = "时间格式错误"
+            # 检查消息ID是否已存在
+            message_id = message.get('message_id', '')
+            if not message_id:
+                return
+                
+            # 检查是否已经在表格中
+            for row in range(self.message_table.rowCount()):
+                if self.message_table.item(row, 0).data(Qt.UserRole) == message_id:
+                    return
             
-        time_item = QTableWidgetItem(time_str)
-        time_item.setData(Qt.UserRole, message.get("message_id", ""))
-        time_item.setData(Qt.UserRole + 1, message.get("content", ""))
-        self.message_table.setItem(row, 0, time_item)
-        
-        # 发送者
-        sender = message.get("sender", "")
-        sender_remark = message.get("sender_remark", "")
-        display_sender = sender_remark if sender_remark else sender
-        sender_item = QTableWidgetItem(display_sender)
-        self.message_table.setItem(row, 1, sender_item)
-        
-        # 接收者
-        receiver = message.get("receiver", "")
-        receiver_item = QTableWidgetItem(receiver)
-        self.message_table.setItem(row, 2, receiver_item)
-        
-        # 类型
-        message_type = message.get("type", "text")
-        type_map = {
-            "text": "文本",
-            "image": "图片",
-            "video": "视频",
-            "voice": "语音",
-            "file": "文件",
-            "link": "链接",
-            "friend": "好友消息",
-            "sys": "系统消息"
-        }
-        type_display = type_map.get(message_type, message_type)
-        type_item = QTableWidgetItem(type_display)
-        self.message_table.setItem(row, 3, type_item)
-        
-        # 状态
-        status = message.get("status", "pending")
-        status_text = {
-            "pending": "待处理",
-            "processing": "处理中",
-            "processed": "已处理",
-            "failed": "失败"
-        }.get(status, status)
-        
-        status_item = QTableWidgetItem(status_text)
-        status_color = {
-            "pending": QColor(0, 0, 255),  # 蓝色
-            "processing": QColor(255, 165, 0),  # 橙色
-            "processed": QColor(0, 170, 0),  # 绿色
-            "failed": QColor(255, 0, 0)  # 红色
-        }.get(status, QColor(0, 0, 0))
-        
-        status_item.setForeground(status_color)
-        self.message_table.setItem(row, 4, status_item)
+            # 获取消息信息
+            instance_id = message.get('instance_id', '')
+            chat_name = message.get('chat_name', '')
+            content = message.get('content', '')
+            create_time = message.get('timestamp', 0)
+            sender = message.get('sender', '')
+            sender_remark = message.get('sender_remark', '')
+            msg_type = message.get('type', 'text')
+            status = message.get('status', '待处理')
+            
+            # 转换时间戳
+            time_str = datetime.fromtimestamp(create_time).strftime('%Y-%m-%d %H:%M:%S') if create_time else ''
+            
+            # 显示发送者备注或ID
+            display_sender = sender_remark if sender_remark else sender
+            
+            # 添加新行
+            row = self.message_table.rowCount()
+            self.message_table.insertRow(row)
+            
+            # 设置时间
+            time_item = QTableWidgetItem(time_str)
+            time_item.setData(Qt.UserRole, message_id)  # 存储消息ID
+            time_item.setData(Qt.UserRole + 1, content)  # 存储消息内容
+            self.message_table.setItem(row, 0, time_item)
+            
+            # 设置发送者
+            self.message_table.setItem(row, 1, QTableWidgetItem(display_sender))
+            
+            # 设置接收者
+            self.message_table.setItem(row, 2, QTableWidgetItem(chat_name))
+            
+            # 设置消息类型
+            self.message_table.setItem(row, 3, QTableWidgetItem(msg_type))
+            
+            # 设置状态
+            status_item = QTableWidgetItem(status)
+            if status == '已处理':
+                status_item.setForeground(QColor("gray"))
+            else:
+                status_item.setForeground(QColor("blue"))
+            self.message_table.setItem(row, 4, status_item)
+            
+            # 设置内容（新增）
+            # 如果内容过长，则截断显示
+            display_content = content
+            if len(content) > 100:
+                display_content = content[:97] + "..."
+            self.message_table.setItem(row, 5, QTableWidgetItem(display_content))
+            
+            # 如果是当前过滤的实例，则显示，否则隐藏
+            if self.current_instance_id and instance_id != self.current_instance_id:
+                self.message_table.hideRow(row)
+                
+        except Exception as e:
+            logger.error(f"添加消息到表格时出错: {e}")
     
     def _filter_messages(self):
         """过滤消息列表"""
@@ -1118,6 +1216,10 @@ class MessageListenerPanel(QWidget):
                 
             self.message_table.setRowHidden(row, not show_row)
             
+        # 过滤后更新状态栏显示的消息计数
+        visible_count = self._get_visible_message_count()
+        self.status_label.setText(f"共 {self.listener_table.rowCount()} 个监听对象，{visible_count} 条消息")
+    
     def _toggle_auto_refresh(self, state):
         """切换自动刷新状态"""
         if state == Qt.Checked:
@@ -1195,17 +1297,19 @@ class MessageListenerPanel(QWidget):
         if row < 0:
             return
             
-        # 获取所选消息的内容
+        # 已显示消息内容在表格中，不需要再单独加载和显示了
+        # 但可以在状态栏显示完整信息
         message_id = self.message_table.item(row, 0).data(Qt.UserRole)
-        content = self.message_table.item(row, 0).data(Qt.UserRole + 1)
+        self.selected_message_id = message_id
         
-        # 如果存储的内容为空，尝试从数据库获取
-        if not content:
-            asyncio.create_task(self._load_message_content(message_id))
-            return
+        # 更新按钮状态
+        sender = self.message_table.item(row, 1).text()
+        status = self.message_table.item(row, 4).text()
         
-        # 显示消息内容
-        self.content_text.setText(content)
+        # 更新状态栏显示
+        self.status_label.setText(f"选中消息: ID={message_id} | 发送者={sender} | 状态={status}")
+        
+        logger.debug(f"选中消息: {message_id}")
     
     def _show_listener_context_menu(self, position):
         """
@@ -1312,24 +1416,24 @@ class MessageListenerPanel(QWidget):
                 content = result['content']
                 # 更新UI
                 QMetaObject.invokeMethod(
-                    self.content_text,
-                    "setText",
+                    self.log_text,
+                    "append",
                     Qt.QueuedConnection,
                     Q_ARG(str, content)
                 )
             else:
                 # 未找到消息
                 QMetaObject.invokeMethod(
-                    self.content_text,
-                    "setText",
+                    self.log_text,
+                    "append",
                     Qt.QueuedConnection,
                     Q_ARG(str, f"无法加载消息内容: 消息ID {message_id} 不存在")
                 )
         except Exception as e:
             logger.error(f"加载消息内容时出错: {e}")
             QMetaObject.invokeMethod(
-                self.content_text,
-                "setText",
+                self.log_text,
+                "append",
                 Qt.QueuedConnection,
                 Q_ARG(str, f"加载消息内容时出错: {str(e)}")
             )
@@ -1522,4 +1626,335 @@ class MessageListenerPanel(QWidget):
     @Slot(str, str)
     def showSuccessMessage(self, title, message):
         """显示成功消息"""
-        QMessageBox.information(self, title, message) 
+        QMessageBox.information(self, title, message)
+    
+    def _init_logging(self):
+        """初始化日志系统，捕获相关日志到UI"""
+        try:
+            # 创建自定义日志处理器
+            self.log_handler = QTextEditLogger(self, self.log_text)
+            
+            # 获取根日志记录器
+            root_logger = logging.getLogger('wxauto_mgt')
+            
+            # 设置日志级别为DEBUG，确保捕获所有级别的日志
+            self.log_handler.setLevel(logging.DEBUG)
+            
+            # 删除之前可能添加过的处理器，避免重复
+            for handler in root_logger.handlers[:]:
+                if isinstance(handler, QTextEditLogger):
+                    root_logger.removeHandler(handler)
+            
+            # 添加我们的处理器到根日志记录器
+            root_logger.addHandler(self.log_handler)
+            
+            # 确保根日志记录器级别设置为DEBUG
+            # 这样所有的日志都能被传递到处理器
+            root_logger.setLevel(logging.DEBUG)
+            
+            # 捕获消息监听模块的日志
+            message_listener_logger = logging.getLogger('wxauto_mgt.core.message_listener')
+            # 首先移除已有的处理器
+            for handler in message_listener_logger.handlers[:]:
+                if isinstance(handler, QTextEditLogger):
+                    message_listener_logger.removeHandler(handler)
+            message_listener_logger.addHandler(self.log_handler)
+            message_listener_logger.setLevel(logging.DEBUG)
+            
+            # 捕获数据库模块的日志
+            db_logger = logging.getLogger('wxauto_mgt.data')
+            # 首先移除已有的处理器
+            for handler in db_logger.handlers[:]:
+                if isinstance(handler, QTextEditLogger):
+                    db_logger.removeHandler(handler)
+            db_logger.addHandler(self.log_handler)
+            db_logger.setLevel(logging.DEBUG)
+            
+            # 捕获API客户端模块的日志
+            api_logger = logging.getLogger('wxauto_mgt.core.api_client')
+            # 首先移除已有的处理器
+            for handler in api_logger.handlers[:]:
+                if isinstance(handler, QTextEditLogger):
+                    api_logger.removeHandler(handler)
+            api_logger.addHandler(self.log_handler)
+            api_logger.setLevel(logging.DEBUG)
+            
+            # 捕获其他模块的日志
+            filter_logger = logging.getLogger('wxauto_mgt.filters')
+            for handler in filter_logger.handlers[:]:
+                if isinstance(handler, QTextEditLogger):
+                    filter_logger.removeHandler(handler)
+            filter_logger.addHandler(self.log_handler)
+            filter_logger.setLevel(logging.DEBUG)
+            
+            utils_logger = logging.getLogger('wxauto_mgt.utils')
+            for handler in utils_logger.handlers[:]:
+                if isinstance(handler, QTextEditLogger):
+                    utils_logger.removeHandler(handler)
+            utils_logger.addHandler(self.log_handler)
+            utils_logger.setLevel(logging.DEBUG)
+            
+            # 初始日志消息 - 确保有一条初始日志
+            logger.info("消息监听界面已启动，日志系统已连接")
+            
+            # 添加一些系统状态信息
+            try:
+                from wxauto_mgt.core.message_listener import message_listener
+                listener_count = len(message_listener.get_active_listeners())
+                logger.info(f"当前监听对象数量: {listener_count}")
+                logger.info(f"轮询间隔: {self.poll_interval}秒, 超时时间: {self.timeout_minutes}分钟")
+            except Exception as e:
+                logger.warning(f"获取系统状态信息失败: {e}")
+                
+            # 记录日志系统初始化成功
+            logger.debug("日志系统初始化完成")
+            print("日志系统初始化完成 - 控制台测试输出")
+            
+        except Exception as e:
+            print(f"初始化日志系统时出错: {e}")
+            # 使用QMessageBox显示错误，因为日志系统可能未初始化
+            QMessageBox.critical(self, "日志系统错误", f"初始化日志系统时出错: {str(e)}")
+    
+    def _clear_log(self):
+        """清空日志窗口"""
+        self.log_text.clear()
+        if hasattr(self, 'log_handler'):
+            self.log_handler.log_cache.clear()
+        logger.info("日志已清空")
+
+    @Slot(str, str)
+    def appendLogMessage(self, message, color):
+        """向日志窗口添加消息，使用指定颜色"""
+        try:
+            # 设置文本颜色
+            color_obj = QColor("black")  # 默认黑色
+            if color == "red":
+                color_obj = QColor("red")
+            elif color == "orange":
+                color_obj = QColor(255, 165, 0)  # 橙色
+            elif color == "blue":
+                color_obj = QColor("blue")
+                
+            # 设置颜色并添加消息
+            self.log_text.setTextColor(color_obj)
+            self.log_text.append(message)
+            
+            # 滚动到底部
+            scrollbar = self.log_text.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+        except Exception as e:
+            print(f"添加日志消息时出错: {e}")  # 使用print避免递归 
+
+    def _calculate_countdown(self, listener_info):
+        """计算监听超时倒计时"""
+        if not listener_info or not hasattr(listener_info, 'last_message_time'):
+            return "未知"
+        
+        # 检查是否已标记为不活跃
+        if hasattr(listener_info, 'active') and not listener_info.active:
+            return "将移除"
+            
+        # 检查是否在启动时已处理过
+        if hasattr(listener_info, 'processed_at_startup') and listener_info.processed_at_startup:
+            return "已处理"
+        
+        # 检查是否在启动宽限期内
+        from wxauto_mgt.core.message_listener import message_listener
+        current_time = time.time()
+        if hasattr(message_listener, 'startup_timestamp') and message_listener.startup_timestamp > 0:
+            grace_period = 10  # 10秒宽限期
+            time_since_startup = current_time - message_listener.startup_timestamp
+            if time_since_startup < grace_period:
+                return "初始化中"
+        
+        last_message_time = listener_info.last_message_time
+        if not last_message_time:
+            return "未知"
+            
+        # 计算剩余时间（秒）
+        remaining_seconds = (last_message_time + self.timeout_minutes * 60) - current_time
+        
+        if remaining_seconds <= 0:
+            # 只返回状态，不在这里设置标记
+            return "已超时"
+        
+        # 格式化为分:秒
+        minutes = int(remaining_seconds // 60)
+        seconds = int(remaining_seconds % 60)
+        
+        return f"{minutes}分{seconds}秒"
+    
+    def _update_countdown(self):
+        """更新所有监听对象的倒计时"""
+        try:
+            # 获取消息监听器引用
+            from wxauto_mgt.core.message_listener import message_listener
+            
+            # 如果消息监听器正在启动过程中处理超时对象，则暂时跳过UI触发的处理
+            if hasattr(message_listener, '_starting_up') and message_listener._starting_up:
+                # 不频繁输出日志，降低日志量
+                return
+            
+            # 检查启动宽限期 - 启动后10秒内不执行超时移除
+            current_time = time.time()
+            if hasattr(message_listener, 'startup_timestamp') and message_listener.startup_timestamp > 0:
+                grace_period = 10  # 10秒宽限期
+                time_since_startup = current_time - message_listener.startup_timestamp
+                if time_since_startup < grace_period:
+                    # 不频繁输出日志，降低日志量
+                    # 更新所有显示，但不执行超时处理
+                    for row in range(self.listener_table.rowCount()):
+                        try:
+                            instance_id = self.listener_table.item(row, 0).text()
+                            who = self.listener_table.item(row, 1).text()
+                            
+                            listener_info = self.listener_data.get((instance_id, who))
+                            if listener_info:
+                                # 在宽限期内，所有倒计时都显示为"初始化中"
+                                self.listener_table.item(row, 3).setText("初始化中")
+                        except Exception as e:
+                            # 不频繁记录这类错误日志
+                            pass
+                    return
+            
+            # 批量收集需要移除的监听对象
+            need_refresh = False
+            to_remove = []
+            
+            # 提前记录监听对象的状态，只记录一次
+            listener_status = {}
+            
+            # 第一遍扫描：更新UI并收集超时对象
+            for row in range(self.listener_table.rowCount()):
+                try:
+                    instance_id = self.listener_table.item(row, 0).text()
+                    who = self.listener_table.item(row, 1).text()
+                    
+                    listener_info = self.listener_data.get((instance_id, who))
+                    if listener_info:
+                        countdown = self._calculate_countdown(listener_info)
+                        self.listener_table.item(row, 3).setText(countdown)
+                        
+                        # 记录监听对象状态
+                        listener_status[(instance_id, who)] = countdown
+                        
+                        # 检查是否需要移除（已超时且未标记为已处理移除）
+                        if countdown == "已超时" and not getattr(listener_info, 'marked_for_removal', False):
+                            # 检查是否在启动时已经处理过
+                            if hasattr(listener_info, 'processed_at_startup') and listener_info.processed_at_startup:
+                                # 不频繁记录日志，降低日志量
+                                continue
+                                
+                            # 标记为已处理，避免重复移除
+                            listener_info.marked_for_removal = True
+                            # 添加到待移除列表
+                            to_remove.append((instance_id, who))
+                            need_refresh = True
+                            # 只有当实际要移除时，才记录日志
+                            logger.info(f"监听对象 {instance_id}:{who} 已超时，即将移除")
+                except Exception as e:
+                    # 不记录此类错误日志，降低日志量
+                    pass
+            
+            # 如果有超时监听对象需要移除，一次性批量处理
+            if to_remove:
+                if len(to_remove) > 0:
+                    # 记录一条汇总日志，而不是每个监听对象一条
+                    logger.warning(f"超时移除: 发现 {len(to_remove)} 个超时监听对象，开始批量移除")
+                    
+                # 批量移除并最后只刷新一次
+                async def remove_batch():
+                    try:
+                        # 记录移除开始
+                        logger.info(f"超时移除开始: {len(to_remove)} 个监听对象")
+                        
+                        # 批量移除，减少不必要的日志
+                        for i, (instance_id, who) in enumerate(to_remove):
+                            # 每5个记录一次进度，避免日志过多
+                            if i % 5 == 0 or i == len(to_remove) - 1:
+                                logger.info(f"超时移除进度: {i+1}/{len(to_remove)}")
+                            await self._remove_listener(instance_id, who, show_dialog=False)
+                        
+                        # 完成后强制刷新一次
+                        await self.refresh_listeners(force_reload=True)
+                        # 记录完成日志
+                        logger.info(f"超时移除完成: {len(to_remove)} 个监听对象")
+                    except Exception as e:
+                        logger.error(f"批量移除超时监听对象时出错: {e}")
+                        
+                # 启动批量移除任务
+                task = asyncio.create_task(remove_batch())
+                # 添加完成回调以记录任何异常
+                task.add_done_callback(lambda t: logger.error(f"移除超时监听对象任务出错: {t.exception()}") if t.exception() else None)
+        except Exception as e:
+            logger.error(f"更新倒计时出错: {e}")
+            # 仅在真正出错时记录异常堆栈
+            if "Connection refused" not in str(e) and "Not connected" not in str(e):
+                logger.exception(e) 
+
+    def _refresh_system_status(self):
+        """刷新并显示系统状态信息到日志窗口"""
+        try:
+            # 添加分隔线，而不是清空日志窗口
+            self.log_text.append("<font color='gray'>------------- 系统状态更新 -------------</font>")
+            
+            # 输出系统状态信息
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.log_text.append(f"<font color='blue'>系统状态更新时间: {current_time}</font>")
+            
+            # 获取监听器状态
+            from wxauto_mgt.core.message_listener import message_listener
+            listener_count = sum(len(listeners) for listeners in message_listener.get_active_listeners().values())
+            running_status = "运行中" if message_listener.running else "已停止"
+            
+            self.log_text.append(f"<font color='black'>消息监听服务: {running_status}</font>")
+            self.log_text.append(f"<font color='black'>当前监听对象数量: {listener_count}</font>")
+            self.log_text.append(f"<font color='black'>轮询间隔: {self.poll_interval}秒</font>")
+            self.log_text.append(f"<font color='black'>超时时间: {self.timeout_minutes}分钟</font>")
+            
+            # 获取超时统计
+            timeout_count = 0
+            active_count = 0
+            for instance_id, listeners in message_listener.listeners.items():
+                for wxid, listener_info in listeners.items():
+                    if hasattr(listener_info, 'marked_for_removal') and listener_info.marked_for_removal:
+                        timeout_count += 1
+                    else:
+                        active_count += 1
+            
+            if timeout_count > 0:
+                self.log_text.append(f"<font color='orange'>当前有 {timeout_count} 个监听对象已超时</font>")
+            
+            self.log_text.append("<font color='gray'>---------------------------------------</font>")
+            
+            # 将焦点滚动到底部
+            scrollbar = self.log_text.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+            
+            logger.info(f"系统状态已刷新，当前有 {active_count} 个活跃监听对象")
+        except Exception as e:
+            self.log_text.append(f"<font color='red'>获取系统状态信息失败: {str(e)}</font>")
+            logger.error(f"刷新系统状态时出错: {e}") 
+
+    def _auto_cleanup_logs(self):
+        """自动清理过长日志"""
+        try:
+            # 获取日志文本
+            log_text = self.log_text.toPlainText()
+            
+            # 检查日志长度
+            if len(log_text) > 10000:  # 假设10000字符为过长日志
+                # 清理日志
+                self.log_text.clear()
+                logger.info("日志已自动清理")
+        except Exception as e:
+            logger.error(f"自动清理日志时出错: {e}")
+    
+    def _get_visible_message_count(self):
+        """计算当前可见的消息数量（考虑过滤条件）"""
+        count = 0
+        for row in range(self.message_table.rowCount()):
+            if not self.message_table.isRowHidden(row):
+                count += 1
+        return count
+        
