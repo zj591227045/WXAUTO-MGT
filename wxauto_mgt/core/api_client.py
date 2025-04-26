@@ -36,7 +36,7 @@ class WxAutoApiClient:
         self._initialized = False
         self._connected = False
         
-    def _get(self, endpoint: str, params: Dict = None) -> Dict:
+    async def _get(self, endpoint: str, params: Dict = None) -> Dict:
         """发送GET请求"""
         try:
             # 将布尔值转换为小写字符串
@@ -44,17 +44,27 @@ class WxAutoApiClient:
                 params = {k: str(v).lower() if isinstance(v, bool) else v 
                          for k, v in params.items()}
             
-            response = requests.get(
-                f"{self.base_url}{endpoint}",
-                params=params,
-                headers={'X-API-Key': self.api_key}
-            )
-            response.raise_for_status()
-            data = response.json()
-            if data.get('code') != 0:
-                raise ApiError(data.get('message', '未知错误'), data.get('code', -1))
-            return data.get('data', {})
-        except requests.exceptions.RequestException as e:
+            # 使用aiohttp发送异步请求
+            url = f"{self.base_url}{endpoint}"
+            headers = {'X-API-Key': self.api_key}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, headers=headers) as response:
+                    if response.status != 200:
+                        text = await response.text()
+                        logger.error(f"GET请求失败，状态码: {response.status}, 响应: {text}")
+                        raise ApiError(f"HTTP错误: {response.status}")
+                    
+                    data = await response.json()
+                    
+                    if data.get('code') != 0:
+                        raise ApiError(data.get('message', '未知错误'), data.get('code', -1))
+                    
+                    return data.get('data', {})
+        except aiohttp.ClientError as e:
+            logger.error(f"GET请求网络错误: {e}")
+            raise ApiError(str(e))
+        except Exception as e:
             logger.error(f"GET请求失败: {e}")
             raise ApiError(str(e))
             
@@ -111,7 +121,7 @@ class WxAutoApiClient:
     async def get_status(self) -> Dict:
         """获取微信状态"""
         try:
-            data = self._get('/api/wechat/status')
+            data = await self._get('/api/wechat/status')
             self._connected = data.get('isOnline', False)
             return data
         except Exception as e:
@@ -122,7 +132,7 @@ class WxAutoApiClient:
     async def get_health_info(self) -> Dict:
         """获取服务健康状态信息，包含启动时间和状态"""
         try:
-            data = self._get('/api/health')
+            data = await self._get('/api/health')
             return {
                 "status": data.get('status', 'error'),
                 "uptime": data.get('uptime', 0),
@@ -144,7 +154,7 @@ class WxAutoApiClient:
             Dict: 系统资源指标，包括CPU和内存使用率
         """
         try:
-            data = self._get('/api/system/resources')
+            data = await self._get('/api/system/resources')
             cpu_data = data.get('cpu', {})
             memory_data = data.get('memory', {})
             
@@ -193,7 +203,7 @@ class WxAutoApiClient:
                 'saveVoice': str(save_voice).lower(),
                 'parseUrl': str(parse_url).lower()
             }
-            data = self._get('/api/message/get-next-new', params=params)
+            data = await self._get('/api/message/get-next-new', params=params)
             messages = []
             for chat_name, chat_messages in data.get('messages', {}).items():
                 for msg in chat_messages:
@@ -207,6 +217,9 @@ class WxAutoApiClient:
     async def add_listener(self, who: str, **kwargs) -> bool:
         """添加监听对象"""
         try:
+            import requests
+            import json
+            
             api_params = {
                 'who': who,
                 'savepic': kwargs.get('save_pic', False),
@@ -219,49 +232,164 @@ class WxAutoApiClient:
             
             api_params = {k: v for k, v in api_params.items() if v is not None}
             
-            logger.debug(f"添加监听对象参数: {api_params}")
-            result = await self._post('/api/message/listen/add', json=api_params)
-            logger.info(f"成功添加监听对象 {who}")
-            return True
+            # 构建完整的API URL和请求头
+            url = f"{self.base_url}/api/message/listen/add"
+            headers = {
+                'X-API-Key': self.api_key,
+                'Content-Type': 'application/json'
+            }
+            
+            # 记录完整的curl命令，方便调试
+            curl_cmd = f"""curl -X POST '{url}' \\
+  -H 'X-API-Key: {self.api_key}' \\
+  -H 'Content-Type: application/json' \\
+  -d '{json.dumps(api_params)}'"""
+            logger.debug(f"执行API请求，等效curl命令: \n{curl_cmd}")
+            
+            # 执行POST请求
+            response = requests.post(url, json=api_params, headers=headers)
+            status_code = response.status_code
+            
+            if status_code != 200:
+                logger.error(f"添加监听对象请求失败，状态码: {status_code}, 响应: {response.text}")
+                return False
+            
+            # 解析JSON响应
+            result = response.json()
+            logger.debug(f"添加监听对象API响应: {result}")
+            
+            # 检查结果
+            success = result.get('code') == 0
+            if success:
+                logger.info(f"成功添加监听对象 {who}")
+                return True
+            else:
+                logger.error(f"添加监听对象失败，API返回: {result}")
+                return False
+        except requests.RequestException as e:
+            logger.error(f"添加监听对象网络错误: {e}")
+            logger.exception(e)
+            return False
         except Exception as e:
             logger.error(f"添加监听对象失败: {e}")
+            logger.exception(e)
             return False
             
     async def remove_listener(self, who: str) -> bool:
         """移除监听对象"""
         try:
+            import requests
+            import json
             data = {'who': who}
-            result = await self._post('/api/message/listen/remove', json=data)
+            
+            # 构建完整的API URL和请求头
+            url = f"{self.base_url}/api/message/listen/remove"
+            headers = {
+                'X-API-Key': self.api_key,
+                'Content-Type': 'application/json'
+            }
+            
+            # 记录完整的curl命令，方便调试
+            curl_cmd = f"""curl -X POST '{url}' \\
+  -H 'X-API-Key: {self.api_key}' \\
+  -H 'Content-Type: application/json' \\
+  -d '{json.dumps(data)}'"""
+            logger.debug(f"执行API请求，等效curl命令: \n{curl_cmd}")
+            
+            # 执行POST请求
+            response = requests.post(url, json=data, headers=headers)
+            status_code = response.status_code
+            
+            if status_code != 200:
+                logger.error(f"移除监听对象请求失败，状态码: {status_code}, 响应: {response.text}")
+                return False
+            
+            # 解析JSON响应
+            result = response.json()
+            logger.debug(f"移除监听对象API响应: {result}")
+            
             # 检查结果 - API成功时返回data中包含who字段，这表示成功
-            success = isinstance(result, dict) and 'who' in result
+            success = isinstance(result.get('data'), dict) and 'who' in result.get('data', {})
             if success:
                 logger.debug(f"成功移除监听对象 {who}")
                 return True
             else:
                 logger.error(f"移除监听对象失败，API返回: {result}")
                 return False
+        except requests.RequestException as e:
+            logger.error(f"移除监听对象网络错误: {e}")
+            logger.exception(e)
+            return False
         except Exception as e:
             logger.error(f"移除监听对象失败: {e}")
-            logger.exception(e)  # 记录完整堆栈
+            logger.exception(e)
             return False
             
     async def get_listener_messages(self, who: str) -> List[Dict]:
         """获取监听对象的消息"""
         try:
+            import requests
             params = {'who': who}
-            logger.debug(f"获取监听对象[{who}]消息，参数: {params}")
-            data = self._get('/api/message/listen/get', params=params)
             
-            if 'messages' not in data:
-                logger.warning(f"获取监听对象[{who}]消息响应格式异常: {data}")
+            # 使用requests执行请求，模拟curl方式
+            url = f"{self.base_url}/api/message/listen/get"
+            headers = {'X-API-Key': self.api_key}
+            
+            # 记录完整的curl命令，方便调试
+            curl_cmd = f"curl -X GET '{url}?who={who}' -H 'X-API-Key: {self.api_key}'"
+            logger.debug(f"执行API请求，等效curl命令: {curl_cmd}")
+            
+            # 执行请求
+            response = requests.get(url, params=params, headers=headers)
+            status_code = response.status_code
+            
+            if status_code != 200:
+                logger.error(f"获取监听消息请求失败，状态码: {status_code}, 响应: {response.text}")
+                return []
+            
+            # 解析JSON响应
+            data = response.json()
+            logger.debug(f"获取消息API响应: {data}")
+            
+            # 检查API响应状态码
+            if data.get('code') != 0:
+                logger.error(f"获取监听消息API错误: [{data.get('code', -1)}] {data.get('message', '未知错误')}")
+                return []
+            
+            # 获取消息数据
+            result_data = data.get('data', {})
+            messages_data = result_data.get('messages', {})
+            
+            # 处理空消息情况 - 这是正常的，表示没有新消息
+            if not messages_data or (isinstance(messages_data, dict) and not messages_data.get(who)):
+                logger.debug(f"监听对象[{who}]没有新消息")
+                # 返回空列表，但这是正常情况，不是错误
                 return []
                 
-            messages_data = data.get('messages', {}).get(who, [])
-            if messages_data:
-                logger.info(f"获取到监听对象[{who}]的 {len(messages_data)} 条消息")
-            return messages_data
+            # 兼容处理不同响应格式
+            # 如果messages是字典，根据who获取对应消息
+            if isinstance(messages_data, dict):
+                messages = messages_data.get(who, [])
+            # 如果messages是列表，直接使用
+            elif isinstance(messages_data, list):
+                messages = messages_data
+            else:
+                logger.warning(f"未知的消息数据格式: {type(messages_data)}")
+                return []
+            
+            if messages:
+                logger.info(f"获取到监听对象[{who}]的 {len(messages)} 条消息")
+            else:
+                logger.debug(f"监听对象[{who}]没有新消息")
+                
+            return messages
+        except requests.RequestException as e:
+            logger.error(f"获取监听消息网络错误: {e}")
+            logger.exception(e)
+            return []
         except Exception as e:
             logger.error(f"获取监听消息失败: {e}")
+            logger.exception(e)
             return []
             
     @property

@@ -15,6 +15,7 @@ import time
 from typing import Dict, List, Optional, Set
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from collections import defaultdict
 
 from wxauto_mgt.core.api_client import instance_manager
 from wxauto_mgt.data.db_manager import db_manager
@@ -31,6 +32,8 @@ class ListenerInfo:
     last_check_time: float
     active: bool = True
     marked_for_removal: bool = False
+    processed_at_startup: bool = False  # 是否在启动时处理过
+    reset_attempts: int = 0  # 重置尝试次数
 
 class MessageListener:
     def __init__(
@@ -56,6 +59,10 @@ class MessageListener:
         self.running: bool = False
         self._tasks: Set[asyncio.Task] = set()
         self._lock = asyncio.Lock()
+        self._starting_up = False
+        
+        # 启动时间戳，用于提供宽限期
+        self.startup_timestamp = 0
     
     async def start(self):
         """启动监听服务"""
@@ -63,11 +70,27 @@ class MessageListener:
             logger.warning("监听服务已经在运行")
             return
         
+        # 设置启动时间戳
+        self.startup_timestamp = time.time()
+        logger.info(f"设置启动时间戳: {datetime.fromtimestamp(self.startup_timestamp).strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("已启用10秒钟宽限期，在此期间不会移除任何超时监听对象")
+        
         self.running = True
         logger.info("启动消息监听服务")
         
         # 从数据库加载监听对象
         await self._load_listeners_from_db()
+        
+        # 加载完成后，暂时锁定超时处理
+        # 设置一个标志，防止UI线程同时处理超时对象
+        self._starting_up = True
+        try:
+            # 在启动时手动检查并刷新可能超时的监听对象
+            logger.info("启动时检查所有监听对象...")
+            await self._refresh_all_listeners()
+        finally:
+            # 处理完成后，释放锁
+            self._starting_up = False
         
         # 创建主要任务
         main_window_task = asyncio.create_task(self._main_window_check_loop())
@@ -381,18 +404,75 @@ class MessageListener:
         removed_count = 0
         current_time = time.time()
         timeout = self.timeout_minutes * 60
+        pending_check = []
         
+        # 第一阶段：收集可能需要移除的监听对象
         async with self._lock:
             for instance_id in list(self.listeners.keys()):
                 for who, info in list(self.listeners[instance_id].items()):
+                    # 检查是否超时
                     if current_time - info.last_message_time > timeout:
-                        # 执行移除操作并检查结果
-                        success = await self.remove_listener(instance_id, who)
-                        if success:
-                            removed_count += 1
-                            logger.info(f"已移除超时的监听对象: {instance_id} - {who}")
+                        # 如果已经标记为不活跃，直接准备移除
+                        if not info.active:
+                            logger.debug(f"监听对象已标记为不活跃: {instance_id} - {who}")
+                            pending_check.append((instance_id, who, False))  # 不需要再次检查
                         else:
-                            logger.error(f"移除超时监听对象失败: {instance_id} - {who}")
+                            # 标记为需要检查
+                            logger.debug(f"监听对象可能超时，将检查最新消息: {instance_id} - {who}")
+                            pending_check.append((instance_id, who, True))  # 需要检查最新消息
+        
+        # 第二阶段：处理需要检查的监听对象
+        for instance_id, who, need_check in pending_check:
+            try:
+                if need_check:
+                    # 获取API客户端
+                    api_client = instance_manager.get_instance(instance_id)
+                    if not api_client:
+                        logger.error(f"找不到实例 {instance_id} 的API客户端")
+                        continue
+                    
+                    # 尝试获取最新消息
+                    logger.info(f"在移除前检查监听对象最新消息: {instance_id} - {who}")
+                    messages = await api_client.get_listener_messages(who)
+                    
+                    if messages:
+                        # 如果有新消息，更新时间戳并跳过移除
+                        logger.info(f"监听对象 {who} 有 {len(messages)} 条新消息，不移除")
+                        
+                        async with self._lock:
+                            if instance_id in self.listeners and who in self.listeners[instance_id]:
+                                # 更新内存中的时间戳
+                                self.listeners[instance_id][who].last_message_time = time.time()
+                                self.listeners[instance_id][who].last_check_time = time.time()
+                                
+                                # 更新数据库中的时间戳
+                                await self._update_listener_timestamp(instance_id, who)
+                                
+                                # 处理消息
+                                for msg in messages:
+                                    await self._save_message({
+                                        'instance_id': instance_id,
+                                        'chat_name': who,
+                                        'message_type': msg.get('type', 'text'),
+                                        'content': msg.get('content', ''),
+                                        'sender': msg.get('sender', ''),
+                                        'sender_remark': msg.get('sender_remark', ''),
+                                        'message_id': msg.get('id', ''),
+                                        'mtype': msg.get('mtype', 0)
+                                    })
+                        
+                        continue  # 跳过移除步骤
+                
+                # 执行移除操作并检查结果
+                success = await self.remove_listener(instance_id, who)
+                if success:
+                    removed_count += 1
+                    logger.info(f"已移除超时的监听对象: {instance_id} - {who}")
+                else:
+                    logger.error(f"移除超时监听对象失败: {instance_id} - {who}")
+            except Exception as e:
+                logger.error(f"处理超时监听对象时出错: {e}")
+                logger.exception(e)
         
         if removed_count > 0:
             logger.info(f"已清理 {removed_count} 个不活跃的监听对象")
@@ -561,10 +641,264 @@ class MessageListener:
             total = sum(len(listeners) for listeners in self.listeners.values())
             logger.info(f"从数据库加载了 {total} 个监听对象")
             
+            # 注意：超时对象的处理已移至start方法的_refresh_all_listeners中
+            
         except Exception as e:
             logger.error(f"从数据库加载监听对象时出错: {e}")
+            logger.exception(e)
             # 出错时也要确保监听器字典被初始化
             self.listeners = {}
+
+    async def _refresh_potentially_expired_listeners(self, potentially_expired):
+        """
+        刷新可能已超时的监听对象的消息
+        
+        Args:
+            potentially_expired: 可能已超时的监听对象列表，每项为 (instance_id, who) 元组
+        """
+        logger.info(f"开始刷新 {len(potentially_expired)} 个可能超时的监听对象")
+        
+        for instance_id, who in potentially_expired:
+            try:
+                # 获取API客户端
+                api_client = instance_manager.get_instance(instance_id)
+                if not api_client:
+                    logger.error(f"找不到实例 {instance_id} 的API客户端")
+                    continue
+                
+                # 首先检查监听对象是否有效（例如尝试初始化验证）
+                logger.info(f"验证监听对象是否有效: {instance_id} - {who}")
+                
+                # 添加一个移除再添加的验证步骤，确保监听对象在API端仍然有效
+                try:
+                    # 先尝试移除（如果存在）
+                    logger.debug(f"尝试重置监听对象: 先移除 {instance_id} - {who}")
+                    remove_result = await api_client.remove_listener(who)
+                    logger.debug(f"移除结果: {remove_result}")
+                    
+                    # 再重新添加
+                    logger.debug(f"尝试重新添加监听对象: {instance_id} - {who}")
+                    add_success = await api_client.add_listener(who)
+                    
+                    if add_success:
+                        logger.info(f"监听对象验证成功，已重置: {instance_id} - {who}")
+                        # 更新时间戳
+                        async with self._lock:
+                            if instance_id in self.listeners and who in self.listeners[instance_id]:
+                                self.listeners[instance_id][who].last_message_time = time.time()
+                                self.listeners[instance_id][who].last_check_time = time.time()
+                                # 更新数据库
+                                await self._update_listener_timestamp(instance_id, who)
+                                logger.debug(f"已更新监听对象时间戳: {instance_id} - {who}")
+                        # 跳过后续处理，不需要再获取消息
+                        continue
+                    else:
+                        logger.warning(f"监听对象验证失败，无法添加: {instance_id} - {who}")
+                except Exception as e:
+                    logger.error(f"监听对象验证时出错: {e}")
+                    logger.exception(e)
+                
+                # 尝试获取该监听对象的最新消息
+                logger.info(f"尝试获取可能已超时的监听对象消息: {instance_id} - {who}")
+                messages = await api_client.get_listener_messages(who)
+                
+                if messages:
+                    # 如果获取到消息，更新最后消息时间
+                    logger.info(f"监听对象 {who} 有 {len(messages)} 条新消息，更新最后消息时间")
+                    
+                    async with self._lock:
+                        if instance_id in self.listeners and who in self.listeners[instance_id]:
+                            self.listeners[instance_id][who].last_message_time = time.time()
+                            self.listeners[instance_id][who].last_check_time = time.time()
+                            
+                            # 更新数据库中的时间戳
+                            await self._update_listener_timestamp(instance_id, who)
+                            logger.debug(f"已更新监听对象时间戳: {instance_id} - {who}")
+                            
+                            # 处理消息
+                            logger.debug(f"开始处理 {len(messages)} 条消息并保存到数据库")
+                            for msg in messages:
+                                # 保存到数据库
+                                await self._save_message({
+                                    'instance_id': instance_id,
+                                    'chat_name': who,
+                                    'message_type': msg.get('type', 'text'),
+                                    'content': msg.get('content', ''),
+                                    'sender': msg.get('sender', ''),
+                                    'sender_remark': msg.get('sender_remark', ''),
+                                    'message_id': msg.get('id', ''),
+                                    'mtype': msg.get('mtype', 0)
+                                })
+                else:
+                    # 没有消息，但我们已经验证了监听对象是有效的，也应该重置超时
+                    logger.info(f"监听对象 {who} 没有新消息，但已验证有效，重置超时")
+                    # 如果对象仍在监听列表中，更新时间戳
+                    async with self._lock:
+                        if instance_id in self.listeners and who in self.listeners[instance_id]:
+                            # 将最后检查时间设为当前，但只将最后消息时间往后延一半超时时间
+                            # 这样如果真的长时间没消息，最终还是会超时，但有更多缓冲时间
+                            buffer_time = self.timeout_minutes * 30  # 半个超时时间(秒)
+                            self.listeners[instance_id][who].last_message_time = time.time() - buffer_time
+                            self.listeners[instance_id][who].last_check_time = time.time()
+                            
+                            # 更新数据库
+                            await self._update_listener_timestamp(instance_id, who)
+                            logger.debug(f"已延长监听对象超时时间: {instance_id} - {who}")
+                
+            except Exception as e:
+                logger.error(f"刷新监听对象 {who} 消息时出错: {e}")
+                logger.exception(e)
+                
+        logger.info(f"已完成所有可能超时监听对象的刷新")
+    
+    async def _update_listener_timestamp(self, instance_id: str, who: str) -> bool:
+        """
+        更新数据库中监听对象的时间戳
+        
+        Args:
+            instance_id: 实例ID
+            who: 监听对象的标识
+            
+        Returns:
+            bool: 是否更新成功
+        """
+        try:
+            current_time = int(time.time())
+            update_query = "UPDATE listeners SET last_message_time = ? WHERE instance_id = ? AND who = ?"
+            await db_manager.execute(update_query, (current_time, instance_id, who))
+            logger.debug(f"已更新监听对象时间戳: {instance_id} - {who}")
+            return True
+        except Exception as e:
+            logger.error(f"更新监听对象时间戳失败: {e}")
+            return False
+
+    async def _refresh_all_listeners(self):
+        """在启动时刷新所有监听对象"""
+        # 首先确保所有API实例已初始化
+        logger.info("检查API实例初始化状态")
+        for instance_id in self.listeners.keys():
+            api_client = instance_manager.get_instance(instance_id)
+            if not api_client:
+                logger.error(f"找不到实例 {instance_id} 的API客户端")
+                continue
+            
+            # 确保API客户端已初始化
+            if not api_client.initialized:
+                try:
+                    logger.info(f"正在初始化API实例: {instance_id}")
+                    init_result = await api_client.initialize()
+                    if init_result:
+                        logger.info(f"API实例初始化成功: {instance_id}")
+                    else:
+                        logger.error(f"API实例初始化失败: {instance_id}")
+                except Exception as e:
+                    logger.error(f"初始化API实例时出错: {e}")
+        
+        # 为所有监听对象标记为已在启动时处理，提供宽限期
+        logger.info("为所有监听对象提供启动宽限期，标记为已处理")
+        async with self._lock:
+            for instance_id, listeners_dict in self.listeners.items():
+                for who, info in listeners_dict.items():
+                    # 设置所有监听对象为已处理状态
+                    info.processed_at_startup = True
+                    # 更新最后消息时间，提供一个缓冲时间
+                    buffer_time = self.timeout_minutes * 30  # 半个超时时间(秒)
+                    info.last_message_time = time.time() - buffer_time
+                    logger.info(f"监听对象 {instance_id} - {who} 已设置启动宽限期")
+        
+        # 准备可能超时的监听对象列表
+        potentially_expired = []
+        current_time = time.time()
+        timeout = self.timeout_minutes * 60
+        
+        logger.info("启动时识别可能已超时的监听对象")
+        async with self._lock:
+            for instance_id, listeners_dict in self.listeners.items():
+                for who, info in listeners_dict.items():
+                    # 检查最后消息时间
+                    if current_time - info.last_message_time > timeout:
+                        logger.info(f"启动时发现可能超时的监听对象: {instance_id} - {who}, 最后消息时间: {datetime.fromtimestamp(info.last_message_time).strftime('%Y-%m-%d %H:%M:%S')}")
+                        potentially_expired.append((instance_id, who))
+                    else:
+                        logger.debug(f"监听对象正常: {instance_id} - {who}, 剩余时间: {int((info.last_message_time + timeout - current_time) / 60)} 分钟")
+        
+        if not potentially_expired:
+            logger.info("未发现超时的监听对象，无需处理")
+            return
+        
+        # 启动时强制刷新所有可能超时的监听对象
+        logger.info(f"启动时处理 {len(potentially_expired)} 个可能超时的监听对象")
+        for instance_id, who in potentially_expired:
+            try:
+                # 获取API客户端
+                api_client = instance_manager.get_instance(instance_id)
+                if not api_client:
+                    logger.error(f"找不到实例 {instance_id} 的API客户端")
+                    continue
+                
+                # 直接获取最新消息
+                logger.info(f"启动时获取监听对象消息: {instance_id} - {who}")
+                messages = await api_client.get_listener_messages(who)
+                
+                # 无论是否有消息，都标记为已在启动时处理过
+                async with self._lock:
+                    if instance_id in self.listeners and who in self.listeners[instance_id]:
+                        self.listeners[instance_id][who].processed_at_startup = True
+                
+                if messages:
+                    # 如果有新消息，更新时间戳
+                    logger.info(f"监听对象 {who} 有 {len(messages)} 条新消息，重置超时")
+                    
+                    async with self._lock:
+                        if instance_id in self.listeners and who in self.listeners[instance_id]:
+                            self.listeners[instance_id][who].last_message_time = time.time()
+                            self.listeners[instance_id][who].last_check_time = time.time()
+                            # 更新数据库中的时间戳
+                            await self._update_listener_timestamp(instance_id, who)
+                            
+                            # 处理消息
+                            for msg in messages:
+                                # 保存到数据库
+                                await self._save_message({
+                                    'instance_id': instance_id,
+                                    'chat_name': who,
+                                    'message_type': msg.get('type', 'text'),
+                                    'content': msg.get('content', ''),
+                                    'sender': msg.get('sender', ''),
+                                    'sender_remark': msg.get('sender_remark', ''),
+                                    'message_id': msg.get('id', ''),
+                                    'mtype': msg.get('mtype', 0)
+                                })
+                else:
+                    # 无消息时，尝试重置监听对象
+                    logger.info(f"监听对象 {who} 没有新消息，尝试重置")
+                    try:
+                        # 先移除
+                        await api_client.remove_listener(who)
+                        # 再添加
+                        add_success = await api_client.add_listener(who)
+                        
+                        if add_success:
+                            logger.info(f"成功重置监听对象: {instance_id} - {who}")
+                            # 延长超时时间
+                            async with self._lock:
+                                if instance_id in self.listeners and who in self.listeners[instance_id]:
+                                    # 延长一半超时时间
+                                    buffer_time = self.timeout_minutes * 30  # 半个超时时间(秒)
+                                    self.listeners[instance_id][who].last_message_time = time.time() - buffer_time
+                                    self.listeners[instance_id][who].last_check_time = time.time()
+                                    await self._update_listener_timestamp(instance_id, who)
+                        else:
+                            logger.warning(f"无法重置监听对象: {instance_id} - {who}")
+                    except Exception as e:
+                        logger.error(f"重置监听对象出错: {e}")
+                        logger.exception(e)
+            
+            except Exception as e:
+                logger.error(f"启动时处理监听对象 {who} 时出错: {e}")
+                logger.exception(e)
+                
+        logger.info("启动时监听对象处理完成")
 
 # 创建全局实例
 message_listener = MessageListener() 

@@ -69,7 +69,9 @@ class MessageListenerPanel(QWidget):
         # 倒计时刷新定时器
         self.countdown_timer = QTimer()
         self.countdown_timer.timeout.connect(self._update_countdown)
-        self.countdown_timer.start(1000)  # 每秒更新一次倒计时
+        # 使用poll_interval设置，单位从秒转换为毫秒
+        poll_interval_ms = self.poll_interval * 1000
+        self.countdown_timer.start(poll_interval_ms)  # 每 poll_interval 秒更新一次倒计时
         
         # 初始化实例下拉框
         self._init_instance_filter()
@@ -284,6 +286,9 @@ class MessageListenerPanel(QWidget):
             if self.auto_refresh_check.isChecked():
                 self.refresh_timer.setInterval(poll_interval * 1000)
             
+            # 更新倒计时定时器
+            self.countdown_timer.setInterval(poll_interval * 1000)
+            
             logger.debug(f"轮询间隔已更新为 {poll_interval} 秒")
         except Exception as e:
             logger.error(f"更新轮询间隔时出错: {e}")
@@ -408,6 +413,9 @@ class MessageListenerPanel(QWidget):
                             if self.auto_refresh_check.isChecked():
                                 self.refresh_timer.setInterval(self.poll_interval * 1000)
                             
+                            # 更新倒计时定时器
+                            self.countdown_timer.setInterval(self.poll_interval * 1000)
+                        
                         # 读取超时时间设置
                         if 'timeout_minutes' in config and isinstance(config['timeout_minutes'], int) and config['timeout_minutes'] > 0:
                             self.timeout_minutes = config['timeout_minutes']
@@ -500,12 +508,27 @@ class MessageListenerPanel(QWidget):
         if not listener_info or not hasattr(listener_info, 'last_message_time'):
             return "未知"
         
+        # 检查是否已标记为不活跃
+        if hasattr(listener_info, 'active') and not listener_info.active:
+            return "将移除"
+            
+        # 检查是否在启动时已处理过
+        if hasattr(listener_info, 'processed_at_startup') and listener_info.processed_at_startup:
+            return "已处理"
+        
+        # 检查是否在启动宽限期内
+        from wxauto_mgt.core.message_listener import message_listener
+        current_time = time.time()
+        if hasattr(message_listener, 'startup_timestamp') and message_listener.startup_timestamp > 0:
+            grace_period = 10  # 10秒宽限期
+            time_since_startup = current_time - message_listener.startup_timestamp
+            if time_since_startup < grace_period:
+                return "初始化中"
+        
         last_message_time = listener_info.last_message_time
         if not last_message_time:
             return "未知"
             
-        current_time = time.time()
-        
         # 计算剩余时间（秒）
         remaining_seconds = (last_message_time + self.timeout_minutes * 60) - current_time
         
@@ -521,49 +544,90 @@ class MessageListenerPanel(QWidget):
     
     def _update_countdown(self):
         """更新所有监听对象的倒计时"""
-        need_refresh = False
-        to_remove = []
-        
-        for row in range(self.listener_table.rowCount()):
-            try:
-                instance_id = self.listener_table.item(row, 0).text()
-                who = self.listener_table.item(row, 1).text()
-                
-                listener_info = self.listener_data.get((instance_id, who))
-                if listener_info:
-                    countdown = self._calculate_countdown(listener_info)
-                    self.listener_table.item(row, 3).setText(countdown)
-                    
-                    # 检查是否需要移除（已超时且未标记为已处理移除）
-                    if countdown == "已超时" and not getattr(listener_info, 'marked_for_removal', False):
-                        # 标记为已处理，避免重复移除
-                        listener_info.marked_for_removal = True
-                        # 添加到待移除列表
-                        to_remove.append((instance_id, who))
-                        need_refresh = True
-                        logger.info(f"监听对象 {instance_id}:{who} 已超时，将执行移除操作")
-            except Exception as e:
-                logger.debug(f"更新倒计时时出错: {e}")
-        
-        # 异步移除超时的监听对象
-        if to_remove:
-            # 批量移除并最后只刷新一次
-            async def remove_batch():
-                try:
-                    for instance_id, who in to_remove:
-                        await self._remove_listener(instance_id, who, show_dialog=False)
-                    
-                    # 完成后强制刷新一次
-                    await self.refresh_listeners(force_reload=True)
-                    logger.info("已完成所有超时监听对象的移除操作")
-                except Exception as e:
-                    logger.error(f"批量移除超时监听对象时出错: {e}")
-                    logger.exception(e)
+        try:
+            # 获取消息监听器引用
+            from wxauto_mgt.core.message_listener import message_listener
             
-            # 启动批量移除任务
-            task = asyncio.create_task(remove_batch())
-            # 添加完成回调以记录任何异常
-            task.add_done_callback(lambda t: logger.error(f"移除超时监听对象任务出错: {t.exception()}") if t.exception() else None)
+            # 如果消息监听器正在启动过程中处理超时对象，则暂时跳过UI触发的处理
+            if hasattr(message_listener, '_starting_up') and message_listener._starting_up:
+                logger.debug("消息监听器正在启动中，暂时跳过UI触发的超时处理")
+                return
+            
+            # 检查启动宽限期 - 启动后10秒内不执行超时移除
+            current_time = time.time()
+            if hasattr(message_listener, 'startup_timestamp') and message_listener.startup_timestamp > 0:
+                grace_period = 10  # 10秒宽限期
+                time_since_startup = current_time - message_listener.startup_timestamp
+                if time_since_startup < grace_period:
+                    remaining = grace_period - time_since_startup
+                    logger.debug(f"正在启动宽限期内，还剩{remaining:.1f}秒，暂时跳过超时处理")
+                    # 更新所有显示，但不执行超时处理
+                    for row in range(self.listener_table.rowCount()):
+                        try:
+                            instance_id = self.listener_table.item(row, 0).text()
+                            who = self.listener_table.item(row, 1).text()
+                            
+                            listener_info = self.listener_data.get((instance_id, who))
+                            if listener_info:
+                                # 在宽限期内，所有倒计时都显示为"初始化中"
+                                self.listener_table.item(row, 3).setText("初始化中")
+                        except Exception as e:
+                            logger.debug(f"宽限期内更新显示时出错: {e}")
+                    return
+                else:
+                    logger.debug("宽限期已结束，开始正常超时检查")
+                
+            need_refresh = False
+            to_remove = []
+            
+            for row in range(self.listener_table.rowCount()):
+                try:
+                    instance_id = self.listener_table.item(row, 0).text()
+                    who = self.listener_table.item(row, 1).text()
+                    
+                    listener_info = self.listener_data.get((instance_id, who))
+                    if listener_info:
+                        countdown = self._calculate_countdown(listener_info)
+                        self.listener_table.item(row, 3).setText(countdown)
+                        
+                        # 检查是否需要移除（已超时且未标记为已处理移除）
+                        if countdown == "已超时" and not getattr(listener_info, 'marked_for_removal', False):
+                            # 检查是否在启动时已经处理过
+                            if hasattr(listener_info, 'processed_at_startup') and listener_info.processed_at_startup:
+                                logger.debug(f"监听对象 {instance_id}:{who} 在启动时已处理，不需再处理")
+                                continue
+                                
+                            # 标记为已处理，避免重复移除
+                            listener_info.marked_for_removal = True
+                            # 添加到待移除列表
+                            to_remove.append((instance_id, who))
+                            need_refresh = True
+                            logger.info(f"监听对象 {instance_id}:{who} 已超时，将执行移除操作")
+                except Exception as e:
+                    logger.debug(f"更新倒计时时出错: {e}")
+            
+            # 异步移除超时的监听对象
+            if to_remove:
+                # 批量移除并最后只刷新一次
+                async def remove_batch():
+                    try:
+                        for instance_id, who in to_remove:
+                            await self._remove_listener(instance_id, who, show_dialog=False)
+                        
+                        # 完成后强制刷新一次
+                        await self.refresh_listeners(force_reload=True)
+                        logger.info("已完成所有超时监听对象的移除操作")
+                    except Exception as e:
+                        logger.error(f"批量移除超时监听对象时出错: {e}")
+                        logger.exception(e)
+                
+                # 启动批量移除任务
+                task = asyncio.create_task(remove_batch())
+                # 添加完成回调以记录任何异常
+                task.add_done_callback(lambda t: logger.error(f"移除超时监听对象任务出错: {t.exception()}") if t.exception() else None)
+        except Exception as e:
+            logger.error(f"更新倒计时出错: {e}")
+            logger.exception(e)
     
     @asyncSlot()
     async def _toggle_listener(self):
@@ -1101,22 +1165,18 @@ class MessageListenerPanel(QWidget):
                     if 'poll_interval' in config and isinstance(config['poll_interval'], int) and config['poll_interval'] > 0:
                         self.poll_interval = config['poll_interval']
                         self.poll_interval_edit.setText(str(self.poll_interval))
-                        # 更新消息监听器
-                        from wxauto_mgt.core.message_listener import message_listener
                         message_listener.poll_interval = self.poll_interval
-                        # 更新定时器
                         if self.auto_refresh_check.isChecked():
                             self.refresh_timer.setInterval(self.poll_interval * 1000)
+                        
+                        # 更新倒计时定时器
+                        self.countdown_timer.setInterval(self.poll_interval * 1000)
                         
                     # 读取超时时间设置
                     if 'timeout_minutes' in config and isinstance(config['timeout_minutes'], int) and config['timeout_minutes'] > 0:
                         self.timeout_minutes = config['timeout_minutes']
                         self.timeout_edit.setText(str(self.timeout_minutes))
-                        # 更新消息监听器
-                        from wxauto_mgt.core.message_listener import message_listener
                         message_listener.timeout_minutes = self.timeout_minutes
-                        # 刷新倒计时显示
-                        self._update_countdown()
                     
                     logger.debug(f"已加载实例 {instance_id} 的配置: {config}")
                 except Exception as e:
