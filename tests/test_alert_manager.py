@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 from unittest.mock import MagicMock, AsyncMock
 
-from wxauto_mgt.app.core.alert_manager import AlertManager
+from wxauto_mgt.app1.core.alert_manager import AlertManager
 
 @pytest.fixture
 def db_manager():

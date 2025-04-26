@@ -4,20 +4,27 @@ aiohttp>=3.8.3
 asyncio>=3.4.3
 
 # 数据库
-aiosqlite>=0.17.0
+aiosqlite>=0.19.0
 
 # 加密
 cryptography>=38.0.0
 
 # 日志与监控
-loguru>=0.6.0
+loguru>=0.7.2
 
 # 开发工具
-pytest>=7.2.0
-pytest-asyncio>=0.20.0
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
 pytest-qt>=4.2.0
 black>=22.10.0
 isort>=5.10.1
 
 # 打包
-pyinstaller>=5.6.0 
+pyinstaller>=5.6.0
+
+# 其他依赖
+requests>=2.31.0
+typing>=3.7.4.3
+python-dotenv>=1.0.0
+pydantic>=2.5.2
+pytest-cov>=4.1.0 

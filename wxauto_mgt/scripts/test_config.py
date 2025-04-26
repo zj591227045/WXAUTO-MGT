@@ -17,7 +17,7 @@ ROOT_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(str(ROOT_DIR))
 
 from app.core.config_manager import config_manager
-from app.data.db_manager import db_manager
+from app1.data.db_manager import db_manager
 from app.utils.logging import log_manager
 
 # 测试配置
