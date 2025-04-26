@@ -7,6 +7,7 @@ import logging
 import requests
 import json
 from typing import Dict, List, Optional, Any
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -57,23 +58,36 @@ class WxAutoApiClient:
             logger.error(f"GET请求失败: {e}")
             raise ApiError(str(e))
             
-    def _post(self, endpoint: str, json: Dict = None) -> Dict:
+    async def _post(self, endpoint: str, json: Dict = None) -> Dict:
         """发送POST请求"""
         try:
-            response = requests.post(
-                f"{self.base_url}{endpoint}",
-                json=json,  # 布尔值在JSON中保持Python布尔类型
-                headers={
-                    'X-API-Key': self.api_key,
-                    'Content-Type': 'application/json'
-                }
-            )
-            response.raise_for_status()
-            data = response.json()
-            if data.get('code') != 0:
-                raise ApiError(data.get('message', '未知错误'), data.get('code', -1))
-            return data.get('data', {})
-        except requests.exceptions.RequestException as e:
+            # 构建完整URL和请求头
+            url = f"{self.base_url}{endpoint}"
+            headers = {
+                'X-API-Key': self.api_key,
+                'Content-Type': 'application/json'
+            }
+            
+            # 使用aiohttp发送异步请求
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=json, headers=headers) as response:
+                    if response.status != 200:
+                        text = await response.text()
+                        logger.error(f"POST请求失败，状态码: {response.status}, 响应: {text}")
+                        raise ApiError(f"HTTP错误: {response.status}")
+                    
+                    data = await response.json()
+                    
+                    # 检查API响应状态码
+                    if data.get('code') != 0:
+                        logger.error(f"API错误: [{data.get('code', -1)}] {data.get('message', '未知错误')}")
+                        raise ApiError(data.get('message', '未知错误'), data.get('code', -1))
+                    
+                    return data.get('data', {})
+        except aiohttp.ClientError as e:
+            logger.error(f"POST请求网络错误: {e}")
+            raise ApiError(str(e))
+        except Exception as e:
             logger.error(f"POST请求失败: {e}")
             raise ApiError(str(e))
     
@@ -158,7 +172,7 @@ class WxAutoApiClient:
                 'message': message,
                 'at_list': at_list or []
             }
-            self._post('/api/message/send', json=data)
+            await self._post('/api/message/send', json=data)
             return True
         except Exception as e:
             logger.error(f"发送消息失败: {e}")
@@ -206,7 +220,7 @@ class WxAutoApiClient:
             api_params = {k: v for k, v in api_params.items() if v is not None}
             
             logger.debug(f"添加监听对象参数: {api_params}")
-            result = self._post('/api/message/listen/add', json=api_params)
+            result = await self._post('/api/message/listen/add', json=api_params)
             logger.info(f"成功添加监听对象 {who}")
             return True
         except Exception as e:
@@ -217,11 +231,18 @@ class WxAutoApiClient:
         """移除监听对象"""
         try:
             data = {'who': who}
-            self._post('/api/message/listen/remove', json=data)
-            logger.debug(f"成功移除监听对象 {who}")
-            return True
+            result = await self._post('/api/message/listen/remove', json=data)
+            # 检查结果 - API成功时返回data中包含who字段，这表示成功
+            success = isinstance(result, dict) and 'who' in result
+            if success:
+                logger.debug(f"成功移除监听对象 {who}")
+                return True
+            else:
+                logger.error(f"移除监听对象失败，API返回: {result}")
+                return False
         except Exception as e:
             logger.error(f"移除监听对象失败: {e}")
+            logger.exception(e)  # 记录完整堆栈
             return False
             
     async def get_listener_messages(self, who: str) -> List[Dict]:

@@ -30,6 +30,7 @@ class ListenerInfo:
     last_message_time: float
     last_check_time: float
     active: bool = True
+    marked_for_removal: bool = False
 
 class MessageListener:
     def __init__(
@@ -326,23 +327,49 @@ class MessageListener:
         Args:
             instance_id: 实例ID
             who: 监听对象的标识
+            
+        Returns:
+            bool: 是否移除成功
         """
         async with self._lock:
             if instance_id not in self.listeners or who not in self.listeners[instance_id]:
-                return
+                return False
             
             # 获取API客户端
             api_client = instance_manager.get_instance(instance_id)
-            if api_client:
-                await api_client.remove_listener(who)
-            
-            # 从内存中移除
-            del self.listeners[instance_id][who]
-            
-            # 从数据库中移除
-            await self._remove_listener_from_db(instance_id, who)
-            
-            logger.info(f"已移除实例 {instance_id} 的监听对象: {who}")
+            if not api_client:
+                logger.error(f"找不到实例 {instance_id} 的API客户端")
+                return False
+                
+            try:
+                # 调用API客户端的移除监听方法
+                api_success = await api_client.remove_listener(who)
+                
+                # 无论API调用成功与否，都尝试清理本地数据
+                try:
+                    # 从内存中移除
+                    if instance_id in self.listeners and who in self.listeners[instance_id]:
+                        del self.listeners[instance_id][who]
+                        logger.info(f"从内存中移除监听对象: {instance_id} - {who}")
+                    
+                    # 从数据库中移除
+                    db_success = await self._remove_listener_from_db(instance_id, who)
+                    if db_success:
+                        logger.info(f"从数据库中移除监听对象: {instance_id} - {who}")
+                    else:
+                        logger.error(f"从数据库中移除监听对象失败: {instance_id} - {who}")
+                except Exception as e:
+                    logger.error(f"清理监听对象本地数据时出错: {e}")
+                    logger.exception(e)
+                
+                # 只要完成了本地清理，就认为移除成功
+                logger.info(f"已移除实例 {instance_id} 的监听对象: {who}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"移除监听对象时出错: {e}")
+                logger.exception(e)  # 记录完整堆栈
+                return False
     
     async def _remove_inactive_listeners(self) -> int:
         """
@@ -359,8 +386,13 @@ class MessageListener:
             for instance_id in list(self.listeners.keys()):
                 for who, info in list(self.listeners[instance_id].items()):
                     if current_time - info.last_message_time > timeout:
-                        await self.remove_listener(instance_id, who)
-                        removed_count += 1
+                        # 执行移除操作并检查结果
+                        success = await self.remove_listener(instance_id, who)
+                        if success:
+                            removed_count += 1
+                            logger.info(f"已移除超时的监听对象: {instance_id} - {who}")
+                        else:
+                            logger.error(f"移除超时监听对象失败: {instance_id} - {who}")
         
         if removed_count > 0:
             logger.info(f"已清理 {removed_count} 个不活跃的监听对象")
@@ -440,10 +472,28 @@ class MessageListener:
         """
         try:
             sql = "DELETE FROM listeners WHERE instance_id = ? AND who = ?"
-            await db_manager.execute(sql, (instance_id, who))
-            return True
+            logger.debug(f"执行SQL: {sql} 参数: ({instance_id}, {who})")
+            
+            # 执行SQL并检查结果
+            result = await db_manager.execute(sql, (instance_id, who))
+            
+            # 验证是否删除成功
+            verify_sql = "SELECT COUNT(*) as count FROM listeners WHERE instance_id = ? AND who = ?"
+            verify_result = await db_manager.fetchone(verify_sql, (instance_id, who))
+            
+            if verify_result and verify_result.get('count', 0) == 0:
+                logger.debug(f"数据库记录已删除: {instance_id} - {who}")
+                return True
+            else:
+                logger.warning(f"数据库记录可能未删除: {instance_id} - {who}, 验证结果: {verify_result}")
+                # 如果验证失败，再次尝试强制删除
+                force_sql = "DELETE FROM listeners WHERE instance_id = ? AND who = ?"
+                await db_manager.execute(force_sql, (instance_id, who))
+                logger.debug(f"已强制执行二次删除操作")
+                return True
         except Exception as e:
             logger.error(f"从数据库移除监听对象失败: {e}")
+            logger.exception(e)  # 记录完整堆栈
             return False
     
     def get_active_listeners(self, instance_id: str = None) -> Dict[str, List[str]]:

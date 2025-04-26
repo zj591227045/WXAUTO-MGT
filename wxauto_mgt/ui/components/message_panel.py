@@ -359,9 +359,26 @@ class MessageListenerPanel(QWidget):
             logger.error(f"保存实例配置时出错: {e}")
     
     @asyncSlot()
-    async def refresh_listeners(self):
-        """刷新监听对象列表"""
+    async def refresh_listeners(self, force_reload=False):
+        """刷新监听对象列表
+        
+        Args:
+            force_reload: 是否强制从数据库重新加载
+        """
         try:
+            # 如果强制刷新，先清空内存中的数据
+            if force_reload:
+                # 重新从消息监听器加载数据
+                from wxauto_mgt.core.message_listener import message_listener
+                # 强制刷新消息监听器中的监听对象
+                try:
+                    # 清空并强制从数据库重新加载
+                    message_listener.listeners = {}
+                    await message_listener._load_listeners_from_db()
+                    logger.debug("已强制重新加载监听对象数据")
+                except Exception as e:
+                    logger.error(f"强制刷新监听对象失败: {e}")
+            
             # 获取超时设置
             from wxauto_mgt.core.message_listener import message_listener  # 这里访问listener实例
             
@@ -460,7 +477,7 @@ class MessageListenerPanel(QWidget):
                     
                     # 操作按钮
                     remove_btn = QPushButton("移除")
-                    remove_btn.clicked.connect(lambda checked, i=instance_id, w=who: self._remove_listener(i, w))
+                    remove_btn.clicked.connect(lambda checked, i=instance_id, w=who: asyncio.create_task(self._remove_listener(i, w)))
                     self.listener_table.setCellWidget(row, 4, remove_btn)
                     
                     # 检查是否是之前选中的项
@@ -493,6 +510,7 @@ class MessageListenerPanel(QWidget):
         remaining_seconds = (last_message_time + self.timeout_minutes * 60) - current_time
         
         if remaining_seconds <= 0:
+            # 只返回状态，不在这里设置标记
             return "已超时"
         
         # 格式化为分:秒
@@ -503,6 +521,9 @@ class MessageListenerPanel(QWidget):
     
     def _update_countdown(self):
         """更新所有监听对象的倒计时"""
+        need_refresh = False
+        to_remove = []
+        
         for row in range(self.listener_table.rowCount()):
             try:
                 instance_id = self.listener_table.item(row, 0).text()
@@ -512,8 +533,37 @@ class MessageListenerPanel(QWidget):
                 if listener_info:
                     countdown = self._calculate_countdown(listener_info)
                     self.listener_table.item(row, 3).setText(countdown)
+                    
+                    # 检查是否需要移除（已超时且未标记为已处理移除）
+                    if countdown == "已超时" and not getattr(listener_info, 'marked_for_removal', False):
+                        # 标记为已处理，避免重复移除
+                        listener_info.marked_for_removal = True
+                        # 添加到待移除列表
+                        to_remove.append((instance_id, who))
+                        need_refresh = True
+                        logger.info(f"监听对象 {instance_id}:{who} 已超时，将执行移除操作")
             except Exception as e:
                 logger.debug(f"更新倒计时时出错: {e}")
+        
+        # 异步移除超时的监听对象
+        if to_remove:
+            # 批量移除并最后只刷新一次
+            async def remove_batch():
+                try:
+                    for instance_id, who in to_remove:
+                        await self._remove_listener(instance_id, who, show_dialog=False)
+                    
+                    # 完成后强制刷新一次
+                    await self.refresh_listeners(force_reload=True)
+                    logger.info("已完成所有超时监听对象的移除操作")
+                except Exception as e:
+                    logger.error(f"批量移除超时监听对象时出错: {e}")
+                    logger.exception(e)
+            
+            # 启动批量移除任务
+            task = asyncio.create_task(remove_batch())
+            # 添加完成回调以记录任何异常
+            task.add_done_callback(lambda t: logger.error(f"移除超时监听对象任务出错: {t.exception()}") if t.exception() else None)
     
     @asyncSlot()
     async def _toggle_listener(self):
@@ -607,16 +657,20 @@ class MessageListenerPanel(QWidget):
                 Q_ARG(str, f"添加监听对象时出错: {str(e)}")
             )
     
-    async def _remove_listener(self, instance_id: str, who: str):
+    async def _remove_listener(self, instance_id: str, who: str, show_dialog: bool = True):
         """
         移除监听对象
         
         Args:
             instance_id: 实例ID
             who: 监听对象
+            show_dialog: 是否显示对话框
         """
         try:
             logger.info(f"正在移除监听对象: 实例={instance_id}, 聊天={who}")
+            
+            # 确保message_listener已经初始化
+            from wxauto_mgt.core.message_listener import message_listener
             
             # 移除监听对象
             success = await message_listener.remove_listener(instance_id, who)
@@ -625,15 +679,21 @@ class MessageListenerPanel(QWidget):
                 logger.info(f"成功移除监听对象: {who}")
                 # 发送信号
                 self.listener_removed.emit(instance_id, who)
-                # 刷新监听对象列表
-                self.refresh_listeners()
-                QMessageBox.information(self, "移除成功", f"成功移除监听对象: {who}")
+                # 强制刷新监听对象列表
+                await self.refresh_listeners(force_reload=True)
+                if show_dialog:
+                    QMessageBox.information(self, "移除成功", f"成功移除监听对象: {who}")
             else:
                 logger.warning(f"移除监听对象失败: {who}")
-                QMessageBox.warning(self, "移除失败", f"无法移除监听对象: {who}")
+                # 尝试强制刷新
+                await self.refresh_listeners(force_reload=True)
+                if show_dialog:
+                    QMessageBox.warning(self, "移除失败", f"无法移除监听对象: {who}")
         except Exception as e:
             logger.error(f"移除监听对象时出错: {e}")
-            QMessageBox.critical(self, "操作失败", f"移除监听对象时出错: {str(e)}")
+            logger.exception(e)  # 记录完整的错误堆栈
+            if show_dialog:
+                QMessageBox.critical(self, "操作失败", f"移除监听对象时出错: {str(e)}")
     
     async def _view_listener_messages(self, checked=False, instance_id=None, wxid=None):
         """
