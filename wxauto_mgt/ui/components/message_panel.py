@@ -138,76 +138,142 @@ class QTextEditLogger(logging.Handler):
         logger.debug("日志处理器初始化完成，关键事件过滤词已设置")
 
     def emit(self, record):
-        # 快速检查 - 如果不是关键事件且级别低于INFO，直接返回
-        if record.levelno < logging.INFO:
-            # 稍后我们会再次检查是否为关键事件，如果是则应该显示
-            pass
-
         # 获取日志消息
         msg = self.format(record)
 
-        # 检查是否为关键事件
-        is_key_event = False
-        event_type = None
+        # 只允许显示三类关键信息，过滤掉所有其他日志
+        # 1. 监控到新消息（特定格式）
+        # 2. 投递消息到平台
+        # 3. 发送回复消息成功
 
-        # 遍历所有关键词，检查是否匹配
-        for keyword, event_name in self.key_events.items():
-            if keyword in msg:
-                is_key_event = True
-                event_type = event_name
-                break
+        # 检查是否是我们想要显示的三类关键信息之一
 
-        # 首先处理非关键事件的普通日志
-        if not is_key_event:
-            # 检查是否是最近3秒内的重复消息
-            current_time = time.time()
-            message_key = msg
-
-            if message_key in self.message_timestamps:
-                last_time = self.message_timestamps[message_key]
-                if current_time - last_time < 3:
-                    return  # 重复消息，不显示
-
-            # 更新时间戳
-            self.message_timestamps[message_key] = current_time
-
-            # 清理过期的时间戳记录（超过30秒）
-            expired_keys = [k for k, v in self.message_timestamps.items() if current_time - v > 30]
-            for k in expired_keys:
-                del self.message_timestamps[k]
-
-            # 如果是DEBUG级别，不显示
-            if record.levelno < logging.INFO:
-                return
-
-            # 过滤掉自动刷新的非关键日志
-            if "自动刷新" in msg:
-                return
-
-        # 处理关键事件 - 使用专门的去重逻辑
+        # 检查是否是自动刷新日志（这个需要保留）
+        if "自动刷新完成" in msg:
+            pass  # 允许显示
+        # 检查是否是投递消息日志
+        elif "投递消息" in msg and "到平台" in msg:
+            pass  # 允许显示
+        # 检查是否是发送回复消息日志
+        elif "直接调用API发送微信消息到" in msg and "成功" in msg:
+            pass  # 允许显示
+        # 检查是否是原始发送消息日志
+        elif "直接调用API发送消息成功" in msg:
+            pass  # 允许显示
+        # 检查是否是监控到新消息日志（特定格式）
+        elif "获取到新消息: 实例=" in msg and "聊天=" in msg and "发送者=" in msg:
+            pass  # 允许显示
+        # 其他所有日志都过滤掉
         else:
-            current_time = time.time()
+            return
 
-            # 对于特定类型的事件，如果在指定时间间隔内，不重复显示同类事件
-            if event_type in self.event_timestamps:
-                last_event_time = self.event_timestamps[event_type]
-                interval = self.event_grouping_interval.get(event_type, 2)  # 默认2秒
+        # 检查是否是最近3秒内的重复消息
+        current_time = time.time()
+        message_key = msg
 
-                if current_time - last_event_time < interval:
-                    # 在指定时间间隔内的同类事件，不显示
+        if message_key in self.message_timestamps:
+            last_time = self.message_timestamps[message_key]
+            if current_time - last_time < 3:
+                return  # 重复消息，不显示
+
+        # 更新时间戳
+        self.message_timestamps[message_key] = current_time
+
+        # 清理过期的时间戳记录（超过30秒）
+        expired_keys = [k for k, v in self.message_timestamps.items() if current_time - v > 30]
+        for k in expired_keys:
+            del self.message_timestamps[k]
+
+        # 特殊处理三类关键信息
+        timestamp = datetime.now().strftime('%H:%M:%S')
+
+        # 1. 监控到新消息
+        if "获取到新消息: 实例=" in msg and "聊天=" in msg and "发送者=" in msg:
+            try:
+                # 提取会话名称和发送人
+                parts = msg.split(", ")
+                chat_info = ""
+                sender_info = ""
+                content_info = ""
+
+                for part in parts:
+                    if "聊天=" in part:
+                        chat_info = part.split("=")[1]
+                    elif "发送者=" in part:
+                        sender_info = part.split("=")[1]
+                    elif "内容=" in part:
+                        content_info = part.split("=")[1]
+
+                if chat_info:
+                    formatted_msg = f"{timestamp} - INFO - 监控到来自于会话\"{chat_info}\"，发送人是\"{sender_info or '未知'}\"的新消息，内容：\"{content_info or ''}\""
+                    color = "green"
+
+                    # 更新UI
+                    QMetaObject.invokeMethod(
+                        self.text_widget,
+                        "append",
+                        Qt.QueuedConnection,
+                        Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                    )
                     return
+            except Exception as e:
+                # 如果解析失败，使用原始消息
+                pass
 
-            # 更新事件时间戳
-            self.event_timestamps[event_type] = current_time
+        # 2. 投递消息到平台
+        elif "投递消息" in msg and "到平台" in msg:
+            try:
+                # 提取消息ID和平台名称
+                msg_id = msg.split("投递消息")[1].split("到平台")[0].strip()
+                platform = msg.split("到平台")[1].strip()
 
-            # 清理过期的事件时间戳（超过1分钟）
-            expired_events = [k for k, v in self.event_timestamps.items() if current_time - v > 60]
-            for k in expired_events:
-                del self.event_timestamps[k]
+                formatted_msg = f"{timestamp} - INFO - 投递消息 {msg_id} 到平台 {platform}"
+                color = "green"
 
-            # 创建关键事件显示消息
-            timestamp = datetime.now().strftime('%H:%M:%S')
-            msg = f"{timestamp} - [关键事件] {event_type}"
+                # 更新UI
+                QMetaObject.invokeMethod(
+                    self.text_widget,
+                    "append",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                )
+                return
+            except Exception:
+                # 如果解析失败，使用原始消息
+                pass
+
+        # 3. 发送回复消息
+        elif "直接调用API发送消息成功" in msg:
+            try:
+                # 提取聊天对象
+                chat_name = msg.split("直接调用API发送消息成功:")[1].strip()
+
+                formatted_msg = f"{timestamp} - INFO - 直接调用API发送微信消息到\"{chat_name}\"成功"
+                color = "green"
+
+                # 更新UI
+                QMetaObject.invokeMethod(
+                    self.text_widget,
+                    "append",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                )
+                return
+            except Exception as e:
+                # 如果解析失败，使用原始消息
+                logger.debug(f"解析发送消息日志失败: {e}, 原始消息: {msg}")
+                # 直接显示原始消息
+                formatted_msg = f"{timestamp} - INFO - {msg}"
+                color = "green"
+
+                # 更新UI
+                QMetaObject.invokeMethod(
+                    self.text_widget,
+                    "append",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                )
+                return
 
         # 获取日志颜色
         color = "black"
@@ -217,12 +283,6 @@ class QTextEditLogger(logging.Handler):
             color = "orange"
         elif record.levelno == logging.INFO:
             color = "green"
-
-        # 关键事件使用蓝色
-        if is_key_event:
-            color = "blue"
-            # 调试用
-            # print(f"显示关键事件: {event_type} - {msg}")
 
         # 更新UI（在主线程中）
         QMetaObject.invokeMethod(
@@ -383,15 +443,14 @@ class MessageListenerPanel(QWidget):
         message_layout = QVBoxLayout(message_group)
 
         # 消息表格
-        self.message_table = QTableWidget(0, 6)  # 0行，6列
-        self.message_table.setHorizontalHeaderLabels(["时间", "发送者", "接收者", "类型", "状态", "内容"])
+        self.message_table = QTableWidget(0, 5)  # 0行，5列（移除了接收者列）
+        self.message_table.setHorizontalHeaderLabels(["时间", "发送者", "类型", "状态", "内容"])
         self.message_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.message_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.message_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.message_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.message_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.message_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.message_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)  # 内容列自适应宽度
+        self.message_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)  # 内容列自适应宽度
         self.message_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.message_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.message_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -1007,8 +1066,12 @@ class MessageListenerPanel(QWidget):
             # 添加简短状态更新到日志窗口
             refresh_time = datetime.now().strftime('%H:%M:%S')
             listener_count = self.listener_table.rowCount()
-            message_count = self._get_visible_message_count()
-            self.log_text.append(f"<font color='blue'>{refresh_time} - 自动刷新完成: {listener_count}个监听对象, {message_count}条消息</font>")
+
+            # 获取已处理和未处理消息数量
+            processed_count, pending_count = await self._get_processed_pending_count()
+            total_count = processed_count + pending_count
+
+            self.log_text.append(f"<font color='blue'>{refresh_time} - 自动刷新完成: {listener_count}个监听对象, {total_count}条消息 (已处理: {processed_count}, 未处理: {pending_count})</font>")
 
             # 滚动到底部
             scrollbar = self.log_text.verticalScrollBar()
@@ -1082,10 +1145,12 @@ class MessageListenerPanel(QWidget):
                 for row in range(self.message_table.rowCount()):
                     item = self.message_table.item(row, 0)
                     if item and item.data(Qt.UserRole) == message_id:
-                        status_item = self.message_table.item(row, 4)
+                        status_item = self.message_table.item(row, 3)
                         if status_item:
-                            status_item.setText("已处理")
+                            status_item.setText("已完成")
                             status_item.setForeground(QColor(0, 170, 0))  # 绿色
+                            # 更新状态栏显示
+                            QTimer.singleShot(0, lambda: asyncio.ensure_future(self._update_status_count()))
                             break
 
                 QMessageBox.information(self, "处理成功", f"消息 {message_id} 已标记为已处理")
@@ -1115,12 +1180,20 @@ class MessageListenerPanel(QWidget):
             QMessageBox.critical(self, "刷新失败", f"更新消息显示时出错: {str(e)}")
 
     @Slot(int)
-    def _update_status_count(self, count=None):
+    async def _update_status_count(self, count=None):
         """更新状态栏消息计数"""
         try:
             # 使用计算得到的可见消息数量
             visible_count = self._get_visible_message_count()
-            self.status_label.setText(f"共 {self.listener_table.rowCount()} 个监听对象，{visible_count} 条消息")
+
+            # 获取已处理和未处理消息数量
+            processed_count, pending_count = await self._get_processed_pending_count()
+
+            # 记录日志，显示已处理和未处理消息数量
+            logger.info(f"消息统计: 已处理: {processed_count}, 未处理: {pending_count}, 总计: {processed_count + pending_count}")
+
+            # 更新状态栏显示
+            self.status_label.setText(f"共 {self.listener_table.rowCount()} 个监听对象，{visible_count} 条消息 (已处理: {processed_count}, 未处理: {pending_count})")
         except Exception as e:
             logger.error(f"更新状态标签时出错: {e}")
 
@@ -1178,6 +1251,29 @@ class MessageListenerPanel(QWidget):
                 except:
                     pass  # 如果解析失败，保持原始内容
 
+                # 确定消息状态
+                status = "pending"
+                if msg.get("processed", 0):
+                    status = "processed"
+
+                # 考虑投递状态
+                delivery_status = msg.get("delivery_status", 0)
+                if delivery_status == 1:  # 已投递
+                    status = "processed"
+                elif delivery_status == 2:  # 投递失败
+                    status = "failed"
+                elif delivery_status == 3:  # 正在投递
+                    status = "pending"
+
+                # 转换状态为中文显示
+                display_status = status
+                if status == 'pending':
+                    display_status = '投递中'
+                elif status == 'processed':
+                    display_status = '已完成'
+                elif status == 'failed':
+                    display_status = '失败'
+
                 formatted_msg = {
                     "message_id": msg.get("message_id", ""),
                     "instance_id": msg.get("instance_id", ""),
@@ -1187,7 +1283,7 @@ class MessageListenerPanel(QWidget):
                     "content": content,
                     "type": msg.get("message_type", "text"),
                     "timestamp": int(msg.get("create_time", 0)),
-                    "status": "processed" if msg.get("processed", 0) else "pending"
+                    "status": display_status
                 }
                 formatted_messages.append(formatted_msg)
 
@@ -1280,26 +1376,49 @@ class MessageListenerPanel(QWidget):
             # 设置发送者
             self.message_table.setItem(row, 1, QTableWidgetItem(display_sender))
 
-            # 设置接收者
-            self.message_table.setItem(row, 2, QTableWidgetItem(chat_name))
-
             # 设置消息类型
-            self.message_table.setItem(row, 3, QTableWidgetItem(msg_type))
+            self.message_table.setItem(row, 2, QTableWidgetItem(msg_type))
 
             # 设置状态
-            status_item = QTableWidgetItem(status)
-            if status == '已处理':
-                status_item.setForeground(QColor("gray"))
+            # 转换状态显示
+            if isinstance(status, str):
+                # 如果状态已经是中文，直接使用
+                if status in ['投递中', '已完成', '失败']:
+                    display_status = status
+                # 否则转换英文状态为中文
+                elif status == 'pending':
+                    display_status = '投递中'
+                elif status == 'processed':
+                    display_status = '已完成'
+                elif status == 'failed':
+                    display_status = '失败'
+                else:
+                    display_status = status
             else:
-                status_item.setForeground(QColor("blue"))
-            self.message_table.setItem(row, 4, status_item)
+                display_status = str(status)
+
+            # 根据状态设置颜色
+            if display_status == '投递中':
+                status_item = QTableWidgetItem(display_status)
+                status_item.setForeground(QColor(0, 120, 215))  # 蓝色
+            elif display_status == '已完成':
+                status_item = QTableWidgetItem(display_status)
+                status_item.setForeground(QColor(0, 170, 0))  # 绿色
+            elif display_status == '失败':
+                status_item = QTableWidgetItem(display_status)
+                status_item.setForeground(QColor(255, 0, 0))  # 红色
+            else:
+                status_item = QTableWidgetItem(display_status)
+                status_item.setForeground(QColor(128, 128, 128))  # 灰色
+
+            self.message_table.setItem(row, 3, status_item)
 
             # 设置内容（新增）
             # 如果内容过长，则截断显示
             display_content = content
             if len(content) > 100:
                 display_content = content[:97] + "..."
-            self.message_table.setItem(row, 5, QTableWidgetItem(display_content))
+            self.message_table.setItem(row, 4, QTableWidgetItem(display_content))
 
             # 如果是当前过滤的实例，则显示，否则隐藏
             if self.current_instance_id and instance_id != self.current_instance_id:
@@ -1323,8 +1442,8 @@ class MessageListenerPanel(QWidget):
             self.message_table.setRowHidden(row, not show_row)
 
         # 过滤后更新状态栏显示的消息计数
-        visible_count = self._get_visible_message_count()
-        self.status_label.setText(f"共 {self.listener_table.rowCount()} 个监听对象，{visible_count} 条消息")
+        # 使用QTimer在主线程中安全更新状态栏
+        QTimer.singleShot(0, lambda: asyncio.ensure_future(self._update_status_count()))
 
     def _toggle_auto_refresh(self, state):
         """切换自动刷新状态"""
@@ -1339,7 +1458,7 @@ class MessageListenerPanel(QWidget):
 
         Args:
             row: 行索引
-            column: 列索引
+            column: 列索引（未使用）
         """
         # 获取所选监听对象的信息
         instance_id = self.listener_table.item(row, 0).text()
@@ -1398,7 +1517,7 @@ class MessageListenerPanel(QWidget):
 
         Args:
             row: 行索引
-            column: 列索引
+            column: 列索引（未使用）
         """
         if row < 0:
             return
@@ -1485,8 +1604,8 @@ class MessageListenerPanel(QWidget):
             if self.message_table.isRowHidden(row):
                 continue
 
-            msg_type = self.message_table.item(row, 3).text()
-            status = self.message_table.item(row, 4).text()
+            msg_type = self.message_table.item(row, 2).text()
+            status = self.message_table.item(row, 3).text()
 
             stats['type'][msg_type] += 1
             stats['status'][status] += 1
@@ -1575,9 +1694,8 @@ class MessageListenerPanel(QWidget):
 
                 time_item = self.message_table.item(row, 0)
                 sender_item = self.message_table.item(row, 1)
-                receiver_item = self.message_table.item(row, 2)
-                type_item = self.message_table.item(row, 3)
-                status_item = self.message_table.item(row, 4)
+                type_item = self.message_table.item(row, 2)
+                status_item = self.message_table.item(row, 3)
 
                 # 获取消息ID和内容
                 message_id = time_item.data(Qt.UserRole) if time_item else ""
@@ -1586,7 +1704,6 @@ class MessageListenerPanel(QWidget):
                 messages.append({
                     'time': time_item.text() if time_item else "",
                     'sender': sender_item.text() if sender_item else "",
-                    'receiver': receiver_item.text() if receiver_item else "",
                     'type': type_item.text() if type_item else "",
                     'status': status_item.text() if status_item else "",
                     'message_id': message_id,
@@ -1595,7 +1712,7 @@ class MessageListenerPanel(QWidget):
 
             # 写入CSV文件
             with open(file_path, 'w', newline='', encoding='utf-8-sig') as f:
-                writer = csv.DictWriter(f, fieldnames=['time', 'sender', 'receiver', 'type', 'status', 'message_id', 'content'])
+                writer = csv.DictWriter(f, fieldnames=['time', 'sender', 'type', 'status', 'message_id', 'content'])
                 writer.writeheader()
                 writer.writerows(messages)
 
@@ -1860,10 +1977,6 @@ class MessageListenerPanel(QWidget):
         if hasattr(listener_info, 'active') and not listener_info.active:
             return "将移除"
 
-        # 检查是否在启动时已处理过
-        if hasattr(listener_info, 'processed_at_startup') and listener_info.processed_at_startup:
-            return "已处理"
-
         # 检查是否在启动宽限期内
         from wxauto_mgt.core.message_listener import message_listener
         current_time = time.time()
@@ -1924,7 +2037,6 @@ class MessageListenerPanel(QWidget):
                     return
 
             # 批量收集需要移除的监听对象
-            need_refresh = False
             to_remove = []
 
             # 提前记录监听对象的状态，只记录一次
@@ -1946,16 +2058,10 @@ class MessageListenerPanel(QWidget):
 
                         # 检查是否需要移除（已超时且未标记为已处理移除）
                         if countdown == "已超时" and not getattr(listener_info, 'marked_for_removal', False):
-                            # 检查是否在启动时已经处理过
-                            if hasattr(listener_info, 'processed_at_startup') and listener_info.processed_at_startup:
-                                # 不频繁记录日志，降低日志量
-                                continue
-
                             # 标记为已处理，避免重复移除
                             listener_info.marked_for_removal = True
                             # 添加到待移除列表
                             to_remove.append((instance_id, who))
-                            need_refresh = True
                             # 只有当实际要移除时，才记录日志
                             logger.info(f"监听对象 {instance_id}:{who} 已超时，即将移除")
                 except Exception as e:
@@ -2063,3 +2169,39 @@ class MessageListenerPanel(QWidget):
             if not self.message_table.isRowHidden(row):
                 count += 1
         return count
+
+    async def _get_processed_pending_count(self) -> tuple:
+        """
+        获取已处理和未处理消息的数量
+
+        Returns:
+            tuple: (已处理消息数, 未处理消息数)
+        """
+        try:
+            from wxauto_mgt.data.db_manager import db_manager
+
+            # 获取当前实例ID
+            instance_id = self.current_instance_id
+            if not instance_id:
+                return (0, 0)
+
+            # 查询已处理消息数量
+            processed_query = """
+                SELECT COUNT(*) as count FROM messages
+                WHERE instance_id = ? AND (processed = 1 OR delivery_status = 1)
+            """
+            processed_result = await db_manager.fetchone(processed_query, (instance_id,))
+            processed_count = processed_result.get('count', 0) if processed_result else 0
+
+            # 查询未处理消息数量
+            pending_query = """
+                SELECT COUNT(*) as count FROM messages
+                WHERE instance_id = ? AND processed = 0 AND (delivery_status = 0 OR delivery_status = 3)
+            """
+            pending_result = await db_manager.fetchone(pending_query, (instance_id,))
+            pending_count = pending_result.get('count', 0) if pending_result else 0
+
+            return (processed_count, pending_count)
+        except Exception as e:
+            logger.error(f"获取消息处理状态计数时出错: {e}")
+            return (0, 0)

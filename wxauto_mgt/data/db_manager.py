@@ -95,7 +95,9 @@ class DBManager:
                 FOR EACH ROW
                 WHEN LOWER(NEW.sender) = 'self' OR
                      LOWER(NEW.message_type) = 'self' OR
-                     LOWER(NEW.message_type) = 'time'
+                     LOWER(NEW.message_type) = 'time' OR
+                     LOWER(NEW.mtype) = '10000' OR
+                     LOWER(NEW.mtype) = '10002'
                 BEGIN
                     DELETE FROM messages WHERE message_id = NEW.message_id;
                 END
@@ -297,7 +299,9 @@ class DBManager:
         FOR EACH ROW
         WHEN LOWER(NEW.sender) = 'self' OR
              LOWER(NEW.message_type) = 'self' OR
-             LOWER(NEW.message_type) = 'time'
+             LOWER(NEW.message_type) = 'time' OR
+             LOWER(NEW.mtype) = '10000' OR
+             LOWER(NEW.mtype) = '10002'
         BEGIN
             DELETE FROM messages WHERE message_id = NEW.message_id;
         END

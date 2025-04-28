@@ -351,7 +351,7 @@ class MessageDeliveryService:
                 await self._update_message_delivery_status(message_id, 2)
                 return False
 
-            # 投递消息 - 只记录关键信息
+            # 投递消息 - 记录详细信息
             logger.info(f"投递消息 {message_id} 到平台 {platform.name}")
             delivery_result = await self.deliver_message(message, platform)
 

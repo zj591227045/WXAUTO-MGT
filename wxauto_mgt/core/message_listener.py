@@ -247,11 +247,23 @@ class MessageListener:
                     if messages:
                         # 更新最后消息时间
                         info.last_message_time = time.time()
-                        logger.info(f"获取到实例 {instance_id} 监听对象 {who} 的 {len(messages)} 条新消息")
 
                         # 处理消息：筛选掉"以下为新消息"及之前的消息
                         filtered_messages = self._filter_messages(messages)
                         logger.debug(f"过滤后剩余 {len(filtered_messages)} 条新消息")
+
+                        # 记录详细的消息信息，包括会话名称、发送人和内容
+                        # 只记录第一条过滤后的消息，避免日志过多
+                        if filtered_messages:
+                            msg = filtered_messages[0]
+                            sender = msg.get('sender', '未知')
+                            sender_remark = msg.get('sender_remark', '')
+                            content = msg.get('content', '')
+                            # 使用发送者备注名(如果有)，否则使用发送者ID
+                            display_sender = sender_remark if sender_remark else sender
+                            # 截断内容，避免日志过长
+                            short_content = content[:50] + "..." if len(content) > 50 else content
+                            logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
 
                         # 保存消息到数据库
                         for msg in filtered_messages:
@@ -463,8 +475,23 @@ class MessageListener:
                     messages = await api_client.get_listener_messages(who)
 
                     if messages:
+                        # 先过滤消息
+                        filtered_messages = self._filter_messages(messages)
+
                         # 如果有新消息，更新时间戳并跳过移除
-                        logger.info(f"监听对象 {who} 有 {len(messages)} 条新消息，不移除")
+                        logger.info(f"监听对象 {who} 有 {len(messages)} 条新消息，过滤后剩余 {len(filtered_messages)} 条，不移除")
+
+                        # 记录第一条过滤后的消息内容
+                        if filtered_messages:
+                            msg = filtered_messages[0]
+                            sender = msg.get('sender', '未知')
+                            sender_remark = msg.get('sender_remark', '')
+                            content = msg.get('content', '')
+                            # 使用发送者备注名(如果有)，否则使用发送者ID
+                            display_sender = sender_remark if sender_remark else sender
+                            # 截断内容，避免日志过长
+                            short_content = content[:50] + "..." if len(content) > 50 else content
+                            logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
 
                         async with self._lock:
                             if instance_id in self.listeners and who in self.listeners[instance_id]:
@@ -476,7 +503,7 @@ class MessageListener:
                                 await self._update_listener_timestamp(instance_id, who)
 
                                 # 处理消息
-                                for msg in messages:
+                                for msg in filtered_messages:
                                     # 在保存前检查消息是否应该被过滤
                                     from wxauto_mgt.core.message_filter import message_filter
 
@@ -795,8 +822,23 @@ class MessageListener:
                 messages = await api_client.get_listener_messages(who)
 
                 if messages:
+                    # 先过滤消息
+                    filtered_messages = self._filter_messages(messages)
+
                     # 如果获取到消息，更新最后消息时间
-                    logger.info(f"监听对象 {who} 有 {len(messages)} 条新消息，更新最后消息时间")
+                    logger.info(f"监听对象 {who} 有 {len(messages)} 条新消息，过滤后剩余 {len(filtered_messages)} 条，更新最后消息时间")
+
+                    # 记录第一条过滤后的消息内容
+                    if filtered_messages:
+                        msg = filtered_messages[0]
+                        sender = msg.get('sender', '未知')
+                        sender_remark = msg.get('sender_remark', '')
+                        content = msg.get('content', '')
+                        # 使用发送者备注名(如果有)，否则使用发送者ID
+                        display_sender = sender_remark if sender_remark else sender
+                        # 截断内容，避免日志过长
+                        short_content = content[:50] + "..." if len(content) > 50 else content
+                        logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
 
                     async with self._lock:
                         if instance_id in self.listeners and who in self.listeners[instance_id]:
@@ -808,8 +850,8 @@ class MessageListener:
                             logger.debug(f"已更新监听对象时间戳: {instance_id} - {who}")
 
                             # 处理消息
-                            logger.debug(f"开始处理 {len(messages)} 条消息并保存到数据库")
-                            for msg in messages:
+                            logger.debug(f"开始处理 {len(filtered_messages)} 条过滤后的消息并保存到数据库")
+                            for msg in filtered_messages:
                                 # 在保存前检查消息是否应该被过滤
                                 from wxauto_mgt.core.message_filter import message_filter
 
@@ -902,13 +944,11 @@ class MessageListener:
                 except Exception as e:
                     logger.error(f"初始化API实例时出错: {e}")
 
-        # 为所有监听对象标记为已在启动时处理，提供宽限期
-        logger.info("为所有监听对象提供启动宽限期，标记为已处理")
+        # 为所有监听对象提供启动宽限期
+        logger.info("为所有监听对象提供启动宽限期")
         async with self._lock:
             for instance_id, listeners_dict in self.listeners.items():
                 for who, info in listeners_dict.items():
-                    # 设置所有监听对象为已处理状态
-                    info.processed_at_startup = True
                     # 更新最后消息时间，提供一个缓冲时间
                     buffer_time = self.timeout_minutes * 30  # 半个超时时间(秒)
                     info.last_message_time = time.time() - buffer_time
@@ -948,14 +988,29 @@ class MessageListener:
                 logger.info(f"启动时获取监听对象消息: {instance_id} - {who}")
                 messages = await api_client.get_listener_messages(who)
 
-                # 无论是否有消息，都标记为已在启动时处理过
+                # 更新最后检查时间
                 async with self._lock:
                     if instance_id in self.listeners and who in self.listeners[instance_id]:
-                        self.listeners[instance_id][who].processed_at_startup = True
+                        self.listeners[instance_id][who].last_check_time = time.time()
 
                 if messages:
+                    # 先过滤消息
+                    filtered_messages = self._filter_messages(messages)
+
                     # 如果有新消息，更新时间戳
-                    logger.info(f"监听对象 {who} 有 {len(messages)} 条新消息，重置超时")
+                    logger.info(f"监听对象 {who} 有 {len(messages)} 条新消息，过滤后剩余 {len(filtered_messages)} 条，重置超时")
+
+                    # 记录第一条过滤后的消息内容
+                    if filtered_messages:
+                        msg = filtered_messages[0]
+                        sender = msg.get('sender', '未知')
+                        sender_remark = msg.get('sender_remark', '')
+                        content = msg.get('content', '')
+                        # 使用发送者备注名(如果有)，否则使用发送者ID
+                        display_sender = sender_remark if sender_remark else sender
+                        # 截断内容，避免日志过长
+                        short_content = content[:50] + "..." if len(content) > 50 else content
+                        logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
 
                     async with self._lock:
                         if instance_id in self.listeners and who in self.listeners[instance_id]:
@@ -965,7 +1020,7 @@ class MessageListener:
                             await self._update_listener_timestamp(instance_id, who)
 
                             # 处理消息
-                            for msg in messages:
+                            for msg in filtered_messages:
                                 # 在保存前检查消息是否应该被过滤
                                 from wxauto_mgt.core.message_filter import message_filter
 
