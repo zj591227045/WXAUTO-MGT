@@ -1,3 +1,4 @@
+
 """
 数据库管理模块
 
@@ -19,35 +20,41 @@ logger = logging.getLogger(__name__)
 
 class DBManager:
     """数据库管理器，负责管理数据库连接和操作"""
-    
+
     def __init__(self):
         """初始化数据库管理器"""
         self._db_path = None
         self._initialized = False
         self._lock = asyncio.Lock()
         self._connection = None
-        
-    async def initialize(self, db_path: str) -> None:
+
+    async def initialize(self, db_path: str = None) -> None:
         """
         初始化数据库
-        
+
         Args:
-            db_path: 数据库文件路径
+            db_path: 数据库文件路径，如果为None则使用默认路径
         """
         if self._initialized:
             logger.warning("数据库管理器已经初始化")
             return
-            
+
+        # 如果未指定路径，使用默认路径
+        if db_path is None:
+            # 使用项目相对路径
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+            db_path = os.path.join(project_root, 'data', 'wxauto_mgt.db')
+
         self._db_path = db_path
-        
+
         # 确保数据库目录存在
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        
+
         # 初始化数据库
         await self._init_db()
         self._initialized = True
         logger.info(f"数据库初始化完成: {db_path}")
-        
+
     async def _init_db(self) -> None:
         """初始化数据库结构"""
         # 同步创建数据库文件和表
@@ -59,13 +66,13 @@ class DBManager:
             conn.execute("PRAGMA temp_store=MEMORY")
             conn.execute("PRAGMA mmap_size=30000000000")
             conn.execute("PRAGMA page_size=4096")
-            
+
             # 创建表
             await self._create_tables_sync(conn)
             conn.commit()
         finally:
             conn.close()
-            
+
     async def _create_tables_sync(self, conn: sqlite3.Connection) -> None:
         """创建数据库表"""
         # 配置表
@@ -79,7 +86,7 @@ class DBManager:
         )
         """)
         logger.debug("创建configs表")
-        
+
         # 实例表
         conn.execute("""
         CREATE TABLE IF NOT EXISTS instances (
@@ -97,7 +104,7 @@ class DBManager:
         )
         """)
         logger.debug("创建instances表")
-        
+
         # 状态日志表
         conn.execute("""
         CREATE TABLE IF NOT EXISTS status_logs (
@@ -109,7 +116,7 @@ class DBManager:
         )
         """)
         logger.debug("创建status_logs表")
-        
+
         # 性能指标表
         conn.execute("""
         CREATE TABLE IF NOT EXISTS performance_metrics (
@@ -121,7 +128,7 @@ class DBManager:
         )
         """)
         logger.debug("创建performance_metrics表")
-        
+
         # 警报规则表
         conn.execute("""
         CREATE TABLE IF NOT EXISTS alert_rules (
@@ -139,7 +146,7 @@ class DBManager:
         )
         """)
         logger.debug("创建alert_rules表")
-        
+
         # 警报历史表
         conn.execute("""
         CREATE TABLE IF NOT EXISTS alert_history (
@@ -156,7 +163,7 @@ class DBManager:
         )
         """)
         logger.debug("创建alert_history表")
-        
+
         # 监听器表
         conn.execute("""
         CREATE TABLE IF NOT EXISTS listeners (
@@ -169,7 +176,7 @@ class DBManager:
         )
         """)
         logger.debug("创建listeners表")
-        
+
         # 消息表
         conn.execute("""
         CREATE TABLE IF NOT EXISTS messages (
@@ -184,126 +191,180 @@ class DBManager:
             mtype INTEGER,
             processed INTEGER NOT NULL DEFAULT 0,
             create_time INTEGER NOT NULL,
+            delivery_status INTEGER DEFAULT 0,
+            delivery_time INTEGER,
+            platform_id TEXT,
+            reply_content TEXT,
+            reply_status INTEGER DEFAULT 0,
+            reply_time INTEGER,
+            merged INTEGER DEFAULT 0,
+            merged_count INTEGER DEFAULT 0,
+            merged_ids TEXT,
             UNIQUE(instance_id, message_id)
         )
         """)
         logger.debug("创建messages表")
-        
+
+        # 创建消息相关索引
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_delivery_status ON messages(delivery_status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_platform_id ON messages(platform_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_reply_status ON messages(reply_status)")
+        logger.debug("创建messages表索引")
+
+        # 服务平台表
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS service_platforms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            config TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            create_time INTEGER NOT NULL,
+            update_time INTEGER NOT NULL
+        )
+        """)
+        logger.debug("创建service_platforms表")
+
+        # 投递规则表
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS delivery_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            instance_id TEXT NOT NULL,
+            chat_pattern TEXT NOT NULL,
+            platform_id TEXT NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            create_time INTEGER NOT NULL,
+            update_time INTEGER NOT NULL,
+            FOREIGN KEY (platform_id) REFERENCES service_platforms (platform_id)
+        )
+        """)
+        logger.debug("创建delivery_rules表")
+
+        # 创建投递规则相关索引
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_delivery_rules_instance_id ON delivery_rules(instance_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_delivery_rules_platform_id ON delivery_rules(platform_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_delivery_rules_priority ON delivery_rules(priority)")
+        logger.debug("创建delivery_rules表索引")
+
     async def execute(self, sql: str, params: tuple = None) -> None:
         """
         执行SQL命令
-        
+
         Args:
             sql: SQL命令
             params: SQL参数
         """
         if not self._initialized:
             raise RuntimeError("数据库管理器未初始化")
-            
+
         async with self._lock:
             async with aiosqlite.connect(self._db_path) as db:
                 await db.execute(sql, params or ())
                 await db.commit()
-                
+
     async def executemany(self, sql: str, params_list: List[tuple]) -> None:
         """
         执行多条SQL命令
-        
+
         Args:
             sql: SQL命令
             params_list: SQL参数列表
         """
         if not self._initialized:
             raise RuntimeError("数据库管理器未初始化")
-            
+
         async with self._lock:
             async with aiosqlite.connect(self._db_path) as db:
                 await db.executemany(sql, params_list)
                 await db.commit()
-                
+
     async def fetchone(self, sql: str, params: tuple = None) -> Optional[Dict]:
         """
         获取单条记录
-        
+
         Args:
             sql: SQL查询
             params: SQL参数
-            
+
         Returns:
             Optional[Dict]: 查询结果
         """
         if not self._initialized:
             raise RuntimeError("数据库管理器未初始化")
-            
+
         async with aiosqlite.connect(self._db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(sql, params or ()) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
-                
+
     async def fetchall(self, sql: str, params: tuple = None) -> List[Dict]:
         """
         获取多条记录
-        
+
         Args:
             sql: SQL查询
             params: SQL参数
-            
+
         Returns:
             List[Dict]: 查询结果列表
         """
         if not self._initialized:
             raise RuntimeError("数据库管理器未初始化")
-            
+
         async with aiosqlite.connect(self._db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(sql, params or ()) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
-                
+
     async def insert(self, table: str, data: Dict) -> int:
         """
         插入数据
-        
+
         Args:
             table: 表名
             data: 数据字典
-            
+
         Returns:
             int: 新插入记录的ID
         """
         if not self._initialized:
             logger.error("数据库管理器未初始化，无法执行插入操作")
             raise RuntimeError("数据库管理器未初始化")
-        
+
         try:
             logger.debug(f"准备向表 {table} 插入数据: {data}")
-            
+
             # 验证表名
             valid_tables = await self._get_table_names()
             if table not in valid_tables:
                 error_msg = f"表 {table} 不存在，可用的表: {valid_tables}"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
-                
+
             # 获取表结构，验证字段
             table_info = await self._get_table_structure(table)
             table_columns = {col["name"] for col in table_info}
-            
+
             # 检查数据字段是否在表中存在
             invalid_fields = set(data.keys()) - table_columns
             if invalid_fields:
                 error_msg = f"字段 {invalid_fields} 在表 {table} 中不存在，有效字段: {table_columns}"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
-            
+
             keys = list(data.keys())
             values = list(data.values())
             placeholders = ','.join(['?' for _ in keys])
-            
+
             sql = f"INSERT INTO {table} ({','.join(keys)}) VALUES ({placeholders})"
             logger.debug(f"执行SQL: {sql}, 参数: {values}")
-            
+
             async with self._lock:
                 async with aiosqlite.connect(self._db_path) as db:
                     try:
@@ -318,13 +379,13 @@ class DBManager:
                         logger.error(error_msg)
                         logger.error(f"异常堆栈: {traceback.format_exc()}")
                         raise ValueError(f"数据库插入失败: {str(db_error)}")
-                        
+
         except Exception as e:
             import traceback
             logger.error(f"insert 方法异常: {e}")
             logger.error(f"异常堆栈: {traceback.format_exc()}")
             raise
-            
+
     async def _get_table_names(self) -> List[str]:
         """获取所有表名"""
         async with aiosqlite.connect(self._db_path) as db:
@@ -332,7 +393,7 @@ class DBManager:
             cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table'")
             rows = await cursor.fetchall()
             return [row['name'] for row in rows]
-            
+
     async def _get_table_structure(self, table: str) -> List[Dict]:
         """获取表结构"""
         async with aiosqlite.connect(self._db_path) as db:
@@ -340,51 +401,51 @@ class DBManager:
             cursor = await db.execute(f"PRAGMA table_info({table})")
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
-                
+
     async def update(self, table: str, data: Dict, conditions: Dict) -> int:
         """
         更新数据
-        
+
         Args:
             table: 表名
             data: 更新的数据字典
             conditions: 更新条件
-            
+
         Returns:
             int: 受影响的行数
         """
         if not self._initialized:
             raise RuntimeError("数据库管理器未初始化")
-            
+
         set_clause = ','.join([f"{k}=?" for k in data.keys()])
         where_clause = ' AND '.join([f"{k}=?" for k in conditions.keys()])
-        
+
         sql = f"UPDATE {table} SET {set_clause} WHERE {where_clause}"
         params = list(data.values()) + list(conditions.values())
-        
+
         async with self._lock:
             async with aiosqlite.connect(self._db_path) as db:
                 cursor = await db.execute(sql, params)
                 await db.commit()
                 return cursor.rowcount
-                
+
     async def delete(self, table: str, conditions: Dict) -> int:
         """
         删除数据
-        
+
         Args:
             table: 表名
             conditions: 删除条件
-            
+
         Returns:
             int: 受影响的行数
         """
         if not self._initialized:
             raise RuntimeError("数据库管理器未初始化")
-            
+
         where_clause = ' AND '.join([f"{k}=?" for k in conditions.keys()])
         sql = f"DELETE FROM {table} WHERE {where_clause}"
-        
+
         async with self._lock:
             async with aiosqlite.connect(self._db_path) as db:
                 cursor = await db.execute(sql, list(conditions.values()))
@@ -395,9 +456,9 @@ class DBManager:
         """关闭数据库连接"""
         if not self._initialized:
             return
-            
+
         self._initialized = False
         logger.info("数据库连接已关闭")
 
 # 创建全局实例
-db_manager = DBManager() 
+db_manager = DBManager()
