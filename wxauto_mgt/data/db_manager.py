@@ -52,6 +52,10 @@ class DBManager:
 
         # 初始化数据库
         await self._init_db()
+
+        # 检查并确保触发器存在
+        await self._ensure_triggers()
+
         self._initialized = True
         logger.info(f"数据库初始化完成: {db_path}")
 
@@ -72,6 +76,36 @@ class DBManager:
             conn.commit()
         finally:
             conn.close()
+
+    async def _ensure_triggers(self) -> None:
+        """确保所有必要的触发器存在"""
+        try:
+            # 检查触发器是否存在
+            trigger_exists = await self.fetchone(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND name='delete_self_time_messages'"
+            )
+
+            if not trigger_exists:
+                logger.info("消息过滤触发器不存在，正在创建...")
+
+                # 创建触发器
+                await self.execute("""
+                CREATE TRIGGER IF NOT EXISTS delete_self_time_messages
+                AFTER INSERT ON messages
+                FOR EACH ROW
+                WHEN LOWER(NEW.sender) = 'self' OR
+                     LOWER(NEW.message_type) = 'self' OR
+                     LOWER(NEW.message_type) = 'time'
+                BEGIN
+                    DELETE FROM messages WHERE message_id = NEW.message_id;
+                END
+                """)
+
+                logger.info("消息过滤触发器创建成功")
+            else:
+                logger.debug("消息过滤触发器已存在")
+        except Exception as e:
+            logger.error(f"确保触发器存在时出错: {str(e)}")
 
     async def _create_tables_sync(self, conn: sqlite3.Connection) -> None:
         """创建数据库表"""
@@ -249,6 +283,26 @@ class DBManager:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_delivery_rules_platform_id ON delivery_rules(platform_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_delivery_rules_priority ON delivery_rules(priority)")
         logger.debug("创建delivery_rules表索引")
+
+        # 创建触发器，自动删除Self和Time类型的消息
+        logger.info("创建消息过滤触发器...")
+
+        # 先删除旧的触发器（如果存在）
+        conn.execute("DROP TRIGGER IF EXISTS delete_self_time_messages")
+
+        # 创建新的触发器
+        conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS delete_self_time_messages
+        AFTER INSERT ON messages
+        FOR EACH ROW
+        WHEN LOWER(NEW.sender) = 'self' OR
+             LOWER(NEW.message_type) = 'self' OR
+             LOWER(NEW.message_type) = 'time'
+        BEGIN
+            DELETE FROM messages WHERE message_id = NEW.message_id;
+        END
+        """)
+        logger.debug("创建消息过滤触发器完成")
 
     async def execute(self, sql: str, params: tuple = None) -> None:
         """
