@@ -400,9 +400,22 @@ class DeliveryRulePanel(QWidget):
         # 异步更新平台名称
         self._update_platform_name_async(platform_id, row, 4)
 
-    async def _update_platform_name_async(self, platform_id: str, row: int, column: int):
+    def _update_platform_name_async(self, platform_id: str, row: int, column: int):
         """
         异步更新平台名称
+
+        Args:
+            platform_id: 平台ID
+            row: 行索引
+            column: 列索引
+        """
+        # 使用asyncSlot装饰器处理异步调用
+        self._update_platform_name_task(platform_id, row, column)
+
+    @asyncSlot()
+    async def _update_platform_name_task(self, platform_id: str, row: int, column: int):
+        """
+        异步更新平台名称任务
 
         Args:
             platform_id: 平台ID
@@ -433,15 +446,25 @@ class DeliveryRulePanel(QWidget):
 
     def _add_rule(self):
         """添加规则"""
-        # 导入对话框
-        from wxauto_mgt.ui.components.dialogs.rule_dialog import AddEditRuleDialog
+        # 在主线程中创建和显示对话框
+        def show_dialog():
+            try:
+                # 导入对话框
+                from wxauto_mgt.ui.components.dialogs.rule_dialog import AddEditRuleDialog
 
-        dialog = AddEditRuleDialog(self, current_instance_id=self._current_instance_id)
-        if dialog.exec():
-            rule_data = dialog.get_rule_data()
+                # 创建对话框
+                dialog = AddEditRuleDialog(self, current_instance_id=self._current_instance_id)
+                if dialog.exec():
+                    # 获取规则数据
+                    rule_data = dialog.get_rule_data()
+                    # 使用异步任务添加规则
+                    self._add_rule_async(rule_data)
+            except Exception as e:
+                logger.error(f"显示添加对话框失败: {e}")
+                QMessageBox.warning(self, "错误", f"显示添加对话框失败: {str(e)}")
 
-            # 使用asyncSlot装饰器处理异步调用
-            self._add_rule_async(rule_data)
+        # 在主线程中执行
+        QTimer.singleShot(0, show_dialog)
 
     @asyncSlot()
     async def _add_rule_async(self, rule_data: Dict[str, Any]):
@@ -509,42 +532,68 @@ class DeliveryRulePanel(QWidget):
                 QMessageBox.warning(self, "错误", f"找不到规则: {rule_id}")
                 return
 
-            # 导入对话框
-            from wxauto_mgt.ui.components.dialogs.rule_dialog import AddEditRuleDialog
+            # 在主线程中创建和显示对话框
+            def show_dialog():
+                try:
+                    # 导入对话框
+                    from wxauto_mgt.ui.components.dialogs.rule_dialog import AddEditRuleDialog
 
-            # 创建对话框
-            dialog = AddEditRuleDialog(self, rule_data)
-            if dialog.exec():
-                updated_data = dialog.get_rule_data()
+                    # 创建对话框
+                    dialog = AddEditRuleDialog(self, rule_data)
+                    if dialog.exec():
+                        # 获取更新后的数据
+                        updated_data = dialog.get_rule_data()
+                        # 使用异步任务更新规则
+                        self._update_rule_after_edit(rule_id, updated_data)
+                except Exception as e:
+                    logger.error(f"显示编辑对话框失败: {e}")
+                    QMessageBox.warning(self, "错误", f"显示编辑对话框失败: {str(e)}")
 
-                # 更新规则
-                success = await rule_manager.update_rule(
-                    rule_id,
-                    updated_data["name"],
-                    updated_data["instance_id"],
-                    updated_data["chat_pattern"],
-                    updated_data["platform_id"],
-                    updated_data["priority"]
-                )
-
-                if success:
-                    logger.info(f"更新规则成功: {updated_data['name']} ({rule_id})")
-
-                    # 发送规则更新信号
-                    self.rule_updated.emit(rule_id)
-
-                    # 刷新规则列表
-                    await self.refresh_rules()
-
-                    # 显示成功消息
-                    QMessageBox.information(self, "成功", f"更新规则成功: {updated_data['name']}")
-                else:
-                    logger.error(f"更新规则失败: {updated_data['name']}")
-                    QMessageBox.warning(self, "错误", f"更新规则失败: {updated_data['name']}")
+            # 在主线程中执行
+            QTimer.singleShot(0, show_dialog)
 
         except Exception as e:
             logger.error(f"编辑规则失败: {e}")
             QMessageBox.warning(self, "错误", f"编辑规则失败: {str(e)}")
+
+    @asyncSlot()
+    async def _update_rule_after_edit(self, rule_id: str, updated_data: Dict[str, Any]):
+        """
+        编辑对话框关闭后更新规则
+
+        Args:
+            rule_id: 规则ID
+            updated_data: 更新后的规则数据
+        """
+        try:
+            # 更新规则
+            success = await rule_manager.update_rule(
+                rule_id,
+                updated_data["name"],
+                updated_data["instance_id"],
+                updated_data["chat_pattern"],
+                updated_data["platform_id"],
+                updated_data["priority"]
+            )
+
+            if success:
+                logger.info(f"更新规则成功: {updated_data['name']} ({rule_id})")
+
+                # 发送规则更新信号
+                self.rule_updated.emit(rule_id)
+
+                # 刷新规则列表
+                await self.refresh_rules()
+
+                # 显示成功消息
+                QMessageBox.information(self, "成功", f"更新规则成功: {updated_data['name']}")
+            else:
+                logger.error(f"更新规则失败: {updated_data['name']}")
+                QMessageBox.warning(self, "错误", f"更新规则失败: {updated_data['name']}")
+
+        except Exception as e:
+            logger.error(f"更新规则失败: {e}")
+            QMessageBox.warning(self, "错误", f"更新规则失败: {str(e)}")
 
     def _delete_rule(self):
         """删除规则"""
