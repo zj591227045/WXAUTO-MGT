@@ -53,10 +53,16 @@ class DBManager:
         # 初始化数据库
         await self._init_db()
 
-        # 检查并确保触发器存在
-        await self._ensure_triggers()
-
+        # 标记为已初始化
         self._initialized = True
+
+        # 检查并确保触发器存在
+        try:
+            await self._ensure_triggers()
+        except Exception as e:
+            logger.error(f"确保触发器存在时出错: {e}")
+            # 不要因为触发器问题而阻止应用程序启动
+
         logger.info(f"数据库初始化完成: {db_path}")
 
     async def _init_db(self) -> None:
@@ -509,6 +515,21 @@ class DBManager:
                 cursor = await db.execute(sql, list(conditions.values()))
                 await db.commit()
                 return cursor.rowcount
+
+    def get_connection(self):
+        """
+        获取数据库连接（同步方法）
+
+        Returns:
+            sqlite3.Connection: 数据库连接
+        """
+        if not self._initialized:
+            raise RuntimeError("数据库管理器未初始化")
+
+        # 创建新的连接
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
 
     async def close(self) -> None:
         """关闭数据库连接"""
