@@ -167,8 +167,14 @@ class MessageListener:
             api_client: API客户端实例
         """
         try:
-            # 获取主窗口未读消息
-            messages = await api_client.get_unread_messages()
+            # 获取主窗口未读消息，设置接收图片、文件、语音信息、URL信息参数为True
+            messages = await api_client.get_unread_messages(
+                save_pic=True,
+                save_video=False,
+                save_file=True,
+                save_voice=True,
+                parse_url=True
+            )
             if not messages:
                 return
 
@@ -183,7 +189,15 @@ class MessageListener:
                 chat_name = msg.get('chat_name')
                 if chat_name:
                     # 将发送者添加到监听列表 - 这是关键步骤
-                    add_success = await self.add_listener(instance_id, chat_name)
+                    # 设置接收图片、文件、语音信息、URL信息参数为True
+                    add_success = await self.add_listener(
+                        instance_id,
+                        chat_name,
+                        save_pic=True,
+                        save_file=True,
+                        save_voice=True,
+                        parse_url=True
+                    )
 
                     # 只有成功添加监听对象后，才保存消息到数据库
                     if add_success:
@@ -191,23 +205,35 @@ class MessageListener:
                         # 特别是检查sender是否为self
                         from wxauto_mgt.core.message_filter import message_filter
 
-                        # 保存消息到数据库
-                        save_data = {
-                            'instance_id': instance_id,
-                            'chat_name': chat_name,
-                            'message_type': msg.get('type'),
-                            'content': msg.get('content'),
-                            'sender': msg.get('sender'),
-                            'sender_remark': msg.get('sender_remark'),
-                            'message_id': msg.get('id'),
-                            'mtype': msg.get('mtype')
-                        }
-
                         # 直接检查sender是否为self
                         sender = msg.get('sender', '')
                         if sender and (sender.lower() == 'self' or sender == 'Self'):
                             logger.debug(f"过滤掉self发送的主窗口消息: {msg.get('id')}")
                             continue
+
+                        # 处理不同类型的消息
+                        from wxauto_mgt.core.message_processor import message_processor
+
+                        # 处理消息内容
+                        processed_msg = await message_processor.process_message(msg, api_client)
+
+                        # 保存消息到数据库
+                        save_data = {
+                            'instance_id': instance_id,
+                            'chat_name': chat_name,
+                            'message_type': processed_msg.get('type'),
+                            'content': processed_msg.get('content'),
+                            'sender': processed_msg.get('sender'),
+                            'sender_remark': processed_msg.get('sender_remark'),
+                            'message_id': processed_msg.get('id'),
+                            'mtype': processed_msg.get('mtype')
+                        }
+
+                        # 如果是文件或图片，添加本地文件路径
+                        if 'local_file_path' in processed_msg:
+                            save_data['local_file_path'] = processed_msg.get('local_file_path')
+                            save_data['file_size'] = processed_msg.get('file_size')
+                            save_data['original_file_path'] = processed_msg.get('original_file_path')
 
                         # 使用消息过滤模块进行二次检查
                         if message_filter.should_filter_message(save_data, log_prefix="主窗口保存前"):
@@ -271,22 +297,35 @@ class MessageListener:
                             # 特别是检查sender是否为self
                             from wxauto_mgt.core.message_filter import message_filter
 
-                            save_data = {
-                                'instance_id': instance_id,
-                                'chat_name': who,
-                                'message_type': msg.get('type'),
-                                'content': msg.get('content'),
-                                'sender': msg.get('sender'),
-                                'sender_remark': msg.get('sender_remark'),
-                                'message_id': msg.get('id'),
-                                'mtype': msg.get('mtype')
-                            }
-
                             # 直接检查sender是否为self
                             sender = msg.get('sender', '')
                             if sender and (sender.lower() == 'self' or sender == 'Self'):
                                 logger.debug(f"过滤掉self发送的消息: {msg.get('id')}")
                                 continue
+
+                            # 处理不同类型的消息
+                            from wxauto_mgt.core.message_processor import message_processor
+
+                            # 处理消息内容
+                            processed_msg = await message_processor.process_message(msg, api_client)
+
+                            # 保存消息到数据库
+                            save_data = {
+                                'instance_id': instance_id,
+                                'chat_name': who,
+                                'message_type': processed_msg.get('type'),
+                                'content': processed_msg.get('content'),
+                                'sender': processed_msg.get('sender'),
+                                'sender_remark': processed_msg.get('sender_remark'),
+                                'message_id': processed_msg.get('id'),
+                                'mtype': processed_msg.get('mtype')
+                            }
+
+                            # 如果是文件或图片，添加本地文件路径
+                            if 'local_file_path' in processed_msg:
+                                save_data['local_file_path'] = processed_msg.get('local_file_path')
+                                save_data['file_size'] = processed_msg.get('file_size')
+                                save_data['original_file_path'] = processed_msg.get('original_file_path')
 
                             # 使用消息过滤模块进行二次检查
                             if message_filter.should_filter_message(save_data, log_prefix="监听器保存前"):
@@ -507,22 +546,35 @@ class MessageListener:
                                     # 在保存前检查消息是否应该被过滤
                                     from wxauto_mgt.core.message_filter import message_filter
 
-                                    save_data = {
-                                        'instance_id': instance_id,
-                                        'chat_name': who,
-                                        'message_type': msg.get('type', 'text'),
-                                        'content': msg.get('content', ''),
-                                        'sender': msg.get('sender', ''),
-                                        'sender_remark': msg.get('sender_remark', ''),
-                                        'message_id': msg.get('id', ''),
-                                        'mtype': msg.get('mtype', 0)
-                                    }
-
                                     # 直接检查sender是否为self
                                     sender = msg.get('sender', '')
                                     if sender and (sender.lower() == 'self' or sender == 'Self'):
                                         logger.debug(f"过滤掉self发送的超时检查消息: {msg.get('id')}")
                                         continue
+
+                                    # 处理不同类型的消息
+                                    from wxauto_mgt.core.message_processor import message_processor
+
+                                    # 处理消息内容
+                                    processed_msg = await message_processor.process_message(msg, api_client)
+
+                                    # 保存消息到数据库
+                                    save_data = {
+                                        'instance_id': instance_id,
+                                        'chat_name': who,
+                                        'message_type': processed_msg.get('type', 'text'),
+                                        'content': processed_msg.get('content', ''),
+                                        'sender': processed_msg.get('sender', ''),
+                                        'sender_remark': processed_msg.get('sender_remark', ''),
+                                        'message_id': processed_msg.get('id', ''),
+                                        'mtype': processed_msg.get('mtype', 0)
+                                    }
+
+                                    # 如果是文件或图片，添加本地文件路径
+                                    if 'local_file_path' in processed_msg:
+                                        save_data['local_file_path'] = processed_msg.get('local_file_path')
+                                        save_data['file_size'] = processed_msg.get('file_size')
+                                        save_data['original_file_path'] = processed_msg.get('original_file_path')
 
                                     # 使用消息过滤模块进行二次检查
                                     if message_filter.should_filter_message(save_data, log_prefix="超时检查保存前"):
@@ -795,9 +847,15 @@ class MessageListener:
                     remove_result = await api_client.remove_listener(who)
                     logger.debug(f"移除结果: {remove_result}")
 
-                    # 再重新添加
+                    # 再重新添加，设置接收图片、文件、语音信息、URL信息参数为True
                     logger.debug(f"尝试重新添加监听对象: {instance_id} - {who}")
-                    add_success = await api_client.add_listener(who)
+                    add_success = await api_client.add_listener(
+                        who,
+                        save_pic=True,
+                        save_file=True,
+                        save_voice=True,
+                        parse_url=True
+                    )
 
                     if add_success:
                         logger.info(f"监听对象验证成功，已重置: {instance_id} - {who}")
@@ -855,22 +913,35 @@ class MessageListener:
                                 # 在保存前检查消息是否应该被过滤
                                 from wxauto_mgt.core.message_filter import message_filter
 
-                                save_data = {
-                                    'instance_id': instance_id,
-                                    'chat_name': who,
-                                    'message_type': msg.get('type', 'text'),
-                                    'content': msg.get('content', ''),
-                                    'sender': msg.get('sender', ''),
-                                    'sender_remark': msg.get('sender_remark', ''),
-                                    'message_id': msg.get('id', ''),
-                                    'mtype': msg.get('mtype', 0)
-                                }
-
                                 # 直接检查sender是否为self
                                 sender = msg.get('sender', '')
                                 if sender and (sender.lower() == 'self' or sender == 'Self'):
                                     logger.debug(f"过滤掉self发送的刷新消息: {msg.get('id')}")
                                     continue
+
+                                # 处理不同类型的消息
+                                from wxauto_mgt.core.message_processor import message_processor
+
+                                # 处理消息内容
+                                processed_msg = await message_processor.process_message(msg, api_client)
+
+                                # 保存消息到数据库
+                                save_data = {
+                                    'instance_id': instance_id,
+                                    'chat_name': who,
+                                    'message_type': processed_msg.get('type', 'text'),
+                                    'content': processed_msg.get('content', ''),
+                                    'sender': processed_msg.get('sender', ''),
+                                    'sender_remark': processed_msg.get('sender_remark', ''),
+                                    'message_id': processed_msg.get('id', ''),
+                                    'mtype': processed_msg.get('mtype', 0)
+                                }
+
+                                # 如果是文件或图片，添加本地文件路径
+                                if 'local_file_path' in processed_msg:
+                                    save_data['local_file_path'] = processed_msg.get('local_file_path')
+                                    save_data['file_size'] = processed_msg.get('file_size')
+                                    save_data['original_file_path'] = processed_msg.get('original_file_path')
 
                                 # 使用消息过滤模块进行二次检查
                                 if message_filter.should_filter_message(save_data, log_prefix="刷新保存前"):
@@ -1024,22 +1095,35 @@ class MessageListener:
                                 # 在保存前检查消息是否应该被过滤
                                 from wxauto_mgt.core.message_filter import message_filter
 
-                                save_data = {
-                                    'instance_id': instance_id,
-                                    'chat_name': who,
-                                    'message_type': msg.get('type', 'text'),
-                                    'content': msg.get('content', ''),
-                                    'sender': msg.get('sender', ''),
-                                    'sender_remark': msg.get('sender_remark', ''),
-                                    'message_id': msg.get('id', ''),
-                                    'mtype': msg.get('mtype', 0)
-                                }
-
                                 # 直接检查sender是否为self
                                 sender = msg.get('sender', '')
                                 if sender and (sender.lower() == 'self' or sender == 'Self'):
                                     logger.debug(f"过滤掉self发送的启动消息: {msg.get('id')}")
                                     continue
+
+                                # 处理不同类型的消息
+                                from wxauto_mgt.core.message_processor import message_processor
+
+                                # 处理消息内容
+                                processed_msg = await message_processor.process_message(msg, api_client)
+
+                                # 保存消息到数据库
+                                save_data = {
+                                    'instance_id': instance_id,
+                                    'chat_name': who,
+                                    'message_type': processed_msg.get('type', 'text'),
+                                    'content': processed_msg.get('content', ''),
+                                    'sender': processed_msg.get('sender', ''),
+                                    'sender_remark': processed_msg.get('sender_remark', ''),
+                                    'message_id': processed_msg.get('id', ''),
+                                    'mtype': processed_msg.get('mtype', 0)
+                                }
+
+                                # 如果是文件或图片，添加本地文件路径
+                                if 'local_file_path' in processed_msg:
+                                    save_data['local_file_path'] = processed_msg.get('local_file_path')
+                                    save_data['file_size'] = processed_msg.get('file_size')
+                                    save_data['original_file_path'] = processed_msg.get('original_file_path')
 
                                 # 使用消息过滤模块进行二次检查
                                 if message_filter.should_filter_message(save_data, log_prefix="启动保存前"):
@@ -1054,8 +1138,14 @@ class MessageListener:
                     try:
                         # 先移除
                         await api_client.remove_listener(who)
-                        # 再添加
-                        add_success = await api_client.add_listener(who)
+                        # 再添加，设置接收图片、文件、语音信息、URL信息参数为True
+                        add_success = await api_client.add_listener(
+                            who,
+                            save_pic=True,
+                            save_file=True,
+                            save_voice=True,
+                            parse_url=True
+                        )
 
                         if add_success:
                             logger.info(f"成功重置监听对象: {instance_id} - {who}")

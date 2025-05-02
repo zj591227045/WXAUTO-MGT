@@ -407,6 +407,86 @@ class WxAutoApiClient:
             logger.exception(e)
             return False
 
+    async def download_file(self, file_path: str) -> Optional[bytes]:
+        """
+        下载文件
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            Optional[bytes]: 文件内容，如果下载失败则返回None
+        """
+        try:
+            import requests
+            import json
+            import asyncio
+
+            # 构建请求数据
+            data = {'file_path': file_path}
+
+            # 构建完整的API URL和请求头
+            url = f"{self.base_url}/api/file/download"
+            headers = {
+                'X-API-Key': self.api_key,
+                'Content-Type': 'application/json'
+            }
+
+            # 记录完整的curl命令，方便调试
+            curl_cmd = f"""curl -X POST '{url}' \\
+  -H 'X-API-Key: {self.api_key}' \\
+  -H 'Content-Type: application/json' \\
+  -d '{json.dumps(data)}'"""
+            logger.debug(f"执行文件下载API请求，等效curl命令: \n{curl_cmd}")
+
+            # 使用同步requests库发送请求
+            def send_request():
+                try:
+                    response = requests.post(url, headers=headers, json=data, timeout=60)  # 文件下载可能需要更长的超时时间
+                    return response
+                except Exception as e:
+                    logger.error(f"文件下载同步请求异常: {e}")
+                    raise e
+
+            # 在事件循环的线程池中执行同步请求
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, send_request)
+            status_code = response.status_code
+
+            if status_code != 200:
+                # 尝试解析错误信息
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('message', '未知错误')
+                    error_code = error_data.get('code', -1)
+                    error_detail = error_data.get('data', {}).get('error', '')
+                    logger.error(f"文件下载失败，状态码: {status_code}, 错误码: {error_code}, 错误信息: {error_msg}, 详情: {error_detail}")
+                except:
+                    logger.error(f"文件下载失败，状态码: {status_code}, 响应: {response.text[:200]}")
+                return None
+
+            # 检查Content-Type
+            content_type = response.headers.get('Content-Type', '')
+            if 'application/octet-stream' in content_type:
+                # 成功获取文件内容
+                file_content = response.content
+                file_size = len(file_content)
+                logger.info(f"成功下载文件: {file_path}, 大小: {file_size} 字节")
+                return file_content
+            else:
+                # 可能是错误响应
+                try:
+                    error_data = response.json()
+                    logger.error(f"文件下载API返回非文件内容: {error_data}")
+                except:
+                    logger.error(f"文件下载API返回非文件内容且无法解析: {response.text[:200]}")
+                return None
+
+        except Exception as e:
+            logger.error(f"下载文件失败: {e}")
+            logger.exception(e)
+            return None
+
     async def get_listener_messages(self, who: str) -> List[Dict]:
         """获取监听对象的消息"""
         try:

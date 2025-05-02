@@ -268,6 +268,90 @@ POST /api/message/get-history
 }
 ```
 
+
+#### 下载文件
+```http
+POST /api/file/download
+```
+
+CURL 示例:
+```bash
+curl -X POST http://10.255.0.90:5000/api/file/download \
+  -H "X-API-Key: test-key-2" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "C:\\Code\\wxauto-ui\\wxauto文件\\部门信息表(1).xlsx"
+  }'
+```
+
+请求体：
+```json
+{
+    "file_path": "C:\\Code\\wxauto-ui\\wxauto文件\\部门信息表(1).xlsx"
+}
+```
+
+响应说明：
+- 成功时返回文件内容，Content-Type 为 application/octet-stream
+- 失败时返回错误信息，格式如下：
+
+```json
+{
+    "code": 3003,
+    "message": "文件下载失败",
+    "data": {
+        "error": "文件不存在或无法访问"
+    }
+}
+```
+
+错误码：
+- 3003: 文件下载失败，可能的原因：
+  - 文件不存在
+  - 文件路径无效
+  - 文件访问权限不足
+  - 其他文件系统错误
+
+注意事项：
+1. 文件路径必须使用双反斜杠(\\)作为分隔符
+2. 确保文件路径有访问权限
+3. 文件大小限制为100MB
+
+#### 获取聊天记录
+```http
+POST /api/message/get-history
+```
+
+请求体：
+```json
+{
+    "chat_name": "文件传输助手",
+    "save_pic": false,    // 可选，是否保存图片
+    "save_video": false,  // 可选，是否保存视频
+    "save_file": false,   // 可选，是否保存文件
+    "save_voice": false   // 可选，是否保存语音
+}
+```
+
+响应示例：
+```json
+{
+    "code": 0,
+    "message": "获取成功",
+    "data": {
+        "messages": [
+            {
+                "type": "text",
+                "sender": "张三",
+                "content": "测试消息",
+                "time": "2025-04-23 10:30:00"
+            }
+        ]
+    }
+}
+```
+
+
 #### 获取主窗口未读消息
 ```http
 GET /api/message/get-next-new?savepic=false&savevideo=false&savefile=false&savevoice=false&parseurl=false
@@ -321,12 +405,12 @@ curl -X POST http://10.255.0.90:5000/api/message/listen/add \
   -H "X-API-Key: test-key-2" \
   -H "Content-Type: application/json" \
   -d '{
-    "who": "测试群",
-    "savepic": false,
+    "who": "张杰",
+    "savepic": true,
     "savevideo": false,
-    "savefile": false,
-    "savevoice": false,
-    "parseurl": false,
+    "savefile": true,
+    "savevoice": true,
+    "parseurl": true,
     "exact": false
   }'
 ```
@@ -334,14 +418,14 @@ curl -X POST http://10.255.0.90:5000/api/message/listen/add \
 请求体：
 ```json
 {
-    "who": "测试群",
-    "savepic": false,      // 可选，是否保存图片
-    "savevideo": false,    // 可选，是否保存视频 
-    "savefile": false,     // 可选，是否保存文件
-    "savevoice": false,    // 可选，是否保存语音
-    "parseurl": false,     // 可选，是否解析URL
-    "exact": false         // 可选，是否精确匹配名称
-}
+    "who": "张杰",
+    "savepic": true,
+    "savevideo": false,
+    "savefile": true,
+    "savevoice": true,
+    "parseurl": true,
+    "exact": false
+  }
 ```
 
 响应示例：

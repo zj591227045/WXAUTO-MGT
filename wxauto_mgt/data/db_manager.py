@@ -230,7 +230,7 @@ class DBManager:
             content TEXT,
             sender TEXT,
             sender_remark TEXT,
-            mtype INTEGER,
+            mtype TEXT,
             processed INTEGER NOT NULL DEFAULT 0,
             create_time INTEGER NOT NULL,
             delivery_status INTEGER DEFAULT 0,
@@ -242,6 +242,9 @@ class DBManager:
             merged INTEGER DEFAULT 0,
             merged_count INTEGER DEFAULT 0,
             merged_ids TEXT,
+            local_file_path TEXT,
+            file_size INTEGER,
+            original_file_path TEXT,
             UNIQUE(instance_id, message_id)
         )
         """)
