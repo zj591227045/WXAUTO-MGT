@@ -260,12 +260,13 @@ class WxAutoApiClient:
                                 parse_url: bool = False) -> List[Dict]:
         """获取未读消息"""
         try:
+            # 使用正确的API参数名称
             params = {
-                'savePic': str(save_pic).lower(),
-                'saveVideo': str(save_video).lower(),
-                'saveFile': str(save_file).lower(),
-                'saveVoice': str(save_voice).lower(),
-                'parseUrl': str(parse_url).lower()
+                'savepic': str(save_pic).lower(),
+                'savevideo': str(save_video).lower(),
+                'savefile': str(save_file).lower(),
+                'savevoice': str(save_voice).lower(),
+                'parseurl': str(parse_url).lower()
             }
             data = await self._get('/api/message/get-next-new', params=params)
             messages = []

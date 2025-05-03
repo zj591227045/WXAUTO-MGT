@@ -188,6 +188,48 @@ class MessageListener:
             for msg in filtered_messages:
                 chat_name = msg.get('chat_name')
                 if chat_name:
+                    # 在保存前再次检查消息是否应该被过滤
+                    # 特别是检查sender是否为self
+                    from wxauto_mgt.core.message_filter import message_filter
+
+                    # 直接检查sender是否为self
+                    sender = msg.get('sender', '')
+                    if sender and (sender.lower() == 'self' or sender == 'Self'):
+                        logger.debug(f"过滤掉self发送的主窗口消息: {msg.get('id')}")
+                        continue
+
+                    # 处理不同类型的消息
+                    from wxauto_mgt.core.message_processor import message_processor
+
+                    # 根据消息类型进行预处理
+                    mtype = msg.get('mtype', '')
+                    content = msg.get('content', '')
+
+                    # 处理卡片类型消息
+                    if mtype == 'card':
+                        # 移除[wxauto卡片链接解析]前缀
+                        msg['content'] = content.replace('[wxauto卡片链接解析]', '').strip()
+                        logger.info(f"预处理主窗口卡片消息: {msg.get('id')}, 移除前缀")
+
+                    # 处理语音类型消息
+                    elif mtype == 'voice':
+                        # 移除[wxauto语音解析]前缀
+                        msg['content'] = content.replace('[wxauto语音解析]', '').strip()
+                        logger.info(f"预处理主窗口语音消息: {msg.get('id')}, 移除前缀")
+
+                    # 处理图片或文件类型消息
+                    elif mtype in ['image', 'file']:
+                        # 提取文件路径
+                        import re
+                        path_pattern = r'([A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*)'
+                        match = re.search(path_pattern, content)
+                        if match:
+                            file_path = match.group(1)
+                            logger.info(f"预处理主窗口{mtype}消息: {msg.get('id')}, 提取文件路径: {file_path}")
+
+                    # 处理不同类型的消息
+                    processed_msg = await message_processor.process_message(msg, api_client)
+
                     # 将发送者添加到监听列表 - 这是关键步骤
                     # 设置接收图片、文件、语音信息、URL信息参数为True
                     add_success = await self.add_listener(
@@ -201,49 +243,6 @@ class MessageListener:
 
                     # 只有成功添加监听对象后，才保存消息到数据库
                     if add_success:
-                        # 在保存前再次检查消息是否应该被过滤
-                        # 特别是检查sender是否为self
-                        from wxauto_mgt.core.message_filter import message_filter
-
-                        # 直接检查sender是否为self
-                        sender = msg.get('sender', '')
-                        if sender and (sender.lower() == 'self' or sender == 'Self'):
-                            logger.debug(f"过滤掉self发送的主窗口消息: {msg.get('id')}")
-                            continue
-
-                        # 处理不同类型的消息
-                        from wxauto_mgt.core.message_processor import message_processor
-
-                        # 根据消息类型进行预处理
-                        mtype = msg.get('mtype', '')
-                        content = msg.get('content', '')
-
-                        # 处理卡片类型消息
-                        if mtype == 'card':
-                            # 移除[wxauto卡片链接解析]前缀
-                            msg['content'] = content.replace('[wxauto卡片链接解析]', '').strip()
-                            logger.info(f"预处理卡片消息: {msg.get('id')}, 移除前缀")
-
-                        # 处理语音类型消息
-                        elif mtype == 'voice':
-                            # 移除[wxauto语音解析]前缀
-                            msg['content'] = content.replace('[wxauto语音解析]', '').strip()
-                            logger.info(f"预处理语音消息: {msg.get('id')}, 移除前缀")
-
-                        # 处理图片或文件类型消息
-                        elif mtype in ['image', 'file']:
-                            # 提取文件路径
-                            import re
-                            path_pattern = r'([A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*)'
-                            match = re.search(path_pattern, content)
-                            if match:
-                                file_path = match.group(1)
-                                logger.info(f"预处理{mtype}消息: {msg.get('id')}, 提取文件路径: {file_path}")
-                                # 文件路径将在后续处理中下载
-
-                        # 处理消息内容
-                        processed_msg = await message_processor.process_message(msg, api_client)
-
                         # 保存消息到数据库
                         save_data = {
                             'instance_id': instance_id,
@@ -270,7 +269,32 @@ class MessageListener:
                             continue
 
                         logger.debug(f"准备保存主窗口消息: {save_data}")
-                        await self._save_message(save_data)
+                        message_id = await self._save_message(save_data)
+
+                        # 直接处理消息投递和回复 - 新增部分
+                        if message_id:
+                            try:
+                                # 导入消息投递服务
+                                from wxauto_mgt.core.message_delivery_service import message_delivery_service
+
+                                # 获取保存的消息
+                                from wxauto_mgt.data.db_manager import db_manager
+                                saved_message = await db_manager.fetchone(
+                                    "SELECT * FROM messages WHERE message_id = ?",
+                                    (processed_msg.get('id'),)
+                                )
+
+                                if saved_message:
+                                    # 直接处理消息投递
+                                    logger.info(f"主窗口消息直接投递处理: {processed_msg.get('id')}")
+                                    # 创建异步任务处理消息
+                                    import asyncio
+                                    asyncio.create_task(message_delivery_service.process_message(saved_message))
+                                else:
+                                    logger.error(f"无法找到保存的消息: {processed_msg.get('id')}")
+                            except Exception as e:
+                                logger.error(f"主窗口消息投递处理失败: {e}")
+                                logger.exception(e)
                     else:
                         logger.error(f"添加监听对象 {chat_name} 失败，跳过保存消息: {msg.get('id')}")
                         # 不保存消息，因为没有成功添加监听对象
@@ -392,7 +416,9 @@ class MessageListener:
                                 continue
 
                             logger.debug(f"准备保存监听消息: {save_data}")
-                            await self._save_message(save_data)
+                            message_id = await self._save_message(save_data)
+                            if message_id:
+                                logger.debug(f"监听消息保存成功，ID: {message_id}")
                     else:
                         logger.debug(f"实例 {instance_id} 监听对象 {who} 没有新消息")
 
@@ -503,8 +529,7 @@ class MessageListener:
 
             try:
                 # 调用API客户端的移除监听方法
-                api_success = await api_client.remove_listener(who)
-
+                await api_client.remove_listener(who)
                 # 无论API调用成功与否，都尝试清理本地数据
                 try:
                     # 从内存中移除
@@ -641,7 +666,9 @@ class MessageListener:
                                         continue
 
                                     # 保存到数据库
-                                    await self._save_message(save_data)
+                                    message_id = await self._save_message(save_data)
+                                    if message_id:
+                                        logger.debug(f"超时检查消息保存成功，ID: {message_id}")
 
                         continue  # 跳过移除步骤
 
@@ -661,7 +688,7 @@ class MessageListener:
 
         return removed_count
 
-    async def _save_message(self, message_data: dict) -> bool:
+    async def _save_message(self, message_data: dict) -> str:
         """
         保存消息到数据库
 
@@ -669,27 +696,27 @@ class MessageListener:
             message_data: 消息数据
 
         Returns:
-            bool: 是否保存成功
+            str: 保存成功返回消息ID，失败返回空字符串
         """
         try:
             # 直接检查sender是否为self（不区分大小写）
             sender = message_data.get('sender', '')
             if sender and (sender.lower() == 'self' or sender == 'Self'):
                 logger.debug(f"_save_message直接过滤掉self发送的消息: {message_data.get('message_id', '')}")
-                return True  # 返回True表示处理成功，只是不保存
+                return ""  # 返回空字符串表示消息被过滤
 
             # 直接检查消息类型是否为self（不区分大小写）
             msg_type = message_data.get('message_type', '')
             if msg_type and (msg_type.lower() == 'self' or msg_type == 'Self'):
                 logger.debug(f"_save_message直接过滤掉self类型的消息: {message_data.get('message_id', '')}")
-                return True  # 返回True表示处理成功，只是不保存
+                return ""  # 返回空字符串表示消息被过滤
 
             # 使用统一的消息过滤模块进行二次检查
             from wxauto_mgt.core.message_filter import message_filter
 
             # 检查消息是否应该被过滤
             if message_filter.should_filter_message(message_data, log_prefix="保存前"):
-                return True  # 返回True表示处理成功，只是不保存
+                return ""  # 返回空字符串表示消息被过滤
 
             # 确保包含create_time字段
             if 'create_time' not in message_data:
@@ -725,10 +752,14 @@ class MessageListener:
 
             # 插入消息到数据库
             await db_manager.insert('messages', message_data)
-            return True
+
+            # 返回消息ID
+            message_id = message_data.get('message_id', '')
+            logger.debug(f"消息保存成功，ID: {message_id}")
+            return message_id
         except Exception as e:
             logger.error(f"保存消息到数据库失败: {e}")
-            return False
+            return ""
 
     async def _save_listener(self, instance_id: str, who: str) -> bool:
         """
@@ -784,8 +815,8 @@ class MessageListener:
             sql = "DELETE FROM listeners WHERE instance_id = ? AND who = ?"
             logger.debug(f"执行SQL: {sql} 参数: ({instance_id}, {who})")
 
-            # 执行SQL并检查结果
-            result = await db_manager.execute(sql, (instance_id, who))
+            # 执行SQL
+            await db_manager.execute(sql, (instance_id, who))
 
             # 验证是否删除成功
             verify_sql = "SELECT COUNT(*) as count FROM listeners WHERE instance_id = ? AND who = ?"
