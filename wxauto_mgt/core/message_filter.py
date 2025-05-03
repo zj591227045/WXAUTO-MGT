@@ -48,20 +48,22 @@ class MessageFilter:
         except Exception as e:
             logger.debug(f"{log_prefix}完整消息数据(无法序列化): {str(message)}")
 
-        # 1. 检查发送者是否为Self（不区分大小写）
+        # 1. 检查发送者是否为Self或SYS（不区分大小写）
         is_self_sender = sender == 'self' or original_sender == 'Self'
+        is_sys_sender = sender == 'sys' or original_sender == 'SYS'
 
-        # 2. 检查消息类型是否为self或time（不区分大小写）
+        # 2. 检查消息类型是否为self、time或sys（不区分大小写）
         # 检查所有可能的类型字段
         message_type = message.get('message_type', '').lower() if isinstance(message.get('message_type'), str) else ''
 
+        # 添加对SYS类型消息的过滤
         is_filtered_type = (
-            msg_type in ['self', 'time'] or
-            message_type in ['self', 'time'] or
-            original_type in ['self', 'Self', 'time', 'Time']
+            msg_type in ['self', 'time', 'sys'] or
+            message_type in ['self', 'time', 'sys'] or
+            original_type in ['self', 'Self', 'time', 'Time', 'sys', 'SYS']
         )
 
-        # 3. 检查消息对象中是否有明确标记为self或time的字段
+        # 3. 检查消息对象中是否有明确标记为self、time或sys的字段
         # 检查所有可能的字段名
         possible_fields = ['sender', 'type', 'message_type', 'mtype', 'sender_type']
         has_self_field = any(message.get(field) == 'Self' or
@@ -71,6 +73,11 @@ class MessageFilter:
         has_time_field = any(message.get(field) == 'Time' or
                             (isinstance(message.get(field), str) and message.get(field).lower() == 'time')
                             for field in possible_fields if message.get(field) is not None)
+
+        # 添加对SYS字段的检查
+        has_sys_field = any(message.get(field) == 'SYS' or
+                           (isinstance(message.get(field), str) and message.get(field).lower() == 'sys')
+                           for field in possible_fields if message.get(field) is not None)
 
         # 4. 检查内容中是否包含特定标记
         has_self_content = False
@@ -95,9 +102,11 @@ class MessageFilter:
         logger.debug(
             f"{log_prefix}过滤条件判断: "
             f"is_self_sender={is_self_sender}, "
+            f"is_sys_sender={is_sys_sender}, "
             f"is_filtered_type={is_filtered_type}, "
             f"has_self_field={has_self_field}, "
             f"has_time_field={has_time_field}, "
+            f"has_sys_field={has_sys_field}, "
             f"has_self_content={has_self_content}, "
             f"has_self_id={has_self_id}, "
             f"has_time_id={has_time_id}, "
@@ -108,9 +117,11 @@ class MessageFilter:
         # 综合判断是否应该过滤
         should_filter = (
             is_self_sender or
+            is_sys_sender or  # 添加对SYS发送者的过滤
             is_filtered_type or
             has_self_field or
             has_time_field or
+            has_sys_field or  # 添加对SYS字段的过滤
             has_self_id or
             has_time_id or
             is_marked_as_self or
@@ -182,10 +193,16 @@ class MessageFilter:
                 logger.debug(f"{log_prefix}找到'以下为新消息'分隔符，位于消息列表的第 {i+1} 条")
                 break
 
-        # 如果找到分隔符，只返回分隔符之后的消息
+        # 如果找到分隔符，只返回分隔符之后的消息，并过滤掉分隔符本身
         if new_message_index >= 0:
+            # 获取分隔符后的消息
             result = messages[new_message_index + 1:]
-            logger.debug(f"{log_prefix}分隔符处理: 原始消息数量 {len(messages)}, 处理后 {len(result)}")
+            logger.debug(f"{log_prefix}分隔符处理: 原始消息数量 {len(messages)}, 分隔符后 {len(result)}")
+
+            # 确保分隔符本身也被过滤掉（不会被保留在结果中）
+            if new_message_index < len(messages):
+                logger.debug(f"{log_prefix}过滤掉分隔符消息: {messages[new_message_index].get('content', '')[:50]}")
+
             return result
         else:
             # 如果没有找到分隔符，使用所有消息

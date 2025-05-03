@@ -35,6 +35,7 @@ class ListenerInfo:
     marked_for_removal: bool = False
     processed_at_startup: bool = False  # 是否在启动时处理过
     reset_attempts: int = 0  # 重置尝试次数
+    conversation_id: str = ""  # Dify会话ID
 
 class MessageListener:
     def __init__(
@@ -235,11 +236,14 @@ class MessageListener:
                     add_success = await self.add_listener(
                         instance_id,
                         chat_name,
+                        conversation_id="",  # 初始时会话ID为空
                         save_pic=True,
                         save_file=True,
                         save_voice=True,
                         parse_url=True
                     )
+
+                    logger.info(f"主窗口消息处理：添加监听对象 {chat_name} 结果: {add_success}")
 
                     # 只有成功添加监听对象后，才保存消息到数据库
                     if add_success:
@@ -287,9 +291,14 @@ class MessageListener:
                                 if saved_message:
                                     # 直接处理消息投递
                                     logger.info(f"主窗口消息直接投递处理: {processed_msg.get('id')}")
-                                    # 创建异步任务处理消息
-                                    import asyncio
-                                    asyncio.create_task(message_delivery_service.process_message(saved_message))
+                                    # 创建异步任务处理消息，并等待处理完成
+                                    try:
+                                        # 直接等待处理完成，确保回复能发送回微信
+                                        delivery_result = await message_delivery_service.process_message(saved_message)
+                                        logger.info(f"主窗口消息投递处理完成: {processed_msg.get('id')}, 结果: {delivery_result}")
+                                    except Exception as delivery_e:
+                                        logger.error(f"主窗口消息投递处理异常: {delivery_e}")
+                                        logger.exception(delivery_e)
                                 else:
                                     logger.error(f"无法找到保存的消息: {processed_msg.get('id')}")
                             except Exception as e:
@@ -453,13 +462,39 @@ class MessageListener:
 
         return filtered_messages
 
-    async def add_listener(self, instance_id: str, who: str, **kwargs) -> bool:
+    async def has_listener(self, instance_id: str, who: str) -> bool:
+        """
+        检查监听对象是否存在
+
+        Args:
+            instance_id: 实例ID
+            who: 监听对象的标识
+
+        Returns:
+            bool: 监听对象是否存在
+        """
+        async with self._lock:
+            # 检查内存中是否存在
+            if instance_id in self.listeners and who in self.listeners[instance_id]:
+                return True
+
+            # 检查数据库中是否存在
+            try:
+                query = "SELECT id FROM listeners WHERE instance_id = ? AND who = ?"
+                result = await db_manager.fetchone(query, (instance_id, who))
+                return result is not None
+            except Exception as e:
+                logger.error(f"检查监听对象是否存在时出错: {e}")
+                return False
+
+    async def add_listener(self, instance_id: str, who: str, conversation_id: str = "", **kwargs) -> bool:
         """
         添加监听对象
 
         Args:
             instance_id: 实例ID
             who: 监听对象的标识
+            conversation_id: Dify会话ID，默认为空字符串
             **kwargs: 其他参数
 
         Returns:
@@ -470,10 +505,18 @@ class MessageListener:
             if instance_id not in self.listeners:
                 self.listeners[instance_id] = {}
 
-            # 如果已经在监听列表中，更新时间
+            # 如果已经在监听列表中，更新时间和会话ID（如果提供）
             if who in self.listeners[instance_id]:
                 self.listeners[instance_id][who].last_message_time = time.time()
                 self.listeners[instance_id][who].active = True
+
+                # 如果提供了新的会话ID，更新会话ID
+                if conversation_id:
+                    self.listeners[instance_id][who].conversation_id = conversation_id
+                    # 更新数据库中的会话ID
+                    await self._save_listener(instance_id, who, conversation_id)
+                    logger.debug(f"更新监听对象会话ID: {instance_id} - {who} - {conversation_id}")
+
                 return True
 
             # 检查是否超过最大监听数量
@@ -497,13 +540,17 @@ class MessageListener:
                 instance_id=instance_id,
                 who=who,
                 last_message_time=time.time(),
-                last_check_time=time.time()
+                last_check_time=time.time(),
+                conversation_id=conversation_id
             )
 
             # 添加到数据库
-            await self._save_listener(instance_id, who)
+            await self._save_listener(instance_id, who, conversation_id)
 
             logger.info(f"成功添加实例 {instance_id} 的监听对象: {who}")
+            if conversation_id:
+                logger.debug(f"监听对象已设置会话ID: {instance_id} - {who} - {conversation_id}")
+
             return True
 
     async def remove_listener(self, instance_id: str, who: str):
@@ -761,13 +808,14 @@ class MessageListener:
             logger.error(f"保存消息到数据库失败: {e}")
             return ""
 
-    async def _save_listener(self, instance_id: str, who: str) -> bool:
+    async def _save_listener(self, instance_id: str, who: str, conversation_id: str = "") -> bool:
         """
         保存监听对象到数据库
 
         Args:
             instance_id: 实例ID
             who: 监听对象的标识
+            conversation_id: Dify会话ID，默认为空字符串
 
         Returns:
             bool: 是否保存成功
@@ -781,15 +829,27 @@ class MessageListener:
                 'create_time': current_time
             }
 
+            # 如果提供了会话ID，添加到数据中
+            if conversation_id:
+                data['conversation_id'] = conversation_id
+                logger.debug(f"保存监听对象会话ID: {instance_id} - {who} - {conversation_id}")
+
             # 先检查是否已存在
-            query = "SELECT id FROM listeners WHERE instance_id = ? AND who = ?"
+            query = "SELECT id, conversation_id FROM listeners WHERE instance_id = ? AND who = ?"
             exists = await db_manager.fetchone(query, (instance_id, who))
 
             if exists:
                 # 已存在，执行更新操作
-                update_query = "UPDATE listeners SET last_message_time = ? WHERE instance_id = ? AND who = ?"
-                await db_manager.execute(update_query, (current_time, instance_id, who))
-                logger.debug(f"更新监听对象: {instance_id} - {who}")
+                if conversation_id:
+                    # 如果提供了新的会话ID，更新会话ID
+                    update_query = "UPDATE listeners SET last_message_time = ?, conversation_id = ? WHERE instance_id = ? AND who = ?"
+                    await db_manager.execute(update_query, (current_time, conversation_id, instance_id, who))
+                    logger.debug(f"更新监听对象和会话ID: {instance_id} - {who} - {conversation_id}")
+                else:
+                    # 如果没有提供新的会话ID，只更新时间戳
+                    update_query = "UPDATE listeners SET last_message_time = ? WHERE instance_id = ? AND who = ?"
+                    await db_manager.execute(update_query, (current_time, instance_id, who))
+                    logger.debug(f"更新监听对象: {instance_id} - {who}")
             else:
                 # 不存在，插入新记录
                 await db_manager.insert('listeners', data)
@@ -867,8 +927,8 @@ class MessageListener:
         try:
             logger.info("从数据库加载监听对象")
 
-            # 查询所有监听对象
-            query = "SELECT instance_id, who, last_message_time FROM listeners"
+            # 查询所有监听对象，包括会话ID
+            query = "SELECT instance_id, who, last_message_time, conversation_id FROM listeners"
             listeners = await db_manager.fetchall(query)
 
             if not listeners:
@@ -881,6 +941,7 @@ class MessageListener:
                     instance_id = listener.get('instance_id')
                     who = listener.get('who')
                     last_message_time = listener.get('last_message_time', time.time())
+                    conversation_id = listener.get('conversation_id', '')
 
                     # 跳过无效记录
                     if not instance_id or not who:
@@ -895,8 +956,13 @@ class MessageListener:
                         instance_id=instance_id,
                         who=who,
                         last_message_time=float(last_message_time),
-                        last_check_time=time.time()
+                        last_check_time=time.time(),
+                        conversation_id=conversation_id
                     )
+
+                    # 记录会话ID信息
+                    if conversation_id:
+                        logger.debug(f"加载监听对象会话ID: {instance_id} - {who} - {conversation_id}")
 
             # 计算加载的监听对象数量
             total = sum(len(listeners) for listeners in self.listeners.values())
@@ -1062,22 +1128,32 @@ class MessageListener:
 
         logger.info(f"已完成所有可能超时监听对象的刷新")
 
-    async def _update_listener_timestamp(self, instance_id: str, who: str) -> bool:
+    async def _update_listener_timestamp(self, instance_id: str, who: str, conversation_id: str = "") -> bool:
         """
-        更新数据库中监听对象的时间戳
+        更新数据库中监听对象的时间戳和会话ID
 
         Args:
             instance_id: 实例ID
             who: 监听对象的标识
+            conversation_id: Dify会话ID，默认为空字符串
 
         Returns:
             bool: 是否更新成功
         """
         try:
             current_time = int(time.time())
-            update_query = "UPDATE listeners SET last_message_time = ? WHERE instance_id = ? AND who = ?"
-            await db_manager.execute(update_query, (current_time, instance_id, who))
-            logger.debug(f"已更新监听对象时间戳: {instance_id} - {who}")
+
+            if conversation_id:
+                # 如果提供了会话ID，同时更新时间戳和会话ID
+                update_query = "UPDATE listeners SET last_message_time = ?, conversation_id = ? WHERE instance_id = ? AND who = ?"
+                await db_manager.execute(update_query, (current_time, conversation_id, instance_id, who))
+                logger.debug(f"已更新监听对象时间戳和会话ID: {instance_id} - {who} - {conversation_id}")
+            else:
+                # 否则只更新时间戳
+                update_query = "UPDATE listeners SET last_message_time = ? WHERE instance_id = ? AND who = ?"
+                await db_manager.execute(update_query, (current_time, instance_id, who))
+                logger.debug(f"已更新监听对象时间戳: {instance_id} - {who}")
+
             return True
         except Exception as e:
             logger.error(f"更新监听对象时间戳失败: {e}")

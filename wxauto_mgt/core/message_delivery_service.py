@@ -362,6 +362,51 @@ class MessageDeliveryService:
         self._processing_messages.add(message_id)
         file_logger.debug(f"消息 {message_id} 已添加到处理队列")
 
+        # 获取监听对象的会话ID
+        try:
+            # 从数据库中获取监听对象的会话ID
+            instance_id = message.get('instance_id')
+            chat_name = message.get('chat_name')
+
+            if instance_id and chat_name:
+                query = "SELECT conversation_id FROM listeners WHERE instance_id = ? AND who = ?"
+                listener_data = await db_manager.fetchone(query, (instance_id, chat_name))
+
+                if listener_data and listener_data.get('conversation_id'):
+                    conversation_id = listener_data.get('conversation_id')
+                    # 将会话ID添加到消息中
+                    message['conversation_id'] = conversation_id
+                    file_logger.info(f"获取到监听对象的会话ID: {instance_id} - {chat_name} - {conversation_id}")
+                    logger.info(f"获取到监听对象的会话ID: {instance_id} - {chat_name} - {conversation_id}")
+                else:
+                    file_logger.info(f"监听对象没有会话ID: {instance_id} - {chat_name}，将创建新会话")
+                    logger.info(f"监听对象没有会话ID: {instance_id} - {chat_name}，将创建新会话")
+
+                    # 检查监听对象是否存在，如果不存在则添加
+                    from wxauto_mgt.core.message_listener import message_listener
+                    if not await message_listener.has_listener(instance_id, chat_name):
+                        logger.info(f"监听对象不存在，尝试添加: {instance_id} - {chat_name}")
+                        add_success = await message_listener.add_listener(
+                            instance_id,
+                            chat_name,
+                            save_pic=True,
+                            save_file=True,
+                            save_voice=True,
+                            parse_url=True
+                        )
+                        if add_success:
+                            logger.info(f"成功添加监听对象: {instance_id} - {chat_name}")
+                        else:
+                            logger.error(f"添加监听对象失败: {instance_id} - {chat_name}")
+            else:
+                file_logger.warning(f"消息缺少实例ID或聊天名称，无法获取会话ID")
+                logger.warning(f"消息缺少实例ID或聊天名称，无法获取会话ID")
+        except Exception as e:
+            file_logger.error(f"获取监听对象会话ID时出错: {e}")
+            logger.error(f"获取监听对象会话ID时出错: {e}")
+            logger.exception(e)
+            # 继续处理消息，不中断流程
+
         try:
             # 标记为正在投递
             await self._update_message_delivery_status(message_id, 3)  # 3表示正在投递
@@ -420,18 +465,32 @@ class MessageDeliveryService:
             # 发送回复 - 只记录关键信息
             reply_content = delivery_result.get('content', '')
             if reply_content:
-                logger.info(f"发送回复: {message['chat_name']}")
+                logger.info(f"发送回复: {message['chat_name']}, 内容: {reply_content[:50]}...")
+                file_logger.info(f"准备发送回复到微信: 实例={message['instance_id']}, 聊天={message['chat_name']}")
+                file_logger.debug(f"回复内容: {reply_content}")
+
+                # 检查是否有会话ID
+                if 'conversation_id' in delivery_result:
+                    logger.info(f"回复包含会话ID: {delivery_result['conversation_id']}")
+                    file_logger.info(f"回复包含会话ID: {delivery_result['conversation_id']}")
+
+                # 发送回复
                 reply_success = await self.send_reply(message, reply_content)
 
                 if reply_success:
                     # 标记为已回复
+                    logger.info(f"回复发送成功: {message['chat_name']}")
+                    file_logger.info(f"回复发送成功: {message['chat_name']}")
                     await self._update_message_reply_status(message_id, 1, reply_content)
                 else:
                     # 标记为回复失败
+                    logger.error(f"回复发送失败: {message['chat_name']}")
+                    file_logger.error(f"回复发送失败: {message['chat_name']}")
                     await self._update_message_reply_status(message_id, 2, reply_content)
             else:
                 # 不记录警告日志，只在调试级别记录
                 logger.debug(f"平台没有返回回复内容")
+                file_logger.warning(f"平台没有返回回复内容: {message_id}")
                 # 标记为回复失败
                 await self._update_message_reply_status(message_id, 2, '')
 
@@ -613,6 +672,30 @@ class MessageDeliveryService:
             file_logger.info(f"平台处理消息完成: {message_id}")
             file_logger.debug(f"处理结果: {result}")
 
+            # 检查是否返回了新的会话ID
+            if 'conversation_id' in result:
+                new_conversation_id = result.get('conversation_id')
+                instance_id = message.get('instance_id')
+                chat_name = message.get('chat_name')
+
+                if new_conversation_id and instance_id and chat_name:
+                    try:
+                        # 导入消息监听器
+                        from wxauto_mgt.core.message_listener import message_listener
+
+                        # 更新监听对象的会话ID
+                        await message_listener.add_listener(
+                            instance_id,
+                            chat_name,
+                            conversation_id=new_conversation_id
+                        )
+
+                        file_logger.info(f"已更新监听对象的会话ID: {instance_id} - {chat_name} - {new_conversation_id}")
+                        logger.info(f"已更新监听对象的会话ID: {instance_id} - {chat_name}")
+                    except Exception as e:
+                        file_logger.error(f"更新监听对象会话ID时出错: {e}")
+                        logger.error(f"更新监听对象会话ID时出错: {e}")
+
             return result
         except Exception as e:
             logger.error(f"投递消息失败: {e}")
@@ -631,6 +714,15 @@ class MessageDeliveryService:
             bool: 是否发送成功
         """
         try:
+            # 记录详细日志
+            logger.info(f"开始发送回复: 实例={message['instance_id']}, 聊天={message['chat_name']}")
+            file_logger.info(f"开始发送回复: 实例={message['instance_id']}, 聊天={message['chat_name']}")
+
+            # 检查消息发送器是否已初始化
+            if not hasattr(message_sender, '_initialized') or not message_sender._initialized:
+                logger.warning("消息发送器未初始化，尝试初始化")
+                await message_sender.initialize()
+
             # 使用消息发送器发送回复
             result, error_msg = await message_sender.send_message(
                 message['instance_id'],
@@ -640,11 +732,16 @@ class MessageDeliveryService:
 
             if not result:
                 logger.error(f"发送回复失败: {error_msg}")
+                file_logger.error(f"发送回复失败: {error_msg}")
                 return False
 
+            logger.info(f"发送回复成功: {message['chat_name']}")
+            file_logger.info(f"发送回复成功: {message['chat_name']}")
             return True
         except Exception as e:
             logger.error(f"发送回复失败: {e}")
+            file_logger.error(f"发送回复失败: {e}")
+            logger.exception(e)
             return False
 
     async def _mark_as_processed(self, message: Dict[str, Any]) -> bool:

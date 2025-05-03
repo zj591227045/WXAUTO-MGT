@@ -63,6 +63,13 @@ class DBManager:
             logger.error(f"确保触发器存在时出错: {e}")
             # 不要因为触发器问题而阻止应用程序启动
 
+        # 检查并更新表结构
+        try:
+            await self._check_and_update_tables()
+        except Exception as e:
+            logger.error(f"检查并更新表结构时出错: {e}")
+            # 不要因为表结构问题而阻止应用程序启动
+
         logger.info(f"数据库初始化完成: {db_path}")
 
     async def _init_db(self) -> None:
@@ -114,6 +121,29 @@ class DBManager:
                 logger.debug("消息过滤触发器已存在")
         except Exception as e:
             logger.error(f"确保触发器存在时出错: {str(e)}")
+
+    async def _check_and_update_tables(self) -> None:
+        """检查并更新表结构，添加缺少的字段"""
+        try:
+            # 检查listeners表是否有conversation_id字段
+            listeners_table_info = await self._get_table_structure('listeners')
+            listeners_columns = {col["name"] for col in listeners_table_info}
+
+            if 'conversation_id' not in listeners_columns:
+                logger.info("listeners表缺少conversation_id字段，正在添加...")
+
+                # 添加conversation_id字段
+                await self.execute("""
+                ALTER TABLE listeners ADD COLUMN conversation_id TEXT
+                """)
+
+                logger.info("成功添加conversation_id字段到listeners表")
+            else:
+                logger.debug("listeners表已有conversation_id字段")
+
+        except Exception as e:
+            logger.error(f"检查并更新表结构时出错: {str(e)}")
+            logger.error(traceback.format_exc())
 
     async def _create_tables_sync(self, conn: sqlite3.Connection) -> None:
         """创建数据库表"""
@@ -214,6 +244,7 @@ class DBManager:
             who TEXT NOT NULL,
             last_message_time INTEGER,
             create_time INTEGER NOT NULL,
+            conversation_id TEXT,
             UNIQUE(instance_id, who)
         )
         """)

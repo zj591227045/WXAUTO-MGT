@@ -312,9 +312,16 @@ class DifyPlatform(ServicePlatform):
 
             file_logger.debug(f"初始请求数据: {request_data}")
 
-            # 如果有会话ID，添加到请求中
-            if self.conversation_id:
+            # 检查消息中是否包含会话ID（从监听对象获取）
+            message_conversation_id = message.get('conversation_id', '')
+
+            # 优先使用消息中的会话ID，其次使用平台配置的会话ID
+            if message_conversation_id:
+                request_data["conversation_id"] = message_conversation_id
+                file_logger.debug(f"使用消息中的会话ID: {message_conversation_id}")
+            elif self.conversation_id:
                 request_data["conversation_id"] = self.conversation_id
+                file_logger.debug(f"使用平台配置的会话ID: {self.conversation_id}")
 
             # 处理文件类型消息
             # 检查是否已经在deliver_message中处理过文件上传
@@ -451,17 +458,31 @@ class DifyPlatform(ServicePlatform):
                             file_logger.info(f"包含文件的请求成功发送，响应状态码: {response_status}")
                             logger.info(f"包含文件的请求成功发送")
 
-                    # 保存会话ID，用于后续请求
-                    if not self.conversation_id and "conversation_id" in result:
-                        self.conversation_id = result["conversation_id"]
-                        # 更新配置
-                        self.config["conversation_id"] = self.conversation_id
-                        logger.info(f"已创建新的Dify会话，ID: {self.conversation_id}")
+                    # 获取会话ID
+                    new_conversation_id = result.get("conversation_id", "")
 
-                    return {
-                        "content": result.get("answer", ""),
-                        "raw_response": result
-                    }
+                    # 如果获取到新的会话ID
+                    if new_conversation_id:
+                        # 如果消息中没有会话ID或平台没有会话ID，保存新的会话ID
+                        message_conversation_id = message.get('conversation_id', '')
+                        if not message_conversation_id and not self.conversation_id:
+                            self.conversation_id = new_conversation_id
+                            # 更新配置
+                            self.config["conversation_id"] = self.conversation_id
+                            logger.info(f"已创建新的Dify会话，ID: {self.conversation_id}")
+
+                        # 返回会话ID，以便更新监听对象
+                        return {
+                            "content": result.get("answer", ""),
+                            "raw_response": result,
+                            "conversation_id": new_conversation_id
+                        }
+                    else:
+                        # 没有获取到新的会话ID，返回普通响应
+                        return {
+                            "content": result.get("answer", ""),
+                            "raw_response": result
+                        }
         except Exception as e:
             logger.error(f"处理消息时出错: {e}")
             logger.exception(e)
