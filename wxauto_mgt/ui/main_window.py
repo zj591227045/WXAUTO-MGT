@@ -137,7 +137,8 @@ class MainWindow(QMainWindow):
         # 导入组件
         from wxauto_mgt.ui.components.instance_manager_panel import InstanceManagerPanel
         from wxauto_mgt.ui.components.message_panel import MessageListenerPanel
-        from wxauto_mgt.ui.components.status_panel import StatusMonitorPanel
+        # 状态监控标签页已隐藏
+        # from wxauto_mgt.ui.components.status_panel import StatusMonitorPanel
 
         # 实例管理选项卡 - 使用新的实例管理面板
         self.instance_panel = InstanceManagerPanel(self)
@@ -147,9 +148,9 @@ class MainWindow(QMainWindow):
         self.message_panel = MessageListenerPanel(self)
         self.tab_widget.addTab(self.message_panel, "消息监听")
 
-        # 状态监控选项卡
-        self.status_panel = StatusMonitorPanel(self)
-        self.tab_widget.addTab(self.status_panel, "状态监控")
+        # 状态监控选项卡已隐藏
+        # self.status_panel = StatusMonitorPanel(self)
+        # self.tab_widget.addTab(self.status_panel, "状态监控")
 
     @Slot(str, int)
     def _on_status_changed(self, message, timeout=0):

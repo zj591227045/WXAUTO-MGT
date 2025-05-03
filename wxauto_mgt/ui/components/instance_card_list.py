@@ -39,14 +39,12 @@ class InstanceCard(QFrame):
         self.instance_id = instance_data.get("instance_id", "")
         self.instance_name = instance_data.get("name", "")
         self.instance_url = instance_data.get("base_url", "")
-        self.instance_status = instance_data.get("status", "unknown")
         self.is_selected = False
 
         # 设置对象名称以便样式表可以精确定位
         self.setObjectName("instance_card")
 
         self._init_ui()
-        self._update_status(self.instance_status)
 
     def _init_ui(self):
         """初始化UI"""
@@ -75,7 +73,7 @@ class InstanceCard(QFrame):
         main_layout.setContentsMargins(8, 8, 8, 8)  # 增加内边距
         main_layout.setSpacing(6)  # 增加组件间距
 
-        # 标题和状态行
+        # 标题行
         title_layout = QHBoxLayout()
 
         # 实例名称
@@ -93,18 +91,6 @@ class InstanceCard(QFrame):
         title_layout.addWidget(self.name_label)
 
         title_layout.addStretch()
-
-        # 状态标签
-        self.status_label = QLabel("未知")
-        # 使用相对字体大小
-        font = self.status_label.font()
-        font.setPointSize(int(font.pointSize() * 0.9))  # 稍微小一点的字体
-        self.status_label.setFont(font)
-        self.status_label.setAlignment(Qt.AlignCenter)  # 居中对齐
-        title_layout.addWidget(self.status_label)
-
-        # 单独设置状态标签样式，确保不受选中状态影响
-        self._update_status("unknown")
 
         main_layout.addLayout(title_layout)
 
@@ -293,48 +279,10 @@ class InstanceCard(QFrame):
         """
         self.instance_name = instance_data.get("name", self.instance_name)
         self.instance_url = instance_data.get("base_url", self.instance_url)
-        self.instance_status = instance_data.get("status", self.instance_status)
 
         # 更新UI
         self.name_label.setText(self.instance_name)
         self.url_value.setText(self.instance_url)
-        self._update_status(self.instance_status)
-
-    def _update_status(self, status: str):
-        """
-        更新状态显示
-
-        Args:
-            status: 状态值
-        """
-        status_map = {
-            "online": ("在线", "#52c41a"),  # 绿色
-            "offline": ("离线", "#8c8c8c"),  # 灰色
-            "error": ("错误", "#ff4d4f"),  # 红色
-            "unknown": ("未知", "#1890ff"),  # 蓝色
-        }
-
-        status_text, status_color = status_map.get(status.lower(), ("未知", "#1890ff"))
-
-        self.status_label.setText(status_text)
-
-        # 单独设置状态标签样式，确保不受选中状态影响
-        # 使用setProperty和style sheet来确保样式独立
-        self.status_label.setProperty("status", status.lower())
-        self.status_label.setStyleSheet(f"""
-            QLabel#status_label {{
-                padding: 2px 6px;
-                border-radius: 8px;
-                background-color: {status_color};
-                color: white;
-                font-weight: bold;
-                border: none;
-            }}
-        """)
-        # 设置对象名称以便样式表可以精确定位
-        self.status_label.setObjectName("status_label")
-        self.status_label.style().unpolish(self.status_label)
-        self.status_label.style().polish(self.status_label)
 
 
 class InstanceCardList(QWidget):
@@ -569,28 +517,9 @@ class InstanceCardList(QWidget):
         self.initialize_requested.emit(instance_id)
 
     async def _update_instance_status(self):
-        """更新实例状态"""
-        try:
-            from wxauto_mgt.core.status_monitor import status_monitor
-
-            # 获取所有实例状态
-            statuses = status_monitor.get_all_instance_statuses()
-
-            # 更新卡片状态
-            for instance_id, status in statuses.items():
-                if instance_id in self._instances:
-                    # 在主线程中更新UI
-                    QTimer.singleShot(0, lambda id=instance_id, st=status:
-                                    self._instances[id].update_data({"status": st}))
-
-            # 如果没有获取到状态，为所有实例设置默认状态
-            if not statuses:
-                for instance_id in self._instances:
-                    # 在主线程中更新UI
-                    QTimer.singleShot(0, lambda id=instance_id:
-                                    self._instances[id].update_data({"status": "unknown"}))
-        except Exception as e:
-            logger.error(f"更新实例状态失败: {e}")
+        """更新实例状态 - 已禁用状态显示"""
+        # 此方法保留但不执行任何操作，以保持代码兼容性
+        pass
 
     def get_selected_instance_id(self) -> Optional[str]:
         """
