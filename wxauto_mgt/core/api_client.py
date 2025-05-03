@@ -9,7 +9,11 @@ import json
 from typing import Dict, List, Optional, Any, Tuple
 import aiohttp
 
+# 导入标准日志记录器
 logger = logging.getLogger(__name__)
+
+# 导入文件处理专用日志记录器
+from wxauto_mgt.utils import file_logger
 
 class ApiError(Exception):
     """API错误"""
@@ -422,11 +426,16 @@ class WxAutoApiClient:
             import json
             import asyncio
 
+            file_logger.info(f"开始下载文件，原始路径: {file_path}")
+            logger.info(f"开始下载文件: {file_path}")
+
             # 确保文件路径使用双反斜杠
             file_path_fixed = file_path.replace('/', '\\')
+            file_logger.debug(f"修正后的文件路径: {file_path_fixed}")
 
             # 构建请求数据
             data = {'file_path': file_path_fixed}
+            file_logger.debug(f"下载文件请求数据: {data}")
 
             # 构建完整的API URL和请求头
             url = f"{self.base_url}/api/file/download"
@@ -434,27 +443,33 @@ class WxAutoApiClient:
                 'X-API-Key': self.api_key,
                 'Content-Type': 'application/json'
             }
+            file_logger.debug(f"下载文件请求URL: {url}")
 
             # 记录完整的curl命令，方便调试
             curl_cmd = f"""curl -X POST '{url}' \\
   -H 'X-API-Key: {self.api_key}' \\
   -H 'Content-Type: application/json' \\
   -d '{json.dumps(data)}'"""
-            logger.debug(f"执行文件下载API请求，等效curl命令: \n{curl_cmd}")
+            file_logger.debug(f"执行文件下载API请求，等效curl命令: \n{curl_cmd}")
 
             # 使用同步requests库发送请求
             def send_request():
                 try:
+                    file_logger.debug(f"开始发送同步下载请求...")
                     response = requests.post(url, headers=headers, json=data, timeout=60)  # 文件下载可能需要更长的超时时间
+                    file_logger.debug(f"同步下载请求完成，状态码: {response.status_code}")
                     return response
                 except Exception as e:
+                    file_logger.error(f"文件下载同步请求异常: {e}")
                     logger.error(f"文件下载同步请求异常: {e}")
                     raise e
 
             # 在事件循环的线程池中执行同步请求
+            file_logger.debug(f"准备在事件循环中执行同步请求...")
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(None, send_request)
             status_code = response.status_code
+            file_logger.debug(f"下载请求响应状态码: {status_code}")
 
             if status_code != 200:
                 # 尝试解析错误信息
@@ -463,31 +478,53 @@ class WxAutoApiClient:
                     error_msg = error_data.get('message', '未知错误')
                     error_code = error_data.get('code', -1)
                     error_detail = error_data.get('data', {}).get('error', '')
-                    logger.error(f"文件下载失败，状态码: {status_code}, 错误码: {error_code}, 错误信息: {error_msg}, 详情: {error_detail}")
+                    file_logger.error(f"文件下载失败，状态码: {status_code}, 错误码: {error_code}, 错误信息: {error_msg}, 详情: {error_detail}")
+                    logger.error(f"文件下载失败，状态码: {status_code}")
                 except:
-                    logger.error(f"文件下载失败，状态码: {status_code}, 响应: {response.text[:200]}")
+                    file_logger.error(f"文件下载失败，状态码: {status_code}, 响应: {response.text[:200]}")
+                    logger.error(f"文件下载失败，状态码: {status_code}")
                 return None
 
             # 检查Content-Type
             content_type = response.headers.get('Content-Type', '')
+            file_logger.debug(f"响应Content-Type: {content_type}")
+
             if 'application/octet-stream' in content_type:
                 # 成功获取文件内容
                 file_content = response.content
                 file_size = len(file_content)
+                file_logger.info(f"成功下载文件: {file_path}, 大小: {file_size} 字节")
                 logger.info(f"成功下载文件: {file_path}, 大小: {file_size} 字节")
+
+                # 检查文件内容是否为空
+                if file_size == 0:
+                    file_logger.warning(f"下载的文件内容为空: {file_path}")
+                    logger.warning(f"下载的文件内容为空: {file_path}")
+                else:
+                    file_logger.debug(f"文件内容前100字节: {file_content[:100]}")
+
+                    # 检查文件类型
+                    import os
+                    _, ext = os.path.splitext(file_path)
+                    if ext:
+                        file_logger.info(f"文件扩展名: {ext.upper()}")
+
                 return file_content
             else:
                 # 可能是错误响应
                 try:
                     error_data = response.json()
-                    logger.error(f"文件下载API返回非文件内容: {error_data}")
+                    file_logger.error(f"文件下载API返回非文件内容: {error_data}")
+                    logger.error(f"文件下载API返回非文件内容")
                 except:
-                    logger.error(f"文件下载API返回非文件内容且无法解析: {response.text[:200]}")
+                    file_logger.error(f"文件下载API返回非文件内容且无法解析: {response.text[:200]}")
+                    logger.error(f"文件下载API返回非文件内容且无法解析")
                 return None
 
         except Exception as e:
+            file_logger.error(f"下载文件失败: {e}")
+            file_logger.exception(e)
             logger.error(f"下载文件失败: {e}")
-            logger.exception(e)
             return None
 
     async def get_listener_messages(self, who: str) -> List[Dict]:

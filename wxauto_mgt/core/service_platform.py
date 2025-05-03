@@ -16,7 +16,11 @@ from typing import Dict, Any, Optional, List
 
 import aiohttp
 
+# 导入标准日志记录器
 logger = logging.getLogger(__name__)
+
+# 导入文件处理专用日志记录器
+from wxauto_mgt.utils import file_logger
 
 class ServicePlatform(ABC):
     """服务平台基类"""
@@ -143,6 +147,39 @@ class DifyPlatform(ServicePlatform):
             self._initialized = False
             return False
 
+    def _get_dify_file_type(self, file_path: str) -> str:
+        """
+        根据文件扩展名判断Dify文件类型
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            str: 文件类型，'document'或'image'
+        """
+        import os
+
+        # 获取文件扩展名并转为大写
+        _, ext = os.path.splitext(file_path)
+        ext = ext[1:].upper() if ext else ""
+
+        # 文档类型
+        document_extensions = ['TXT', 'MD', 'MARKDOWN', 'PDF', 'HTML', 'XLSX',
+                              'XLS', 'DOCX', 'CSV', 'EML', 'MSG', 'PPTX',
+                              'PPT', 'XML', 'EPUB']
+
+        # 图片类型
+        image_extensions = ['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG']
+
+        if ext in document_extensions:
+            return "document"
+        elif ext in image_extensions:
+            return "image"
+        else:
+            # 默认作为文档处理
+            logger.warning(f"未知文件类型: {ext}，默认作为document处理")
+            return "document"
+
     async def upload_file_to_dify(self, file_path: str) -> Dict[str, Any]:
         """
         上传文件到Dify平台
@@ -151,7 +188,7 @@ class DifyPlatform(ServicePlatform):
             file_path: 本地文件路径或文件名
 
         Returns:
-            Dict[str, Any]: 上传结果，包含文件ID
+            Dict[str, Any]: 上传结果，包含文件ID和文件类型
         """
         try:
             import os
@@ -159,31 +196,42 @@ class DifyPlatform(ServicePlatform):
             import mimetypes
             from pathlib import Path
 
+            # 使用专用日志记录器记录详细信息
+            file_logger.info(f"开始上传文件到Dify: {file_path}")
+
             # 如果只提供了文件名，构建完整路径
             if not os.path.dirname(file_path):
                 # 默认使用项目根目录下的data/downloads文件夹
                 project_root = Path(__file__).parent.parent.parent
                 download_dir = os.path.join(project_root, "data", "downloads")
                 full_path = os.path.join(download_dir, file_path)
-                logger.debug(f"只提供了文件名，构建完整路径: {full_path}")
+                file_logger.debug(f"只提供了文件名，构建完整路径: {full_path}")
             else:
                 full_path = file_path
 
             # 检查文件是否存在
             if not os.path.exists(full_path):
-                logger.error(f"文件不存在: {full_path}")
+                file_logger.error(f"文件不存在: {full_path}")
                 return {"error": f"文件不存在: {full_path}"}
 
-            # 获取文件类型
+            # 获取文件信息
             file_name = os.path.basename(full_path)
+            file_size = os.path.getsize(full_path)
             content_type, _ = mimetypes.guess_type(full_path)
             if not content_type:
                 # 默认为二进制流
                 content_type = "application/octet-stream"
 
+            file_logger.debug(f"文件信息: 名称={file_name}, 大小={file_size}字节, 类型={content_type}")
+
+            # 获取Dify文件类型
+            dify_file_type = self._get_dify_file_type(file_name)
+            file_logger.debug(f"文件 {file_name} 的Dify类型: {dify_file_type}")
+
             # 读取文件内容
             async with aiofiles.open(full_path, 'rb') as f:
                 file_content = await f.read()
+                file_logger.debug(f"已读取文件内容，大小: {len(file_content)}字节")
 
             # 构建表单数据
             form_data = aiohttp.FormData()
@@ -192,28 +240,42 @@ class DifyPlatform(ServicePlatform):
                                 filename=file_name,
                                 content_type=content_type)
 
+            # 构建请求URL和头信息
+            upload_url = f"{self.api_base}/files/upload"
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+
+            file_logger.debug(f"准备发送上传请求: URL={upload_url}, 文件名={file_name}")
+
             # 发送请求
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{self.api_base}/files/upload",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}"
-                    },
+                    upload_url,
+                    headers=headers,
                     data=form_data
                 ) as response:
+                    response_status = response.status
+                    file_logger.debug(f"上传文件响应状态码: {response_status}")
+
                     # Dify文件上传API返回201状态码表示成功
-                    if response.status not in [200, 201]:
+                    if response_status not in [200, 201]:
                         error_text = await response.text()
-                        logger.error(f"上传文件到Dify失败: {response.status}, {error_text}")
-                        return {"error": f"上传文件失败: {response.status}"}
+                        file_logger.error(f"上传文件到Dify失败: {response_status}, {error_text}")
+                        logger.error(f"上传文件到Dify失败: {response_status}")
+                        return {"error": f"上传文件失败: {response_status}"}
 
                     result = await response.json()
+                    file_logger.info(f"成功上传文件到Dify: {file_name}, 文件ID: {result.get('id')}")
+                    file_logger.debug(f"上传文件完整响应: {result}")
                     logger.info(f"成功上传文件到Dify: {file_name}, 文件ID: {result.get('id')}")
+
+                    # 添加文件类型信息到结果中
+                    result['dify_file_type'] = dify_file_type
                     return result
 
         except Exception as e:
+            file_logger.error(f"上传文件到Dify时出错: {e}")
+            file_logger.exception(e)
             logger.error(f"上传文件到Dify时出错: {e}")
-            logger.exception(e)
             return {"error": str(e)}
 
     async def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
@@ -226,92 +288,168 @@ class DifyPlatform(ServicePlatform):
         Returns:
             Dict[str, Any]: 处理结果，包含回复内容
         """
+        file_logger.info(f"开始处理消息: ID={message.get('id', 'unknown')}, 类型={message.get('mtype', 'unknown')}")
+        file_logger.debug(f"完整消息数据: {message}")
+
         if not self._initialized:
             await self.initialize()
             if not self._initialized:
+                file_logger.error("平台未初始化")
                 return {"error": "平台未初始化"}
 
         try:
+            # 检查是否是文件类型消息
+            is_file_message = 'dify_file' in message or ('local_file_path' in message and message.get('file_type') in ['image', 'file'])
+
             # 构建请求数据
             request_data = {
                 "inputs": {},
-                "query": message['content'],
+                # 如果是文件类型消息，使用空格作为query，否则使用原始内容
+                "query": " " if is_file_message else message['content'],
                 "response_mode": "blocking",
                 "user": message.get('sender', '') or self.user_id
             }
+
+            file_logger.debug(f"初始请求数据: {request_data}")
 
             # 如果有会话ID，添加到请求中
             if self.conversation_id:
                 request_data["conversation_id"] = self.conversation_id
 
             # 处理文件类型消息
-            if 'local_file_path' in message and message.get('file_type') in ['image', 'file']:
+            # 检查是否已经在deliver_message中处理过文件上传
+            if 'dify_file' in message:
+                try:
+                    # 文件已经在deliver_message中上传过，直接使用上传结果
+                    file_info = message['dify_file']
+                    file_id = file_info.get('id')
+                    dify_file_type = file_info.get('type', 'document')
+
+                    file_logger.info(f"使用已上传的文件: {file_id}, 类型: {dify_file_type}")
+
+                    # 如果files字段不存在，创建它
+                    if "files" not in request_data:
+                        request_data["files"] = []
+
+                    # 添加文件信息
+                    file_data = {
+                        "type": dify_file_type,
+                        "transfer_method": "local_file",
+                        "upload_file_id": file_id
+                    }
+                    request_data["files"].append(file_data)
+
+                    file_logger.info(f"添加文件到请求: {file_id}, 类型: {dify_file_type}")
+                    logger.info(f"添加文件到请求: {file_id}")
+                    file_logger.debug(f"当前请求数据: {request_data}")
+                except Exception as e:
+                    file_logger.error(f"处理已上传文件信息时出错: {e}")
+                    file_logger.exception(e)
+            # 兼容旧代码，如果没有在deliver_message中处理过文件上传，则在这里处理
+            elif 'local_file_path' in message and message.get('file_type') in ['image', 'file']:
+                file_logger.info(f"检测到文件类型消息: local_file_path={message.get('local_file_path')}, file_type={message.get('file_type')}")
+                logger.info(f"检测到文件类型消息: {message.get('file_type')}")
+
+                # 记录完整的消息信息，用于调试
+                file_logger.debug(f"文件类型消息完整信息: {message}")
+
                 # 上传文件到Dify
                 file_path = message['local_file_path']
+                file_logger.info(f"准备上传文件到Dify: {file_path}")
                 upload_result = await self.upload_file_to_dify(file_path)
 
                 if 'error' in upload_result:
+                    file_logger.error(f"上传文件失败: {upload_result['error']}")
                     logger.error(f"上传文件失败: {upload_result['error']}")
                 else:
                     # 获取文件ID
                     file_id = upload_result.get('id')
+                    file_logger.info(f"文件上传成功，获取到文件ID: {file_id}")
+
                     if file_id:
-                        # 添加文件到请求
-                        file_type = "image" if message.get('file_type') == 'image' else "file"
+                        # 从上传结果中获取Dify文件类型
+                        dify_file_type = upload_result.get('dify_file_type', 'document')
+                        file_logger.debug(f"文件类型: {dify_file_type}")
 
                         # 如果files字段不存在，创建它
                         if "files" not in request_data:
                             request_data["files"] = []
 
                         # 添加文件信息
-                        request_data["files"].append({
-                            "type": file_type,
+                        file_info = {
+                            "type": dify_file_type,  # 使用根据文件扩展名判断的类型
                             "transfer_method": "local_file",
                             "upload_file_id": file_id
-                        })
+                        }
+                        request_data["files"].append(file_info)
 
-                        logger.info(f"添加文件到请求: {file_id}, 类型: {file_type}")
+                        file_logger.info(f"添加文件到请求: {file_id}, 类型: {dify_file_type}")
+                        file_logger.debug(f"完整的文件信息: {file_info}")
+                        file_logger.debug(f"当前请求数据: {request_data}")
+                        logger.info(f"添加文件到请求: {file_id}, 类型: {dify_file_type}")
 
             # 发送请求
+            file_logger.debug(f"准备发送消息到Dify API，请求数据: {request_data}")
+            logger.debug(f"准备发送消息到Dify API")
+
+            chat_url = f"{self.api_base}/chat-messages"
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+
+            file_logger.debug(f"发送请求: URL={chat_url}, 头信息={headers}")
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{self.api_base}/chat-messages",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
+                    chat_url,
+                    headers=headers,
                     json=request_data
                 ) as response:
-                    if response.status == 404 and self.conversation_id:
+                    response_status = response.status
+                    file_logger.debug(f"Dify API响应状态码: {response_status}")
+
+                    if response_status == 404 and self.conversation_id:
                         # 会话不存在，清除会话ID并重试
+                        file_logger.warning(f"会话ID {self.conversation_id} 不存在，将创建新会话")
                         logger.warning(f"会话ID {self.conversation_id} 不存在，将创建新会话")
                         self.conversation_id = ""
                         self.config["conversation_id"] = ""
 
                         # 移除会话ID并重新构建请求
                         request_data.pop("conversation_id", None)
+                        file_logger.debug(f"重试请求，移除会话ID后的请求数据: {request_data}")
 
                         # 重新发送请求
                         async with session.post(
-                            f"{self.api_base}/chat-messages",
-                            headers={
-                                "Authorization": f"Bearer {self.api_key}",
-                                "Content-Type": "application/json"
-                            },
+                            chat_url,
+                            headers=headers,
                             json=request_data
                         ) as retry_response:
-                            if retry_response.status != 200:
+                            retry_status = retry_response.status
+                            file_logger.debug(f"重试请求响应状态码: {retry_status}")
+
+                            if retry_status != 200:
                                 error_text = await retry_response.text()
-                                logger.error(f"重试后Dify API仍然错误: {retry_response.status}, {error_text}")
-                                return {"error": f"API错误: {retry_response.status}"}
+                                file_logger.error(f"重试后Dify API仍然错误: {retry_status}, {error_text}")
+                                logger.error(f"重试后Dify API仍然错误: {retry_status}")
+                                return {"error": f"API错误: {retry_status}"}
 
                             result = await retry_response.json()
-                    elif response.status != 200:
+                            file_logger.debug(f"重试请求响应数据: {result}")
+                    elif response_status != 200:
                         error_text = await response.text()
-                        logger.error(f"Dify API错误: {response.status}, {error_text}")
-                        return {"error": f"API错误: {response.status}"}
+                        file_logger.error(f"Dify API错误: {response_status}, {error_text}")
+                        logger.error(f"Dify API错误: {response_status}")
+                        return {"error": f"API错误: {response_status}"}
                     else:
                         result = await response.json()
+                        file_logger.debug(f"Dify API响应数据: {result}")
+
+                        # 检查是否包含文件信息的请求
+                        if "files" in request_data:
+                            file_logger.info(f"包含文件的请求成功发送，响应状态码: {response_status}")
+                            logger.info(f"包含文件的请求成功发送")
 
                     # 保存会话ID，用于后续请求
                     if not self.conversation_id and "conversation_id" in result:

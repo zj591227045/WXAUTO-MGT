@@ -16,7 +16,11 @@ import asyncio
 from typing import Dict, Optional, Tuple, List, Any
 from pathlib import Path
 
+# 导入标准日志记录器
 logger = logging.getLogger(__name__)
+
+# 导入文件处理专用日志记录器
+from wxauto_mgt.utils import file_logger
 
 class MessageProcessor:
     """消息处理工具类"""
@@ -85,12 +89,16 @@ class MessageProcessor:
 
         elif mtype in ['image', 'file']:
             # 图片或文件消息，提取文件路径并下载
-            logger.info(f"处理{mtype}消息 ID: {message_id}, 原始内容: {content[:100]}...")
+            file_logger.info(f"处理{mtype}消息 ID: {message_id}, 原始内容: {content[:100]}...")
+            logger.info(f"处理{mtype}消息 ID: {message_id}")
             file_path = self._extract_file_path(content)
 
             if file_path:
-                logger.info(f"从{mtype}消息 ID: {message_id} 中提取到文件路径: {file_path}")
+                file_logger.info(f"从{mtype}消息 ID: {message_id} 中提取到文件路径: {file_path}")
+                logger.info(f"从{mtype}消息 ID: {message_id} 中提取到文件路径")
+
                 # 下载文件
+                file_logger.debug(f"准备下载文件: {file_path}")
                 file_info = await self._download_file(file_path, api_client)
                 if file_info:
                     # 更新消息内容，添加本地文件路径信息
@@ -99,11 +107,22 @@ class MessageProcessor:
                     processed_msg['file_size'] = file_size
                     processed_msg['original_file_path'] = file_path
                     processed_msg['file_type'] = mtype  # 添加文件类型标记
-                    logger.info(f"已下载{mtype}文件 ID: {message_id}, 路径: {file_path} -> {local_path}, 大小: {file_size} 字节")
+                    file_logger.info(f"已下载{mtype}文件 ID: {message_id}, 路径: {file_path} -> {local_path}, 大小: {file_size} 字节")
+                    logger.info(f"已下载{mtype}文件 ID: {message_id}, 大小: {file_size} 字节")
+
+                    # 添加更详细的调试信息
+                    file_logger.debug(f"文件处理完成，消息详情: {processed_msg}")
+
+                    # 检查文件扩展名
+                    _, ext = os.path.splitext(local_path)
+                    if ext:
+                        file_logger.info(f"文件扩展名: {ext.upper()}")
                 else:
-                    logger.warning(f"下载{mtype}文件失败 ID: {message_id}, 路径: {file_path}")
+                    file_logger.warning(f"下载{mtype}文件失败 ID: {message_id}, 路径: {file_path}")
+                    logger.warning(f"下载{mtype}文件失败 ID: {message_id}")
             else:
-                logger.warning(f"无法从{mtype}消息 ID: {message_id} 中提取文件路径: {content[:100]}")
+                file_logger.warning(f"无法从{mtype}消息 ID: {message_id} 中提取文件路径: {content[:100]}")
+                logger.warning(f"无法从{mtype}消息 ID: {message_id} 中提取文件路径")
 
             return processed_msg
 
@@ -165,21 +184,23 @@ class MessageProcessor:
             Optional[Tuple[str, int]]: (本地文件路径, 文件大小)，如果下载失败则返回None
         """
         try:
+            file_logger.info(f"开始下载文件: {file_path}")
             logger.info(f"开始下载文件: {file_path}")
 
             # 调用API下载文件
             file_content = await api_client.download_file(file_path)
             if not file_content:
+                file_logger.error(f"下载文件失败: {file_path}")
                 logger.error(f"下载文件失败: {file_path}")
                 return None
 
             # 提取文件名 - 只取最后的文件名部分，不包含路径
             file_name = os.path.basename(file_path.replace('\\', '/'))
-            logger.debug(f"提取的文件名: {file_name}")
+            file_logger.debug(f"提取的文件名: {file_name}")
 
             # 生成本地保存路径
             local_path = os.path.join(self.download_dir, file_name)
-            logger.debug(f"初始本地保存路径: {local_path}")
+            file_logger.debug(f"初始本地保存路径: {local_path}")
 
             # 如果文件已存在，添加序号
             counter = 1
@@ -187,7 +208,7 @@ class MessageProcessor:
             while os.path.exists(local_path):
                 new_name = f"{base_name}_{counter}{ext}"
                 local_path = os.path.join(self.download_dir, new_name)
-                logger.debug(f"文件已存在，使用新路径: {local_path}")
+                file_logger.debug(f"文件已存在，使用新路径: {local_path}")
                 counter += 1
 
             # 保存文件
@@ -196,17 +217,35 @@ class MessageProcessor:
 
             # 返回本地路径和文件大小
             file_size = len(file_content)
+            file_logger.info(f"文件已保存: {local_path}, 大小: {file_size} 字节")
             logger.info(f"文件已保存: {local_path}, 大小: {file_size} 字节")
 
             # 只返回文件名，不包含路径信息
             saved_file_name = os.path.basename(local_path)
-            logger.debug(f"返回文件名: {saved_file_name}")
+            file_logger.debug(f"返回文件名: {saved_file_name}")
+
+            # 检查文件是否真的存在
+            full_path = os.path.join(self.download_dir, saved_file_name)
+            if os.path.exists(full_path):
+                file_size_on_disk = os.path.getsize(full_path)
+                file_logger.debug(f"验证文件已保存到磁盘: {full_path}, 磁盘上的大小: {file_size_on_disk} 字节")
+
+                # 检查文件内容
+                if file_size_on_disk > 0:
+                    file_logger.debug(f"文件内容有效，大小: {file_size_on_disk} 字节")
+                else:
+                    file_logger.warning(f"文件内容为空: {full_path}")
+            else:
+                file_logger.error(f"文件保存失败，磁盘上找不到文件: {full_path}")
+                logger.error(f"文件保存失败，磁盘上找不到文件: {full_path}")
+                return None
 
             return saved_file_name, file_size
 
         except Exception as e:
+            file_logger.error(f"下载并保存文件时出错: {e}")
+            file_logger.exception(e)
             logger.error(f"下载并保存文件时出错: {e}")
-            logger.exception(e)
             return None
 
 # 创建全局实例

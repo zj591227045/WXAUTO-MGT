@@ -16,7 +16,11 @@ from wxauto_mgt.core.api_client import instance_manager
 from wxauto_mgt.core.service_platform_manager import platform_manager, rule_manager
 from wxauto_mgt.core.message_sender import message_sender
 
+# 导入标准日志记录器
 logger = logging.getLogger(__name__)
+
+# 导入文件处理专用日志记录器
+from wxauto_mgt.utils import file_logger
 
 class MessageDeliveryService:
     """消息投递服务"""
@@ -180,23 +184,31 @@ class MessageDeliveryService:
             try:
                 # 获取所有实例
                 instances = instance_manager.get_all_instances()
+                file_logger.debug(f"获取到 {len(instances)} 个实例")
 
                 for instance_id in instances:
+                    file_logger.debug(f"开始处理实例: {instance_id}")
+
                     # 获取未处理的消息
                     messages = await self._get_unprocessed_messages(instance_id)
 
                     if not messages:
+                        file_logger.debug(f"实例 {instance_id} 没有未处理的消息")
                         continue
 
+                    file_logger.info(f"获取到 {len(messages)} 条未处理消息，实例: {instance_id}")
                     logger.info(f"获取到 {len(messages)} 条未处理消息，实例: {instance_id}")
 
                     # 处理消息
                     if self.merge_messages:
                         # 合并消息
+                        file_logger.debug(f"开始合并消息")
                         merged_messages = await self._merge_messages(messages)
+                        file_logger.info(f"合并后有 {len(merged_messages)} 条消息")
                         logger.info(f"合并后有 {len(merged_messages)} 条消息")
 
                         for message in merged_messages:
+                            file_logger.debug(f"创建处理任务: {message.get('message_id')}")
                             # 创建处理任务
                             task = asyncio.create_task(self.process_message(message))
                             self._tasks.add(task)
@@ -204,16 +216,21 @@ class MessageDeliveryService:
                     else:
                         # 逐条处理
                         for message in messages:
+                            file_logger.debug(f"创建处理任务: {message.get('message_id')}")
                             # 创建处理任务
                             task = asyncio.create_task(self.process_message(message))
                             self._tasks.add(task)
                             task.add_done_callback(self._tasks.discard)
 
                 # 等待下一次轮询
+                file_logger.debug(f"等待下一次轮询，间隔: {self.poll_interval}秒")
                 await asyncio.sleep(self.poll_interval)
             except asyncio.CancelledError:
+                file_logger.info("消息轮询被取消")
                 break
             except Exception as e:
+                file_logger.error(f"消息轮询出错: {e}")
+                file_logger.exception(e)
                 logger.error(f"消息轮询出错: {e}")
                 await asyncio.sleep(self.poll_interval)
 
@@ -236,16 +253,25 @@ class MessageDeliveryService:
             LIMIT ?
             """
 
+            file_logger.debug(f"查询实例 {instance_id} 的未处理消息")
             messages = await db_manager.fetchall(sql, (instance_id, self.batch_size))
+            file_logger.debug(f"查询到 {len(messages)} 条未处理消息")
+
+            if messages:
+                file_logger.debug(f"消息示例: {messages[0]}")
 
             # 过滤掉正在处理的消息
             filtered_messages = []
             for msg in messages:
                 if msg['message_id'] not in self._processing_messages:
                     filtered_messages.append(msg)
+                else:
+                    file_logger.debug(f"跳过正在处理的消息: {msg['message_id']}")
 
+            file_logger.debug(f"过滤后剩余 {len(filtered_messages)} 条消息")
             return filtered_messages
         except Exception as e:
+            file_logger.error(f"获取未处理消息失败: {e}")
             logger.error(f"获取未处理消息失败: {e}")
             return []
 
@@ -328,40 +354,65 @@ class MessageDeliveryService:
         """
         message_id = message['message_id']
 
+        # 使用专用日志记录器记录详细信息
+        file_logger.info(f"开始处理消息: {message_id}, 类型: {message.get('mtype', '')}, 消息类型: {message.get('message_type', '')}")
+        file_logger.debug(f"消息详情: {message}")
+
         # 添加到正在处理的集合
         self._processing_messages.add(message_id)
+        file_logger.debug(f"消息 {message_id} 已添加到处理队列")
 
         try:
             # 标记为正在投递
             await self._update_message_delivery_status(message_id, 3)  # 3表示正在投递
+            file_logger.debug(f"消息 {message_id} 已标记为正在投递")
 
             # 匹配规则
+            file_logger.debug(f"为消息 {message_id} 匹配规则, 实例: {message.get('instance_id')}, 聊天对象: {message.get('chat_name')}")
             rule = await rule_manager.match_rule(message['instance_id'], message['chat_name'])
             if not rule:
+                file_logger.warning(f"消息 {message_id} 没有匹配的投递规则")
                 logger.warning(f"消息 {message_id} 没有匹配的投递规则")
                 # 标记为投递失败
                 await self._update_message_delivery_status(message_id, 2)
                 return False
 
+            file_logger.info(f"消息 {message_id} 匹配到规则: {rule.get('id')}, 平台: {rule.get('platform_id')}")
+
             # 获取服务平台
+            file_logger.debug(f"获取服务平台: {rule['platform_id']}")
             platform = await platform_manager.get_platform(rule['platform_id'])
             if not platform:
+                file_logger.error(f"找不到服务平台: {rule['platform_id']}")
                 logger.error(f"找不到服务平台: {rule['platform_id']}")
                 # 标记为投递失败
                 await self._update_message_delivery_status(message_id, 2)
                 return False
 
+            file_logger.info(f"获取到服务平台: {platform.name}, 类型: {platform.get_type() if hasattr(platform, 'get_type') else 'unknown'}")
+
             # 投递消息 - 记录详细信息
+            file_logger.info(f"投递消息 {message_id} 到平台 {platform.name}")
             logger.info(f"投递消息 {message_id} 到平台 {platform.name}")
+
+            # 检查消息类型，记录更多信息
+            if message.get('mtype') in ['image', 'file'] or message.get('file_type') in ['image', 'file']:
+                file_logger.info(f"投递文件类型消息: {message_id}, 类型: {message.get('mtype') or message.get('file_type')}")
+                if 'local_file_path' in message:
+                    file_logger.info(f"文件路径: {message.get('local_file_path')}")
+
             delivery_result = await self.deliver_message(message, platform)
+            file_logger.debug(f"投递结果: {delivery_result}")
 
             if 'error' in delivery_result:
+                file_logger.error(f"投递消息 {message_id} 失败: {delivery_result['error']}")
                 logger.error(f"投递消息 {message_id} 失败: {delivery_result['error']}")
                 # 标记为投递失败
                 await self._update_message_delivery_status(message_id, 2)
                 return False
 
             # 标记为已投递
+            file_logger.info(f"消息 {message_id} 投递成功，标记为已投递")
             await self._update_message_delivery_status(
                 message_id, 1, rule['platform_id']
             )
@@ -416,33 +467,152 @@ class MessageDeliveryService:
             content = message.get('content', '')
             message_id = message.get('message_id', 'unknown')
 
+            # 创建消息的副本，避免修改原始消息
+            processed_message = message.copy()
+
+            # 检查是否是合并消息，如果是，尝试查找相关的图片消息
+            if message.get('merged', 0) == 1 and message.get('merged_ids'):
+                file_logger.info(f"检测到合并消息: {message_id}, 合并数量: {message.get('merged_count', 0)}")
+
+                try:
+                    # 解析合并的消息ID
+                    import json
+                    merged_ids = json.loads(message.get('merged_ids', '[]'))
+                    file_logger.debug(f"合并的消息ID: {merged_ids}")
+
+                    # 查询数据库，获取合并的消息详情
+                    from wxauto_mgt.data.db_manager import db_manager
+
+                    # 查找图片或文件类型的消息
+                    for merged_id in merged_ids:
+                        file_logger.debug(f"查询合并消息: {merged_id}")
+                        merged_messages = await db_manager.fetch_all(
+                            "SELECT * FROM messages WHERE message_id = ?",
+                            (merged_id,)
+                        )
+
+                        if merged_messages:
+                            merged_message = merged_messages[0]
+                            merged_mtype = merged_message.get('mtype', '')
+
+                            file_logger.debug(f"合并消息详情: {merged_message}")
+
+                            # 如果找到图片或文件类型的消息
+                            if merged_mtype in ['image', 'file'] and 'local_file_path' in merged_message:
+                                file_logger.info(f"在合并消息中找到图片/文件: {merged_id}, 类型: {merged_mtype}")
+
+                                # 将图片/文件信息添加到处理消息中
+                                processed_message['file_type'] = merged_mtype
+                                processed_message['local_file_path'] = merged_message.get('local_file_path')
+                                processed_message['original_file_path'] = merged_message.get('original_file_path')
+                                processed_message['file_size'] = merged_message.get('file_size')
+
+                                file_logger.info(f"从合并消息中提取文件信息: {processed_message.get('local_file_path')}")
+                                break
+                except Exception as e:
+                    file_logger.error(f"处理合并消息时出错: {e}")
+                    file_logger.exception(e)
+
             # 处理卡片类型消息
             if mtype == 'card':
                 # 移除[wxauto卡片链接解析]前缀
-                message['content'] = content.replace('[wxauto卡片链接解析]', '').strip()
+                processed_message['content'] = content.replace('[wxauto卡片链接解析]', '').strip()
                 logger.info(f"投递前处理卡片消息: {message_id}, 移除前缀")
 
             # 处理语音类型消息
             elif mtype == 'voice':
                 # 移除[wxauto语音解析]前缀
-                message['content'] = content.replace('[wxauto语音解析]', '').strip()
+                processed_message['content'] = content.replace('[wxauto语音解析]', '').strip()
                 logger.info(f"投递前处理语音消息: {message_id}, 移除前缀")
 
             # 处理图片或文件类型消息
-            elif mtype in ['image', 'file'] or message.get('file_type') in ['image', 'file']:
+            elif mtype in ['image', 'file'] or message.get('file_type') in ['image', 'file'] or processed_message.get('file_type') in ['image', 'file']:
                 # 确保文件类型信息存在
-                if 'file_type' not in message and mtype in ['image', 'file']:
-                    message['file_type'] = mtype
+                if 'file_type' not in processed_message and mtype in ['image', 'file']:
+                    processed_message['file_type'] = mtype
 
-                logger.info(f"投递文件类型消息: {message_id}, 类型: {message.get('file_type')}")
+                file_logger.info(f"投递文件类型消息: {message_id}, 类型: {processed_message.get('file_type')}")
+                logger.info(f"投递文件类型消息: {message_id}, 类型: {processed_message.get('file_type')}")
+
+                # 记录完整的消息信息，用于调试
+                file_logger.debug(f"文件类型消息完整信息: {processed_message}")
 
                 # 确保本地文件路径信息存在
-                if 'local_file_path' not in message and 'original_file_path' in message:
-                    # 如果没有本地文件路径但有原始路径，记录警告
-                    logger.warning(f"消息 {message_id} 缺少本地文件路径，可能无法正确处理文件")
+                if 'local_file_path' not in processed_message:
+                    if 'original_file_path' in processed_message:
+                        # 如果没有本地文件路径但有原始路径，记录警告
+                        file_logger.warning(f"消息 {message_id} 缺少本地文件路径，可能无法正确处理文件")
+                        logger.warning(f"消息 {message_id} 缺少本地文件路径，可能无法正确处理文件")
+                    else:
+                        file_logger.error(f"消息 {message_id} 既没有本地文件路径也没有原始文件路径，无法处理文件")
+                        logger.error(f"消息 {message_id} 既没有本地文件路径也没有原始文件路径，无法处理文件")
+                else:
+                    file_logger.info(f"消息 {message_id} 的本地文件路径: {processed_message.get('local_file_path')}")
+                    logger.debug(f"消息 {message_id} 的本地文件路径存在")
+
+                    # 如果是Dify平台，需要先上传文件
+                    try:
+                        # 强制检查平台类型，确保是Dify平台
+                        platform_type = platform.get_type() if hasattr(platform, "get_type") else "unknown"
+                        file_logger.info(f"平台类型: {platform_type}")
+
+                        if platform_type == "dify" and hasattr(platform, "upload_file_to_dify"):
+                            file_path = processed_message['local_file_path']
+                            file_logger.info(f"准备上传文件到Dify: {file_path}")
+
+                            # 先上传文件到Dify
+                            upload_result = await platform.upload_file_to_dify(file_path)
+                            file_logger.debug(f"上传结果: {upload_result}")
+
+                            if 'error' in upload_result:
+                                file_logger.error(f"上传文件失败: {upload_result['error']}")
+                                logger.error(f"上传文件失败: {upload_result['error']}")
+                                # 如果上传失败，返回错误，不继续处理
+                                return {"error": f"上传文件失败: {upload_result['error']}"}
+                            else:
+                                # 获取文件ID
+                                file_id = upload_result.get('id')
+                                if file_id:
+                                    file_logger.info(f"文件上传成功，获取到文件ID: {file_id}")
+
+                                    # 从上传结果中获取Dify文件类型
+                                    dify_file_type = upload_result.get('dify_file_type', 'document')
+
+                                    # 添加文件信息到消息中
+                                    processed_message['dify_file'] = {
+                                        "id": file_id,
+                                        "type": dify_file_type,
+                                        "transfer_method": "local_file"
+                                    }
+
+                                    file_logger.info(f"已添加文件信息到消息: {file_id}, 类型: {dify_file_type}")
+                                    logger.info(f"已添加文件信息到消息: {file_id}")
+                                else:
+                                    # 如果没有获取到文件ID，返回错误，不继续处理
+                                    file_logger.error("上传文件成功但未获取到文件ID")
+                                    return {"error": "上传文件成功但未获取到文件ID"}
+                        else:
+                            file_logger.warning(f"不是Dify平台或平台不支持上传文件: platform_type={platform_type}, has_upload_method={hasattr(platform, 'upload_file_to_dify')}")
+                    except Exception as e:
+                        file_logger.error(f"处理文件上传时出错: {e}")
+                        file_logger.exception(e)
+                        # 如果处理文件上传时出错，返回错误，不继续处理
+                        return {"error": f"处理文件上传时出错: {str(e)}"}
 
             # 处理消息
-            result = await platform.process_message(message)
+            file_logger.info(f"准备调用平台处理消息: {message_id}, 平台类型: {platform.get_type() if hasattr(platform, 'get_type') else 'unknown'}")
+            file_logger.debug(f"处理前的消息数据: {processed_message}")
+
+            # 检查是否包含文件信息
+            if 'dify_file' in processed_message:
+                file_logger.info(f"消息包含已上传的文件信息: {processed_message.get('dify_file')}")
+            elif 'local_file_path' in processed_message:
+                file_logger.info(f"消息包含本地文件路径: {processed_message.get('local_file_path')}")
+
+            result = await platform.process_message(processed_message)
+            file_logger.info(f"平台处理消息完成: {message_id}")
+            file_logger.debug(f"处理结果: {result}")
+
             return result
         except Exception as e:
             logger.error(f"投递消息失败: {e}")
