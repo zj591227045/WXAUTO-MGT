@@ -68,14 +68,17 @@ logger = setup_logger(__name__)
 debug_logger = None
 try:
     # 创建日志目录
-    os.makedirs('/Users/jackson/Documents/VSCode/wxauto_Mgt/data/logs', exist_ok=True)
+    # 使用相对路径，避免硬编码
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+    log_dir = os.path.join(project_root, 'data', 'logs')
+    os.makedirs(log_dir, exist_ok=True)
 
     # 配置调试日志记录器
     debug_logger = logging.getLogger('message_panel_debug')
     debug_logger.setLevel(logging.DEBUG)
 
     # 添加文件处理器
-    debug_file = '/Users/jackson/Documents/VSCode/wxauto_Mgt/data/logs/message_panel_debug.log'
+    debug_file = os.path.join(log_dir, 'message_panel_debug.log')
     file_handler = logging.FileHandler(debug_file, mode='w', encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
 

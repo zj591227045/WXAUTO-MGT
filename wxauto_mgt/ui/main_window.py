@@ -42,7 +42,11 @@ class MainWindow(QMainWindow):
         self._init_ui()
 
         # 启动延迟任务，强制保存一次配置
-        QTimer.singleShot(2000, self._delayed_config_save)
+        # 使用包装函数来正确处理协程
+        def start_delayed_save():
+            asyncio.create_task(self._delayed_config_save())
+
+        QTimer.singleShot(2000, start_delayed_save)
 
         logger.info("主窗口已初始化")
 

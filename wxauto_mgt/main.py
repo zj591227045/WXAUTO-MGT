@@ -200,7 +200,12 @@ def main():
         window.show()
 
         # 设置信号处理
-        loop.add_signal_handler(signal.SIGINT, loop.stop)
+        # Windows系统不支持add_signal_handler，使用平台兼容的方式
+        try:
+            loop.add_signal_handler(signal.SIGINT, loop.stop)
+        except NotImplementedError:
+            # Windows平台上忽略此错误
+            logger.debug("当前平台不支持add_signal_handler，跳过信号处理设置")
 
         # 运行事件循环
         with loop:
@@ -210,7 +215,10 @@ def main():
         return 0
 
     except Exception as e:
-        logger.error(f"程序启动失败: {str(e)}")
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"程序启动失败: {str(e)}\n{error_details}")
+        print(f"程序启动失败详细信息: {str(e)}\n{error_details}")
         return 1
     finally:
         # 执行清理
