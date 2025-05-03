@@ -59,14 +59,33 @@ def handle_exception(exc_type, exc_value, exc_traceback):
 async def init_services():
     """初始化各服务"""
     try:
+        # 获取应用程序的基础路径
+        # 如果是打包后的可执行文件，使用可执行文件所在目录
+        # 如果是开发环境，使用项目根目录
+        if getattr(sys, 'frozen', False):
+            # 打包环境 - 使用可执行文件所在目录
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            # 开发环境 - 使用项目根目录
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+        # 确保data目录存在
+        data_dir = os.path.join(base_dir, 'data')
+        os.makedirs(data_dir, exist_ok=True)
+
+        # 确保logs目录存在
+        log_dir = os.path.join(data_dir, 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+
+        # 确保downloads目录存在
+        downloads_dir = os.path.join(data_dir, 'downloads')
+        os.makedirs(downloads_dir, exist_ok=True)
+
         # 初始化日志
-        log_dir = os.path.join(os.path.dirname(__file__), 'logs')
         setup_logging(log_dir, console_level="DEBUG", file_level="DEBUG")
 
         # 初始化数据库
-        # 使用项目根目录下的data目录
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        db_path = os.path.join(project_root, 'data', 'wxauto_mgt.db')
+        db_path = os.path.join(data_dir, 'wxauto_mgt.db')
         await db_manager.initialize(db_path)
 
         # 等待一下确保表创建完成

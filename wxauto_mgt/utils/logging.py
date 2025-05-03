@@ -23,7 +23,7 @@ def setup_logging(
 ) -> None:
     """
     配置日志系统
-    
+
     Args:
         log_dir: 日志文件目录
         console_level: 控制台日志级别
@@ -34,10 +34,10 @@ def setup_logging(
     """
     # 确保日志目录存在
     os.makedirs(log_dir, exist_ok=True)
-    
+
     # 移除默认处理器
     logger.remove()
-    
+
     # 添加控制台处理器
     logger.add(
         sys.stdout,
@@ -49,14 +49,19 @@ def setup_logging(
         backtrace=True,
         diagnose=True
     )
-    
+
     # 构建日志文件名
     instance_suffix = f"_{instance_id}" if instance_id else ""
     log_file = os.path.join(
         log_dir,
         f"wxauto_mgt{instance_suffix}_{time.strftime('%Y%m%d')}.log"
     )
-    
+
+    # 设置文件处理专用日志记录器的路径
+    file_log_dir = os.path.dirname(log_dir)  # 使用data目录
+    file_processing_log = os.path.join(file_log_dir, "logs", "file_processing.log")
+    print(f"文件处理专用日志记录器已初始化，日志文件: {file_processing_log}")
+
     # 添加文件处理器
     logger.add(
         log_file,
@@ -71,48 +76,48 @@ def setup_logging(
         backtrace=True,
         diagnose=True
     )
-    
+
     logger.info(f"日志系统初始化完成，日志文件：{log_file}")
 
 def get_logger(name: str = None):
     """
     获取logger实例
-    
+
     Args:
         name: 日志器名称
-        
+
     Returns:
         Logger: logger实例
     """
     return logger.bind(name=name) if name else logger
-    
+
 def get_instance_logger(instance_id: str):
     """
     获取实例专用的logger
-    
+
     Args:
         instance_id: 实例ID
-        
+
     Returns:
         Logger: 实例专用的logger
     """
     return logger.bind(instance_id=instance_id)
-    
+
 def log_exception(e: Exception, context: str = "") -> None:
     """
     记录异常信息
-    
+
     Args:
         e: 异常对象
         context: 上下文信息
     """
     error_msg = f"{context} - {str(e)}" if context else str(e)
     logger.exception(error_msg)
-    
+
 def log_api_request(method: str, url: str, params: dict = None, data: dict = None) -> None:
     """
     记录API请求信息
-    
+
     Args:
         method: 请求方法
         url: 请求URL
@@ -124,11 +129,11 @@ def log_api_request(method: str, url: str, params: dict = None, data: dict = Non
         logger.debug(f"请求参数: {params}")
     if data:
         logger.debug(f"请求数据: {data}")
-        
+
 def log_api_response(status_code: int, response_data: dict, elapsed: float) -> None:
     """
     记录API响应信息
-    
+
     Args:
         status_code: 响应状态码
         response_data: 响应数据
@@ -136,11 +141,11 @@ def log_api_response(status_code: int, response_data: dict, elapsed: float) -> N
     """
     logger.debug(f"API响应: 状态码={status_code}, 耗时={elapsed:.3f}秒")
     logger.debug(f"响应数据: {response_data}")
-    
+
 def log_performance(operation: str, elapsed: float, context: dict = None) -> None:
     """
     记录性能指标
-    
+
     Args:
         operation: 操作名称
         elapsed: 操作耗时（秒）
@@ -149,4 +154,4 @@ def log_performance(operation: str, elapsed: float, context: dict = None) -> Non
     msg = f"性能指标 - {operation}: {elapsed:.3f}秒"
     if context:
         msg += f" | 上下文: {context}"
-    logger.debug(msg) 
+    logger.debug(msg)
