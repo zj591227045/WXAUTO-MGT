@@ -325,6 +325,11 @@ class MessageListenerPanel(QWidget):
         self.timeout_minutes = 30  # 默认超时时间，与message_listener一致
         self.poll_interval = 5  # 默认轮询间隔(秒)
 
+        # 自动刷新日志状态跟踪
+        self.last_refresh_log_key = ""  # 上一次刷新日志的关键内容
+        self.refresh_count = 1          # 刷新计数器
+        self.refresh_log_dict = {}      # 存储不同刷新日志的计数
+
         # 创建定时器
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self._auto_refresh)
@@ -1071,7 +1076,56 @@ class MessageListenerPanel(QWidget):
             processed_count, pending_count = await self._get_processed_pending_count()
             total_count = processed_count + pending_count
 
-            self.log_text.append(f"<font color='blue'>{refresh_time} - 自动刷新完成: {listener_count}个监听对象, {total_count}条消息 (已处理: {processed_count}, 未处理: {pending_count})</font>")
+            # 构建当前日志内容的关键部分（用于比较）
+            current_log_key = f"{listener_count}_{total_count}_{processed_count}_{pending_count}"
+
+            # 构建基本日志内容
+            log_base = f"自动刷新完成: {listener_count}个监听对象, {total_count}条消息 (已处理: {processed_count}, 未处理: {pending_count})"
+
+            # 检查是否是重复的日志内容
+            if current_log_key in self.refresh_log_dict:
+                # 更新计数
+                self.refresh_log_dict[current_log_key] += 1
+                count = self.refresh_log_dict[current_log_key]
+            else:
+                # 清理旧的日志计数，只保留最近的几个不同类型的日志
+                if len(self.refresh_log_dict) > 5:  # 只保留最近5种不同的日志
+                    self.refresh_log_dict.clear()
+
+                # 添加新的日志类型并设置计数为1
+                self.refresh_log_dict[current_log_key] = 1
+                count = 1
+
+            try:
+                # 获取当前文本内容
+                current_text = self.log_text.toPlainText()
+
+                # 分割成行
+                lines = current_text.split('\n')
+
+                # 过滤掉所有包含"自动刷新完成"的行
+                filtered_lines = [line for line in lines if "自动刷新完成" not in line]
+
+                # 清空日志窗口
+                self.log_text.clear()
+
+                # 重新添加过滤后的行
+                for line in filtered_lines:
+                    if line.strip():  # 只添加非空行
+                        self.log_text.append(line)
+
+                # 添加新的自动刷新日志（带刷新次数）
+                if count > 1:
+                    self.log_text.append(f"<font color='blue'>{refresh_time} - {log_base} (刷新次数: {count})</font>")
+                else:
+                    self.log_text.append(f"<font color='blue'>{refresh_time} - {log_base}</font>")
+            except Exception as e:
+                # 如果处理出错，使用简单方法：直接添加新日志
+                logger.error(f"处理日志时出错: {e}")
+                if count > 1:
+                    self.log_text.append(f"<font color='blue'>{refresh_time} - {log_base} (刷新次数: {count})</font>")
+                else:
+                    self.log_text.append(f"<font color='blue'>{refresh_time} - {log_base}</font>")
 
             # 滚动到底部
             scrollbar = self.log_text.verticalScrollBar()
@@ -1943,6 +1997,8 @@ class MessageListenerPanel(QWidget):
         self.log_text.clear()
         if hasattr(self, 'log_handler'):
             self.log_handler.log_cache.clear()
+        # 清空刷新日志计数字典
+        self.refresh_log_dict.clear()
         logger.info("日志已清空")
 
     @Slot(str, str)
