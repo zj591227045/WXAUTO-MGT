@@ -422,8 +422,11 @@ class WxAutoApiClient:
             import json
             import asyncio
 
+            # 确保文件路径使用双反斜杠
+            file_path_fixed = file_path.replace('/', '\\')
+
             # 构建请求数据
-            data = {'file_path': file_path}
+            data = {'file_path': file_path_fixed}
 
             # 构建完整的API URL和请求头
             url = f"{self.base_url}/api/file/download"

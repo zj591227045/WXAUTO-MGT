@@ -411,11 +411,42 @@ class MessageDeliveryService:
             Dict[str, Any]: 投递结果
         """
         try:
+            # 检查消息类型，进行必要的预处理
+            mtype = message.get('mtype', '')
+            content = message.get('content', '')
+            message_id = message.get('message_id', 'unknown')
+
+            # 处理卡片类型消息
+            if mtype == 'card':
+                # 移除[wxauto卡片链接解析]前缀
+                message['content'] = content.replace('[wxauto卡片链接解析]', '').strip()
+                logger.info(f"投递前处理卡片消息: {message_id}, 移除前缀")
+
+            # 处理语音类型消息
+            elif mtype == 'voice':
+                # 移除[wxauto语音解析]前缀
+                message['content'] = content.replace('[wxauto语音解析]', '').strip()
+                logger.info(f"投递前处理语音消息: {message_id}, 移除前缀")
+
+            # 处理图片或文件类型消息
+            elif mtype in ['image', 'file'] or message.get('file_type') in ['image', 'file']:
+                # 确保文件类型信息存在
+                if 'file_type' not in message and mtype in ['image', 'file']:
+                    message['file_type'] = mtype
+
+                logger.info(f"投递文件类型消息: {message_id}, 类型: {message.get('file_type')}")
+
+                # 确保本地文件路径信息存在
+                if 'local_file_path' not in message and 'original_file_path' in message:
+                    # 如果没有本地文件路径但有原始路径，记录警告
+                    logger.warning(f"消息 {message_id} 缺少本地文件路径，可能无法正确处理文件")
+
             # 处理消息
             result = await platform.process_message(message)
             return result
         except Exception as e:
             logger.error(f"投递消息失败: {e}")
+            logger.exception(e)
             return {"error": str(e)}
 
     async def send_reply(self, message: Dict[str, Any], reply_content: str) -> bool:

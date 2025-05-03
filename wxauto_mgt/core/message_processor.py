@@ -98,6 +98,7 @@ class MessageProcessor:
                     processed_msg['local_file_path'] = local_path
                     processed_msg['file_size'] = file_size
                     processed_msg['original_file_path'] = file_path
+                    processed_msg['file_type'] = mtype  # 添加文件类型标记
                     logger.info(f"已下载{mtype}文件 ID: {message_id}, 路径: {file_path} -> {local_path}, 大小: {file_size} 字节")
                 else:
                     logger.warning(f"下载{mtype}文件失败 ID: {message_id}, 路径: {file_path}")
@@ -172,8 +173,8 @@ class MessageProcessor:
                 logger.error(f"下载文件失败: {file_path}")
                 return None
 
-            # 提取文件名
-            file_name = os.path.basename(file_path)
+            # 提取文件名 - 只取最后的文件名部分，不包含路径
+            file_name = os.path.basename(file_path.replace('\\', '/'))
             logger.debug(f"提取的文件名: {file_name}")
 
             # 生成本地保存路径
@@ -197,11 +198,11 @@ class MessageProcessor:
             file_size = len(file_content)
             logger.info(f"文件已保存: {local_path}, 大小: {file_size} 字节")
 
-            # 返回相对路径，而不是绝对路径，便于数据库存储和跨平台兼容
-            rel_path = os.path.relpath(local_path, Path(__file__).parent.parent.parent)
-            logger.debug(f"返回相对路径: {rel_path}")
+            # 只返回文件名，不包含路径信息
+            saved_file_name = os.path.basename(local_path)
+            logger.debug(f"返回文件名: {saved_file_name}")
 
-            return rel_path, file_size
+            return saved_file_name, file_size
 
         except Exception as e:
             logger.error(f"下载并保存文件时出错: {e}")

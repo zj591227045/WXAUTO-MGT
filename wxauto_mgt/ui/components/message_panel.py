@@ -1319,7 +1319,7 @@ class MessageListenerPanel(QWidget):
 
             # 记录详细的消息信息，便于调试
             content = message.get('content', '')
-            logger.info(f"表格检查消息: id={message_id}")
+            #logger.info(f"表格检查消息: id={message_id}")
 
             # 使用调试日志记录器记录更详细的信息
             if debug_logger:

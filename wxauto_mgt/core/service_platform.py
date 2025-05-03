@@ -143,6 +143,79 @@ class DifyPlatform(ServicePlatform):
             self._initialized = False
             return False
 
+    async def upload_file_to_dify(self, file_path: str) -> Dict[str, Any]:
+        """
+        上传文件到Dify平台
+
+        Args:
+            file_path: 本地文件路径或文件名
+
+        Returns:
+            Dict[str, Any]: 上传结果，包含文件ID
+        """
+        try:
+            import os
+            import aiofiles
+            import mimetypes
+            from pathlib import Path
+
+            # 如果只提供了文件名，构建完整路径
+            if not os.path.dirname(file_path):
+                # 默认使用项目根目录下的data/downloads文件夹
+                project_root = Path(__file__).parent.parent.parent
+                download_dir = os.path.join(project_root, "data", "downloads")
+                full_path = os.path.join(download_dir, file_path)
+                logger.debug(f"只提供了文件名，构建完整路径: {full_path}")
+            else:
+                full_path = file_path
+
+            # 检查文件是否存在
+            if not os.path.exists(full_path):
+                logger.error(f"文件不存在: {full_path}")
+                return {"error": f"文件不存在: {full_path}"}
+
+            # 获取文件类型
+            file_name = os.path.basename(full_path)
+            content_type, _ = mimetypes.guess_type(full_path)
+            if not content_type:
+                # 默认为二进制流
+                content_type = "application/octet-stream"
+
+            # 读取文件内容
+            async with aiofiles.open(full_path, 'rb') as f:
+                file_content = await f.read()
+
+            # 构建表单数据
+            form_data = aiohttp.FormData()
+            form_data.add_field('file',
+                                file_content,
+                                filename=file_name,
+                                content_type=content_type)
+
+            # 发送请求
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.api_base}/files/upload",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}"
+                    },
+                    data=form_data
+                ) as response:
+                    # Dify文件上传API返回201状态码表示成功
+                    if response.status not in [200, 201]:
+                        error_text = await response.text()
+                        logger.error(f"上传文件到Dify失败: {response.status}, {error_text}")
+                        return {"error": f"上传文件失败: {response.status}"}
+
+                    result = await response.json()
+                    logger.info(f"成功上传文件到Dify: {file_name}, 文件ID: {result.get('id')}")
+                    return result
+
+        except Exception as e:
+            logger.error(f"上传文件到Dify时出错: {e}")
+            logger.exception(e)
+            return {"error": str(e)}
+
     async def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
         处理消息
@@ -170,6 +243,34 @@ class DifyPlatform(ServicePlatform):
             # 如果有会话ID，添加到请求中
             if self.conversation_id:
                 request_data["conversation_id"] = self.conversation_id
+
+            # 处理文件类型消息
+            if 'local_file_path' in message and message.get('file_type') in ['image', 'file']:
+                # 上传文件到Dify
+                file_path = message['local_file_path']
+                upload_result = await self.upload_file_to_dify(file_path)
+
+                if 'error' in upload_result:
+                    logger.error(f"上传文件失败: {upload_result['error']}")
+                else:
+                    # 获取文件ID
+                    file_id = upload_result.get('id')
+                    if file_id:
+                        # 添加文件到请求
+                        file_type = "image" if message.get('file_type') == 'image' else "file"
+
+                        # 如果files字段不存在，创建它
+                        if "files" not in request_data:
+                            request_data["files"] = []
+
+                        # 添加文件信息
+                        request_data["files"].append({
+                            "type": file_type,
+                            "transfer_method": "local_file",
+                            "upload_file_id": file_id
+                        })
+
+                        logger.info(f"添加文件到请求: {file_id}, 类型: {file_type}")
 
             # 发送请求
             async with aiohttp.ClientSession() as session:
@@ -225,6 +326,7 @@ class DifyPlatform(ServicePlatform):
                     }
         except Exception as e:
             logger.error(f"处理消息时出错: {e}")
+            logger.exception(e)
             return {"error": str(e)}
 
     async def test_connection(self) -> Dict[str, Any]:

@@ -214,6 +214,33 @@ class MessageListener:
                         # 处理不同类型的消息
                         from wxauto_mgt.core.message_processor import message_processor
 
+                        # 根据消息类型进行预处理
+                        mtype = msg.get('mtype', '')
+                        content = msg.get('content', '')
+
+                        # 处理卡片类型消息
+                        if mtype == 'card':
+                            # 移除[wxauto卡片链接解析]前缀
+                            msg['content'] = content.replace('[wxauto卡片链接解析]', '').strip()
+                            logger.info(f"预处理卡片消息: {msg.get('id')}, 移除前缀")
+
+                        # 处理语音类型消息
+                        elif mtype == 'voice':
+                            # 移除[wxauto语音解析]前缀
+                            msg['content'] = content.replace('[wxauto语音解析]', '').strip()
+                            logger.info(f"预处理语音消息: {msg.get('id')}, 移除前缀")
+
+                        # 处理图片或文件类型消息
+                        elif mtype in ['image', 'file']:
+                            # 提取文件路径
+                            import re
+                            path_pattern = r'([A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*)'
+                            match = re.search(path_pattern, content)
+                            if match:
+                                file_path = match.group(1)
+                                logger.info(f"预处理{mtype}消息: {msg.get('id')}, 提取文件路径: {file_path}")
+                                # 文件路径将在后续处理中下载
+
                         # 处理消息内容
                         processed_msg = await message_processor.process_message(msg, api_client)
 
@@ -229,11 +256,13 @@ class MessageListener:
                             'mtype': processed_msg.get('mtype')
                         }
 
-                        # 如果是文件或图片，添加本地文件路径
+                        # 如果是文件或图片，添加本地文件路径和文件类型
                         if 'local_file_path' in processed_msg:
                             save_data['local_file_path'] = processed_msg.get('local_file_path')
                             save_data['file_size'] = processed_msg.get('file_size')
                             save_data['original_file_path'] = processed_msg.get('original_file_path')
+                            if 'file_type' in processed_msg:
+                                save_data['file_type'] = processed_msg.get('file_type')
 
                         # 使用消息过滤模块进行二次检查
                         if message_filter.should_filter_message(save_data, log_prefix="主窗口保存前"):
@@ -248,6 +277,7 @@ class MessageListener:
 
         except Exception as e:
             logger.error(f"处理实例 {instance_id} 主窗口消息时出错: {e}")
+            logger.exception(e)
 
     async def check_listener_messages(self, instance_id: str, api_client):
         """
@@ -303,6 +333,33 @@ class MessageListener:
                                 logger.debug(f"过滤掉self发送的消息: {msg.get('id')}")
                                 continue
 
+                            # 根据消息类型进行预处理
+                            mtype = msg.get('mtype', '')
+                            content = msg.get('content', '')
+
+                            # 处理卡片类型消息
+                            if mtype == 'card':
+                                # 移除[wxauto卡片链接解析]前缀
+                                msg['content'] = content.replace('[wxauto卡片链接解析]', '').strip()
+                                logger.info(f"预处理卡片消息: {msg.get('id')}, 移除前缀")
+
+                            # 处理语音类型消息
+                            elif mtype == 'voice':
+                                # 移除[wxauto语音解析]前缀
+                                msg['content'] = content.replace('[wxauto语音解析]', '').strip()
+                                logger.info(f"预处理语音消息: {msg.get('id')}, 移除前缀")
+
+                            # 处理图片或文件类型消息
+                            elif mtype in ['image', 'file']:
+                                # 提取文件路径
+                                import re
+                                path_pattern = r'([A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*)'
+                                match = re.search(path_pattern, content)
+                                if match:
+                                    file_path = match.group(1)
+                                    logger.info(f"预处理{mtype}消息: {msg.get('id')}, 提取文件路径: {file_path}")
+                                    # 文件路径将在后续处理中下载
+
                             # 处理不同类型的消息
                             from wxauto_mgt.core.message_processor import message_processor
 
@@ -321,11 +378,13 @@ class MessageListener:
                                 'mtype': processed_msg.get('mtype')
                             }
 
-                            # 如果是文件或图片，添加本地文件路径
+                            # 如果是文件或图片，添加本地文件路径和文件类型
                             if 'local_file_path' in processed_msg:
                                 save_data['local_file_path'] = processed_msg.get('local_file_path')
                                 save_data['file_size'] = processed_msg.get('file_size')
                                 save_data['original_file_path'] = processed_msg.get('original_file_path')
+                                if 'file_type' in processed_msg:
+                                    save_data['file_type'] = processed_msg.get('file_type')
 
                             # 使用消息过滤模块进行二次检查
                             if message_filter.should_filter_message(save_data, log_prefix="监听器保存前"):
