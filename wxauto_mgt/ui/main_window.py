@@ -13,12 +13,14 @@ from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer
 from PySide6.QtGui import QIcon, QAction, QPixmap
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar, QMenuBar, QMenu, QToolBar,
-    QMessageBox, QLabel, QWidget, QApplication, QDockWidget, QVBoxLayout
+    QMessageBox, QLabel, QWidget, QApplication, QDockWidget, QVBoxLayout,
+    QHBoxLayout, QPushButton, QSpinBox, QCheckBox, QGroupBox, QLineEdit
 )
 
 from wxauto_mgt.core.api_client import instance_manager
 from wxauto_mgt.data.config_store import config_store
 from wxauto_mgt.utils.logging import logger
+from wxauto_mgt.web import start_web_service, stop_web_service, is_web_service_running, get_web_service_config, set_web_service_config
 
 # 延迟导入UI组件，避免循环导入
 # 实际使用时在方法内导入
@@ -76,6 +78,9 @@ class MainWindow(QMainWindow):
         # 连接信号
         self.status_changed.connect(self._on_status_changed)
 
+        # 创建Web服务控制区域
+        self._create_web_service_controls()
+
     def _create_menu_bar(self):
         """创建菜单栏"""
         # 文件菜单
@@ -129,8 +134,28 @@ class MainWindow(QMainWindow):
 
     def _create_tool_bar(self):
         """创建工具栏"""
-        # 暂时禁用工具栏
-        pass
+        # 创建工具栏
+        self.toolbar = QToolBar("主工具栏", self)
+        self.toolbar.setMovable(False)
+        self.addToolBar(Qt.TopToolBarArea, self.toolbar)
+
+        # 添加实例管理按钮
+        manage_action = QAction("实例管理", self)
+        manage_action.triggered.connect(self._manage_instances)
+        self.toolbar.addAction(manage_action)
+
+        # 添加消息监听按钮
+        message_action = QAction("消息监听", self)
+        message_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(1))
+        self.toolbar.addAction(message_action)
+
+        # 添加分隔符
+        self.toolbar.addSeparator()
+
+        # 添加设置按钮
+        settings_action = QAction("设置", self)
+        settings_action.triggered.connect(self._open_settings)
+        self.toolbar.addAction(settings_action)
 
     def _create_tabs(self):
         """创建功能选项卡"""
@@ -259,6 +284,19 @@ class MainWindow(QMainWindow):
 
         if reply == QMessageBox.Yes:
             logger.info("用户请求关闭应用程序")
+
+            # 如果Web服务正在运行，停止它
+            if is_web_service_running():
+                try:
+                    # 创建一个事件循环来运行异步函数
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(stop_web_service())
+                    loop.close()
+                    logger.info("应用程序关闭时停止Web服务")
+                except Exception as e:
+                    logger.error(f"应用程序关闭时停止Web服务失败: {e}")
+
             # 执行清理操作
             event.accept()
         else:
@@ -276,5 +314,278 @@ class MainWindow(QMainWindow):
                 # 刷新UI上的实例列表
                 if hasattr(self, 'instance_panel'):
                     self.instance_panel.refresh_instances()
+
+            # 加载Web服务配置
+            web_config = await config_store.get_config('system', 'web_service', {})
+            if web_config:
+                logger.info(f"加载Web服务配置: {web_config}")
+
+                # 更新Web服务配置
+                config = get_web_service_config()
+
+                # 设置端口号
+                if 'port' in web_config:
+                    config['port'] = web_config['port']
+                    self.port_spinbox.setValue(web_config['port'])
+
+                # 更新Web服务配置
+                set_web_service_config(config)
         except Exception as e:
             logger.error(f"启动时保存配置失败: {str(e)}")
+
+    def _create_web_service_controls(self):
+        """创建Web服务控制区域"""
+        # 创建Web服务控制区域容器
+        web_service_container = QWidget()
+        web_service_layout = QHBoxLayout(web_service_container)
+        web_service_layout.setContentsMargins(5, 0, 5, 0)
+
+        # 创建Web服务控制组
+        web_service_group = QGroupBox("Web管理服务")
+        web_service_group.setStyleSheet("""
+            QGroupBox {
+                border: 1px solid #d0d0d0;
+                border-radius: 4px;
+                margin-top: 0.5em;
+                padding-top: 0.5em;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 3px 0 3px;
+            }
+        """)
+
+        # Web服务控制布局
+        group_layout = QHBoxLayout(web_service_group)
+        group_layout.setContentsMargins(10, 5, 10, 5)
+        group_layout.setSpacing(10)
+
+        # 端口号标签和输入框
+        port_label = QLabel("端口:")
+        group_layout.addWidget(port_label)
+
+        self.port_spinbox = QSpinBox()
+        self.port_spinbox.setRange(1024, 65535)
+        self.port_spinbox.setValue(8443)  # 默认端口
+        self.port_spinbox.setFixedWidth(80)
+        self.port_spinbox.setToolTip("Web服务端口号 (1024-65535)")
+        group_layout.addWidget(self.port_spinbox)
+
+        # 启动/停止按钮
+        self.web_service_btn = QPushButton("启动服务")
+        self.web_service_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1890ff;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #40a9ff;
+            }
+        """)
+        self.web_service_btn.clicked.connect(self._toggle_web_service)
+        group_layout.addWidget(self.web_service_btn)
+
+        # 状态标签
+        self.web_service_status = QLabel("未运行")
+        self.web_service_status.setStyleSheet("color: #f5222d;")  # 红色表示未运行
+        group_layout.addWidget(self.web_service_status)
+
+        # 打开Web界面按钮
+        self.open_web_btn = QPushButton("打开界面")
+        self.open_web_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #52c41a;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #73d13d;
+            }
+            QPushButton:disabled {
+                background-color: #d9d9d9;
+                color: #ffffff;
+            }
+        """)
+        self.open_web_btn.clicked.connect(self._open_web_interface)
+        self.open_web_btn.setEnabled(False)  # 初始状态禁用
+        group_layout.addWidget(self.open_web_btn)
+
+        # 添加到主布局
+        web_service_layout.addWidget(web_service_group)
+
+        # 将Web服务控制区域添加到工具栏
+        self.toolbar.addWidget(web_service_container)
+
+        # 初始化Web服务状态
+        self._update_web_service_status()
+
+        # 从配置中加载端口号
+        self._load_web_service_config()
+
+    def _update_web_service_status(self):
+        """更新Web服务状态显示"""
+        running = is_web_service_running()
+
+        if running:
+            self.web_service_status.setText("运行中")
+            self.web_service_status.setStyleSheet("color: #52c41a;")  # 绿色表示运行中
+            self.web_service_btn.setText("停止服务")
+            self.web_service_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #f5222d;
+                    color: white;
+                    border: none;
+                    padding: 6px 12px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #ff4d4f;
+                }
+            """)
+            self.port_spinbox.setEnabled(False)
+            self.open_web_btn.setEnabled(True)  # 启用打开Web界面按钮
+        else:
+            self.web_service_status.setText("未运行")
+            self.web_service_status.setStyleSheet("color: #f5222d;")  # 红色表示未运行
+            self.web_service_btn.setText("启动服务")
+            self.web_service_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #1890ff;
+                    color: white;
+                    border: none;
+                    padding: 6px 12px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #40a9ff;
+                }
+            """)
+            self.port_spinbox.setEnabled(True)
+            self.open_web_btn.setEnabled(False)  # 禁用打开Web界面按钮
+
+    def _open_web_interface(self):
+        """打开Web管理界面"""
+        if not is_web_service_running():
+            self.status_changed.emit("Web服务未运行，无法打开界面", 3000)
+            return
+
+        try:
+            # 获取当前配置
+            config = get_web_service_config()
+            port = config.get('port', 8443)
+
+            # 构建URL
+            url = f"http://localhost:{port}"
+
+            # 使用系统默认浏览器打开URL
+            import webbrowser
+            webbrowser.open(url)
+
+            self.status_changed.emit(f"已在浏览器中打开Web管理界面: {url}", 3000)
+        except Exception as e:
+            self.status_changed.emit(f"打开Web界面失败: {str(e)}", 3000)
+            logger.error(f"打开Web界面失败: {e}")
+
+    def _load_web_service_config(self):
+        """从配置中加载Web服务配置"""
+        try:
+            # 从配置存储中获取Web服务配置
+            web_config = config_store.get_config_sync('system', 'web_service', {})
+
+            # 如果配置存在，更新Web服务配置
+            if web_config:
+                # 更新Web服务配置
+                config = get_web_service_config()
+
+                # 设置端口号
+                if 'port' in web_config:
+                    config['port'] = web_config['port']
+                    self.port_spinbox.setValue(web_config['port'])
+
+                # 更新Web服务配置
+                set_web_service_config(config)
+            else:
+                # 使用默认配置
+                config = get_web_service_config()
+                self.port_spinbox.setValue(config['port'])
+        except Exception as e:
+            logger.error(f"加载Web服务配置失败: {e}")
+
+    def _toggle_web_service(self):
+        """切换Web服务状态"""
+        running = is_web_service_running()
+
+        if running:
+            # 停止Web服务
+            asyncio.create_task(self._stop_web_service())
+        else:
+            # 启动Web服务
+            port = self.port_spinbox.value()
+            asyncio.create_task(self._start_web_service(port))
+
+    async def _start_web_service(self, port):
+        """
+        启动Web服务
+
+        Args:
+            port: 端口号
+        """
+        try:
+            # 更新配置
+            config = get_web_service_config()
+            config['port'] = port
+            set_web_service_config(config)
+
+            # 保存配置到配置存储
+            await config_store.set_config('system', 'web_service', {'port': port})
+
+            # 启动Web服务
+            try:
+                # 确保配置中不包含debug参数
+                if 'debug' in config:
+                    del config['debug']
+
+                success = await start_web_service(config)
+
+                if success:
+                    self.status_changed.emit(f"Web服务已启动，端口: {port}", 3000)
+                    logger.info(f"Web服务已启动，端口: {port}")
+                else:
+                    self.status_changed.emit("启动Web服务失败", 3000)
+                    logger.error("启动Web服务失败")
+            except Exception as e:
+                import traceback
+                error_msg = f"启动Web服务时出错: {str(e)}\n{traceback.format_exc()}"
+                self.status_changed.emit(f"启动Web服务失败: {str(e)}", 3000)
+                logger.error(error_msg)
+
+            # 更新状态显示
+            self._update_web_service_status()
+        except Exception as e:
+            self.status_changed.emit(f"启动Web服务时出错: {str(e)}", 3000)
+            logger.error(f"启动Web服务时出错: {e}")
+
+    async def _stop_web_service(self):
+        """停止Web服务"""
+        try:
+            # 停止Web服务
+            success = await stop_web_service()
+
+            if success:
+                self.status_changed.emit("Web服务已停止", 3000)
+                logger.info("Web服务已停止")
+            else:
+                self.status_changed.emit("停止Web服务失败", 3000)
+                logger.error("停止Web服务失败")
+
+            # 更新状态显示
+            self._update_web_service_status()
+        except Exception as e:
+            self.status_changed.emit(f"停止Web服务时出错: {str(e)}", 3000)
+            logger.error(f"停止Web服务时出错: {e}")
