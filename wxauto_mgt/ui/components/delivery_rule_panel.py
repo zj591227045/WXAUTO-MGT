@@ -315,7 +315,22 @@ class DeliveryRulePanel(QWidget):
 
         # 聊天匹配
         chat_pattern = rule.get("chat_pattern", "")
-        pattern_item = QTableWidgetItem(chat_pattern)
+        only_at_messages = rule.get("only_at_messages", 0)
+        at_name = rule.get("at_name", "")
+
+        # 构建显示文本，如果启用了@消息设置，则添加标记
+        display_pattern = chat_pattern
+        if only_at_messages == 1 and at_name:
+            # 处理多个@名称的情况
+            if ',' in at_name:
+                at_names = [name.strip() for name in at_name.split(',')]
+                at_display = ', '.join(at_names)
+                display_pattern = f"{chat_pattern} [@{at_display}]"
+            else:
+                display_pattern = f"{chat_pattern} [@{at_name}]"
+
+        pattern_item = QTableWidgetItem(display_pattern)
+
         # 为通配符添加特殊样式
         if chat_pattern == "*":
             pattern_item.setForeground(QColor("#1890ff"))
@@ -324,6 +339,19 @@ class DeliveryRulePanel(QWidget):
         elif chat_pattern.startswith("regex:"):
             pattern_item.setForeground(QColor("#722ed1"))
             pattern_item.setToolTip("正则表达式匹配")
+
+        # 为@消息设置添加特殊样式
+        if only_at_messages == 1:
+            pattern_item.setForeground(QColor("#fa8c16"))  # 橙色
+
+            # 处理多个@名称的情况
+            if ',' in at_name:
+                at_names = [name.strip() for name in at_name.split(',')]
+                at_display = '、'.join(at_names)
+                pattern_item.setToolTip(f"仅响应@{at_display}中任意一个的消息")
+            else:
+                pattern_item.setToolTip(f"仅响应@{at_name}的消息")
+
         self.rule_table.setItem(row, 3, pattern_item)
 
         # 平台
@@ -481,7 +509,9 @@ class DeliveryRulePanel(QWidget):
                 rule_data["instance_id"],
                 rule_data["chat_pattern"],
                 rule_data["platform_id"],
-                rule_data["priority"]
+                rule_data["priority"],
+                rule_data["only_at_messages"],
+                rule_data["at_name"]
             )
 
             if rule_id:
@@ -573,7 +603,9 @@ class DeliveryRulePanel(QWidget):
                 updated_data["instance_id"],
                 updated_data["chat_pattern"],
                 updated_data["platform_id"],
-                updated_data["priority"]
+                updated_data["priority"],
+                updated_data["only_at_messages"],
+                updated_data["at_name"]
             )
 
             if success:

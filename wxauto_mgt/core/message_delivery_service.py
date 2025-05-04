@@ -413,13 +413,17 @@ class MessageDeliveryService:
             file_logger.debug(f"消息 {message_id} 已标记为正在投递")
 
             # 匹配规则
-            file_logger.debug(f"为消息 {message_id} 匹配规则, 实例: {message.get('instance_id')}, 聊天对象: {message.get('chat_name')}")
-            rule = await rule_manager.match_rule(message['instance_id'], message['chat_name'])
+            file_logger.info(f"为消息 {message_id} 匹配规则, 实例: {message.get('instance_id')}, 聊天对象: {message.get('chat_name')}")
+            logger.info(f"为消息 {message_id} 匹配规则, 实例: {message.get('instance_id')}, 聊天对象: {message.get('chat_name')}")
+            # 传递消息内容，用于检查@消息
+            content = message.get('content', '')
+            rule = await rule_manager.match_rule(message['instance_id'], message['chat_name'], content)
             if not rule:
-                file_logger.warning(f"消息 {message_id} 没有匹配的投递规则")
-                logger.warning(f"消息 {message_id} 没有匹配的投递规则")
-                # 标记为投递失败
-                await self._update_message_delivery_status(message_id, 2)
+                file_logger.warning(f"消息 {message_id} 没有匹配的投递规则，将删除该消息")
+                logger.warning(f"消息 {message_id} 没有匹配的投递规则，将删除该消息")
+                # 直接删除消息，而不是标记为已处理
+                delete_result = await self._delete_message(message)
+                logger.info(f"删除消息 {message_id} 结果: {delete_result}")
                 return False
 
             file_logger.info(f"消息 {message_id} 匹配到规则: {rule.get('id')}, 平台: {rule.get('platform_id')}")
@@ -545,7 +549,7 @@ class MessageDeliveryService:
                     # 查找图片或文件类型的消息
                     for merged_id in merged_ids:
                         file_logger.debug(f"查询合并消息: {merged_id}")
-                        merged_messages = await db_manager.fetch_all(
+                        merged_messages = await db_manager.fetchall(
                             "SELECT * FROM messages WHERE message_id = ?",
                             (merged_id,)
                         )
@@ -792,6 +796,52 @@ class MessageDeliveryService:
                 return True
         except Exception as e:
             logger.error(f"标记消息为已处理失败: {e}")
+            return False
+
+    async def _delete_message(self, message: Dict[str, Any]) -> bool:
+        """
+        从数据库中删除消息
+
+        Args:
+            message: 消息数据
+
+        Returns:
+            bool: 是否删除成功
+        """
+        try:
+            message_id = message.get('message_id')
+            if not message_id:
+                logger.error("删除消息失败：消息ID为空")
+                return False
+
+            # 如果是合并消息，删除所有合并的消息
+            if message.get('merged', 0) == 1 and message.get('merged_ids'):
+                try:
+                    merged_ids = json.loads(message['merged_ids'])
+                    for msg_id in merged_ids:
+                        await db_manager.execute(
+                            "DELETE FROM messages WHERE message_id = ?",
+                            (msg_id,)
+                        )
+                    file_logger.info(f"已删除合并消息: {message_id}，包含 {len(merged_ids)} 条子消息")
+                    logger.info(f"已删除合并消息: {message_id}，包含 {len(merged_ids)} 条子消息")
+                except Exception as e:
+                    file_logger.error(f"删除合并消息时出错: {e}")
+                    logger.error(f"删除合并消息时出错: {e}")
+                    # 继续尝试删除主消息
+
+            # 从数据库中删除消息
+            await db_manager.execute(
+                "DELETE FROM messages WHERE message_id = ?",
+                (message_id,)
+            )
+
+            file_logger.info(f"已删除不符合规则的消息: {message_id}")
+            logger.info(f"已删除不符合规则的消息: {message_id}")
+            return True
+        except Exception as e:
+            logger.error(f"删除消息失败: {e}")
+            file_logger.error(f"删除消息失败: {e}")
             return False
 
     async def _update_message_delivery_status(self, message_id: str, status: int,

@@ -746,16 +746,24 @@ class MessageListener:
             str: 保存成功返回消息ID，失败返回空字符串
         """
         try:
+            message_id = message_data.get('message_id', '')
+            instance_id = message_data.get('instance_id', '')
+            chat_name = message_data.get('chat_name', '')
+            content = message_data.get('content', '')
+
+            # 记录详细的消息信息，便于调试
+            logger.info(f"准备保存消息: ID={message_id}, 实例={instance_id}, 聊天={chat_name}, 内容={content[:50]}...")
+
             # 直接检查sender是否为self（不区分大小写）
             sender = message_data.get('sender', '')
             if sender and (sender.lower() == 'self' or sender == 'Self'):
-                logger.debug(f"_save_message直接过滤掉self发送的消息: {message_data.get('message_id', '')}")
+                logger.info(f"_save_message直接过滤掉self发送的消息: {message_id}")
                 return ""  # 返回空字符串表示消息被过滤
 
             # 直接检查消息类型是否为self（不区分大小写）
             msg_type = message_data.get('message_type', '')
             if msg_type and (msg_type.lower() == 'self' or msg_type == 'Self'):
-                logger.debug(f"_save_message直接过滤掉self类型的消息: {message_data.get('message_id', '')}")
+                logger.info(f"_save_message直接过滤掉self类型的消息: {message_id}")
                 return ""  # 返回空字符串表示消息被过滤
 
             # 使用统一的消息过滤模块进行二次检查
@@ -763,7 +771,67 @@ class MessageListener:
 
             # 检查消息是否应该被过滤
             if message_filter.should_filter_message(message_data, log_prefix="保存前"):
+                logger.info(f"消息过滤模块过滤掉消息: {message_id}")
                 return ""  # 返回空字符串表示消息被过滤
+
+            # 检查消息是否符合规则 - 强制检查
+            if instance_id and chat_name:
+                # 导入规则管理器
+                from wxauto_mgt.core.service_platform_manager import rule_manager
+
+                # 获取匹配的规则
+                rule = await rule_manager.match_rule(instance_id, chat_name, content)
+
+                # 如果没有匹配的规则，直接返回
+                if not rule:
+                    logger.info(f"消息没有匹配的规则，不保存: ID={message_id}, 实例={instance_id}, 聊天={chat_name}")
+                    return ""
+
+                # 获取规则ID和优先级
+                rule_id = rule.get('rule_id', '未知')
+                priority = rule.get('priority', 0)
+
+                logger.info(f"匹配到规则: ID={rule_id}, 优先级={priority}, 实例={instance_id}, 聊天={chat_name}")
+
+                # 检查规则是否要求@消息 - 这是针对特定聊天对象的局部设置
+                only_at_messages = rule.get('only_at_messages', 0)
+
+                # 只有当规则明确要求@消息时才进行@规则检查
+                if only_at_messages == 1:
+                    logger.info(f"规则 {rule_id} 要求只响应@消息")
+                    at_name = rule.get('at_name', '')
+
+                    # 如果指定了@名称，检查消息是否包含@名称
+                    if at_name:
+                        # 支持多个@名称，用逗号分隔
+                        at_names = [name.strip() for name in at_name.split(',')]
+                        logger.info(f"规则要求@消息，@名称列表: {at_names}, ID={message_id}, 规则={rule_id}")
+
+                        # 检查消息是否包含任意一个@名称
+                        at_match = False
+                        for name in at_names:
+                            if name and f"@{name}" in content:
+                                at_match = True
+                                logger.info(f"消息匹配到@{name}规则，允许保存: ID={message_id}, 规则={rule_id}")
+                                break
+                            else:
+                                logger.info(f"消息不包含@{name}: ID={message_id}, 规则={rule_id}")
+
+                        # 如果没有匹配到任何@名称，不保存消息
+                        if not at_match:
+                            # 添加"不符合@规则"标记，用于UI过滤
+                            logger.info(f"消息不符合@规则，不保存: ID={message_id}, 规则={rule_id}, 内容={content[:50]}..., 不符合@规则")
+                            return ""
+                    else:
+                        logger.info(f"规则要求@消息但未指定@名称，允许保存: ID={message_id}, 规则={rule_id}")
+                else:
+                    # 规则不要求@消息，直接允许保存
+                    logger.info(f"规则不要求@消息，允许保存: ID={message_id}, 规则={rule_id}")
+            else:
+                logger.warning(f"消息缺少实例ID或聊天名称，无法检查规则: ID={message_id}")
+
+            # 到这里，消息已经通过了所有过滤条件，可以保存到数据库
+            logger.info(f"消息通过所有过滤条件，准备保存到数据库: ID={message_id}")
 
             # 确保包含create_time字段
             if 'create_time' not in message_data:

@@ -165,6 +165,9 @@ class QTextEditLogger(logging.Handler):
             pass  # 允许显示
         # 检查是否是监控到新消息日志（特定格式）
         elif "获取到新消息: 实例=" in msg and "聊天=" in msg and "发送者=" in msg:
+            # 检查是否包含"不符合@规则"标记，如果有则不显示
+            if "不符合@规则" in msg:
+                return
             pass  # 允许显示
         # 其他所有日志都过滤掉
         else:
@@ -198,6 +201,11 @@ class QTextEditLogger(logging.Handler):
                 chat_info = ""
                 sender_info = ""
                 content_info = ""
+                instance_id = ""
+
+                # 检查是否包含"不符合@规则"的标记，如果有则不显示
+                if "不符合@规则" in msg:
+                    return
 
                 for part in parts:
                     if "聊天=" in part:
@@ -206,6 +214,8 @@ class QTextEditLogger(logging.Handler):
                         sender_info = part.split("=")[1]
                     elif "内容=" in part:
                         content_info = part.split("=")[1]
+                    elif "实例=" in part:
+                        instance_id = part.split("=")[1]
 
                 if chat_info:
                     formatted_msg = f"{timestamp} - INFO - 监控到来自于会话\"{chat_info}\"，发送人是\"{sender_info or '未知'}\"的新消息，内容：\"{content_info or ''}\""

@@ -6,6 +6,7 @@
 
 import logging
 import json
+import re
 from typing import Dict, List, Any, Optional, Union
 
 # 配置日志
@@ -13,6 +14,81 @@ logger = logging.getLogger(__name__)
 
 class MessageFilter:
     """消息过滤器，用于过滤掉不需要处理的消息"""
+
+    @staticmethod
+    async def check_at_rule_match(message: Dict[str, Any], instance_id: str, chat_name: str) -> bool:
+        """
+        检查消息是否符合@规则
+
+        Args:
+            message: 消息数据
+            instance_id: 实例ID
+            chat_name: 聊天对象名称
+
+        Returns:
+            bool: 如果符合规则返回True，否则返回False
+        """
+        try:
+            # 导入规则管理器
+            from wxauto_mgt.core.service_platform_manager import rule_manager
+
+            # 获取消息内容
+            content = message.get('content', '')
+            message_id = message.get('message_id', '')
+
+            logger.info(f"检查消息是否符合规则: ID={message_id}, 实例={instance_id}, 聊天={chat_name}, 内容={content[:50]}...")
+
+            # 匹配规则
+            rule = await rule_manager.match_rule(instance_id, chat_name, content)
+
+            # 如果没有匹配的规则，返回False
+            if not rule:
+                logger.info(f"消息没有匹配的规则: ID={message_id}, 实例={instance_id}, 聊天={chat_name}")
+                return False
+
+            # 获取规则ID和优先级
+            rule_id = rule.get('rule_id', '未知')
+            priority = rule.get('priority', 0)
+
+            logger.info(f"匹配到规则: ID={rule_id}, 优先级={priority}, 实例={instance_id}, 聊天={chat_name}")
+
+            # 检查规则是否要求@消息 - 这是针对特定聊天对象的局部设置
+            only_at_messages = rule.get('only_at_messages', 0)
+
+            # 只有当规则明确要求@消息时才进行@规则检查
+            if only_at_messages == 1:
+                logger.info(f"规则 {rule_id} 要求只响应@消息")
+                at_name = rule.get('at_name', '')
+
+                # 如果没有指定@名称，直接返回True
+                if not at_name:
+                    logger.info(f"规则要求@消息但未指定@名称，允许通过: ID={message_id}, 规则={rule_id}")
+                    return True
+
+                # 支持多个@名称，用逗号分隔
+                at_names = [name.strip() for name in at_name.split(',')]
+                logger.info(f"规则要求@消息，@名称列表: {at_names}, ID={message_id}, 规则={rule_id}")
+
+                # 检查消息是否包含任意一个@名称
+                for name in at_names:
+                    if name and f"@{name}" in content:
+                        logger.info(f"消息匹配到@{name}规则，允许通过: ID={message_id}, 规则={rule_id}")
+                        return True
+
+                # 如果没有匹配到任何@名称，返回False
+                # 添加"不符合@规则"标记，用于UI过滤
+                logger.info(f"消息不符合@规则，将被过滤: ID={message_id}, 规则={rule_id}, 内容={content[:50]}..., 不符合@规则")
+                return False
+            else:
+                # 规则不要求@消息，直接返回True
+                logger.info(f"规则不要求@消息，允许通过: ID={message_id}, 规则={rule_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"检查规则匹配时出错: {e}")
+            logger.exception(e)  # 记录完整堆栈
+            # 出错时返回True，避免过滤掉消息
+            return True
 
     @staticmethod
     def should_filter_message(message: Dict[str, Any], log_prefix: str = "") -> bool:

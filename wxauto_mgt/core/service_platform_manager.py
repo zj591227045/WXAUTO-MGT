@@ -609,6 +609,8 @@ class DeliveryRuleManager:
                     platform_id TEXT NOT NULL,
                     priority INTEGER NOT NULL DEFAULT 0,
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    only_at_messages INTEGER NOT NULL DEFAULT 0,
+                    at_name TEXT DEFAULT '',
                     create_time INTEGER NOT NULL,
                     update_time INTEGER NOT NULL,
                     FOREIGN KEY (platform_id) REFERENCES service_platforms (platform_id)
@@ -627,8 +629,40 @@ class DeliveryRuleManager:
                 )
 
                 logger.info("创建delivery_rules表")
+            else:
+                # 表已存在，检查并添加缺失的列
+                await self._ensure_columns()
+
         except Exception as e:
             logger.error(f"确保数据库表存在时出错: {e}")
+            raise
+
+    async def _ensure_columns(self) -> None:
+        """确保表有必要的列"""
+        try:
+            # 获取表结构
+            columns_result = await db_manager.fetchall(
+                "PRAGMA table_info(delivery_rules)"
+            )
+
+            # 转换为列名列表
+            column_names = [col['name'] for col in columns_result]
+
+            # 检查并添加缺失的列
+            if 'only_at_messages' not in column_names:
+                logger.info("添加only_at_messages列到delivery_rules表")
+                await db_manager.execute(
+                    "ALTER TABLE delivery_rules ADD COLUMN only_at_messages INTEGER DEFAULT 0"
+                )
+
+            if 'at_name' not in column_names:
+                logger.info("添加at_name列到delivery_rules表")
+                await db_manager.execute(
+                    "ALTER TABLE delivery_rules ADD COLUMN at_name TEXT DEFAULT ''"
+                )
+
+        except Exception as e:
+            logger.error(f"确保表列存在时出错: {e}")
             raise
 
     async def _load_rules(self) -> None:
@@ -646,7 +680,8 @@ class DeliveryRuleManager:
             raise
 
     async def add_rule(self, name: str, instance_id: str, chat_pattern: str,
-                      platform_id: str, priority: int = 0) -> Optional[str]:
+                      platform_id: str, priority: int = 0, only_at_messages: int = 0,
+                      at_name: str = '') -> Optional[str]:
         """
         添加新规则
 
@@ -656,6 +691,8 @@ class DeliveryRuleManager:
             chat_pattern: 聊天对象匹配模式
             platform_id: 服务平台ID
             priority: 规则优先级
+            only_at_messages: 是否只响应@消息，0-否，1-是
+            at_name: 被@的名称
 
         Returns:
             Optional[str]: 规则ID，如果添加失败则返回None
@@ -687,6 +724,8 @@ class DeliveryRuleManager:
                 'platform_id': platform_id,
                 'priority': priority,
                 'enabled': 1,
+                'only_at_messages': only_at_messages,
+                'at_name': at_name,
                 'create_time': now,
                 'update_time': now
             })
@@ -702,7 +741,8 @@ class DeliveryRuleManager:
             return None
 
     async def update_rule(self, rule_id: str, name: str, instance_id: str,
-                         chat_pattern: str, platform_id: str, priority: int) -> bool:
+                         chat_pattern: str, platform_id: str, priority: int,
+                         only_at_messages: int = 0, at_name: str = '') -> bool:
         """
         更新规则
 
@@ -713,6 +753,8 @@ class DeliveryRuleManager:
             chat_pattern: 聊天对象匹配模式
             platform_id: 服务平台ID
             priority: 规则优先级
+            only_at_messages: 是否只响应@消息，0-否，1-是
+            at_name: 被@的名称
 
         Returns:
             bool: 是否更新成功
@@ -747,10 +789,12 @@ class DeliveryRuleManager:
                 """
                 UPDATE delivery_rules
                 SET name = ?, instance_id = ?, chat_pattern = ?,
-                    platform_id = ?, priority = ?, update_time = ?
+                    platform_id = ?, priority = ?, only_at_messages = ?,
+                    at_name = ?, update_time = ?
                 WHERE rule_id = ?
                 """,
-                (name, instance_id, chat_pattern, platform_id, priority, now, rule_id)
+                (name, instance_id, chat_pattern, platform_id, priority,
+                 only_at_messages, at_name, now, rule_id)
             )
 
             # 重新加载规则
@@ -885,13 +929,14 @@ class DeliveryRuleManager:
 
         return self._rules
 
-    async def match_rule(self, instance_id: str, chat_name: str) -> Optional[Dict[str, Any]]:
+    async def match_rule(self, instance_id: str, chat_name: str, message_content: str = None) -> Optional[Dict[str, Any]]:
         """
         匹配规则
 
         Args:
             instance_id: 实例ID
             chat_name: 聊天对象名称
+            message_content: 消息内容，用于检查@消息
 
         Returns:
             Optional[Dict[str, Any]]: 匹配的规则
@@ -899,38 +944,89 @@ class DeliveryRuleManager:
         if not self._initialized:
             await self.initialize()
 
+        logger.info(f"开始匹配规则: 实例={instance_id}, 聊天={chat_name}, 消息内容={message_content[:50] if message_content else 'None'}...")
+        logger.info(f"当前共有 {len(self._rules)} 条规则")
+
         # 按优先级遍历规则
         for rule in self._rules:
+            rule_id = rule.get('rule_id', '未知')
+            rule_name = rule.get('name', '未知')
+            rule_instance = rule.get('instance_id', '')
+            rule_pattern = rule.get('chat_pattern', '')
+            rule_only_at = rule.get('only_at_messages', 0)
+            rule_at_name = rule.get('at_name', '')
+
+            logger.info(f"检查规则: ID={rule_id}, 名称={rule_name}, 实例={rule_instance}, 模式={rule_pattern}, 只响应@={rule_only_at}, @名称={rule_at_name}")
+
             # 检查实例ID是否匹配
             if rule['instance_id'] != instance_id and rule['instance_id'] != '*':
+                logger.info(f"规则 {rule_id} 实例ID不匹配: 规则={rule_instance}, 当前={instance_id}")
                 continue
 
             # 检查聊天对象是否匹配
             pattern = rule['chat_pattern']
+            is_chat_match = False
 
             # 通配符匹配
             if pattern == '*':
                 # 通配符，匹配所有
-                return rule
+                is_chat_match = True
+                logger.info(f"规则 {rule_id} 使用通配符匹配所有聊天对象")
             # 正则表达式匹配
             elif pattern.startswith('regex:'):
                 regex = pattern[6:]
                 try:
                     if re.match(regex, chat_name):
-                        return rule
+                        is_chat_match = True
+                        logger.info(f"规则 {rule_id} 使用正则表达式匹配成功: {regex}")
+                    else:
+                        logger.info(f"规则 {rule_id} 使用正则表达式匹配失败: {regex}")
                 except Exception as e:
-                    logger.error(f"正则表达式匹配失败: {e}")
+                    logger.error(f"规则 {rule_id} 正则表达式匹配失败: {e}")
             # 逗号分隔的多个精确匹配
             elif ',' in pattern:
                 # 分割并去除空白
                 patterns = [p.strip() for p in pattern.split(',')]
                 if chat_name in patterns:
-                    return rule
+                    is_chat_match = True
+                    logger.info(f"规则 {rule_id} 使用多值列表匹配成功: {chat_name} 在 {patterns} 中")
+                else:
+                    logger.info(f"规则 {rule_id} 使用多值列表匹配失败: {chat_name} 不在 {patterns} 中")
             # 单个精确匹配
             else:
                 if pattern == chat_name:
-                    return rule
+                    is_chat_match = True
+                    logger.info(f"规则 {rule_id} 使用精确匹配成功: {pattern} == {chat_name}")
+                else:
+                    logger.info(f"规则 {rule_id} 使用精确匹配失败: {pattern} != {chat_name}")
 
+            # 如果聊天对象不匹配，继续下一个规则
+            if not is_chat_match:
+                logger.info(f"规则 {rule_id} 聊天对象不匹配，跳过")
+                continue
+            else:
+                logger.info(f"规则 {rule_id} 聊天对象匹配成功")
+
+            # 注意：@消息的检查逻辑已移至 message_filter.py 和 message_listener.py 中
+            # 这里只进行规则匹配，不进行@消息的过滤
+            # 在规则匹配阶段，我们不应该过滤掉任何消息，而是返回匹配的规则
+            # 然后由调用方根据规则中的 only_at_messages 和 at_name 字段决定是否过滤消息
+
+            # 记录规则的@消息设置，但不进行过滤
+            only_at_messages = rule.get('only_at_messages', 0)
+            at_name = rule.get('at_name', '')
+
+            if only_at_messages == 1:
+                logger.info(f"规则 {rule_id} 要求只响应@消息，@名称: {at_name}")
+                # 在调用方进行@消息的过滤，这里只返回匹配的规则
+            else:
+                logger.info(f"规则 {rule_id} 不要求@消息")
+
+            # 所有条件都匹配，返回规则
+            logger.info(f"规则 {rule_id} 匹配成功，返回规则")
+            return rule
+
+        logger.info(f"没有匹配到任何规则: 实例={instance_id}, 聊天={chat_name}")
         return None
 
 

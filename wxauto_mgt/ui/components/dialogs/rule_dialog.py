@@ -23,7 +23,7 @@ from wxauto_mgt.core.api_client import instance_manager
 from wxauto_mgt.utils.logging import get_logger
 from qasync import asyncSlot
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 class AddEditRuleDialog(QDialog):
     """添加/编辑消息转发规则对话框"""
@@ -118,6 +118,38 @@ class AddEditRuleDialog(QDialog):
         pattern_hint = QLabel("支持三种匹配模式：\n1. 精确匹配：输入完整的聊天对象名称，多个对象用逗号分隔\n2. 通配符：输入 * 匹配所有聊天对象\n3. 正则表达式：输入 regex: 开头，后跟正则表达式")
         pattern_hint.setStyleSheet("color: #666666; font-size: 12px;")
         form_layout.addRow("", pattern_hint)
+
+        # 群消息@设置
+        at_group = QGroupBox("群消息@设置:")
+        at_layout = QVBoxLayout(at_group)
+
+        # 仅响应@消息复选框
+        self.only_at_messages_check = QCheckBox("仅响应@的消息")
+        self.only_at_messages_check.setToolTip("勾选后，只有当消息中包含@指定名称时才会处理")
+        self.only_at_messages_check.stateChanged.connect(self._on_only_at_messages_changed)
+        at_layout.addWidget(self.only_at_messages_check)
+
+        # @名称输入框
+        at_name_layout = QHBoxLayout()
+        at_name_layout.setContentsMargins(20, 0, 0, 0)  # 左侧缩进
+
+        at_name_label = QLabel("@名称:")
+        at_name_layout.addWidget(at_name_label)
+
+        self.at_name_edit = QLineEdit()
+        self.at_name_edit.setPlaceholderText("输入被@的名称，多个名称用逗号分隔")
+        # 初始状态下不禁用，让用户可以输入
+        self.at_name_edit.setEnabled(True)
+        at_name_layout.addWidget(self.at_name_edit)
+
+        at_layout.addLayout(at_name_layout)
+
+        # 添加提示标签
+        at_hint = QLabel("注意: 勾选此选项后，聊天对象必须为群聊，且消息内容中必须包含\"@名称\"才会处理\n支持多个@名称，用逗号分隔，消息中包含任意一个名称即可触发")
+        at_hint.setStyleSheet("color: #666666; font-size: 12px;")
+        at_layout.addWidget(at_hint)
+
+        form_layout.addRow("", at_group)
 
         # 服务平台
         self.platform_combo = QComboBox()
@@ -234,6 +266,22 @@ class AddEditRuleDialog(QDialog):
     def _on_instance_scope_changed(self):
         """实例范围选择变化事件"""
         self.instance_combo.setEnabled(self.specific_instance_radio.isChecked())
+
+    def _on_only_at_messages_changed(self, state):
+        """
+        仅响应@消息复选框状态变化事件
+
+        Args:
+            state: 复选框状态
+        """
+        # 获取复选框是否被选中
+        is_checked = self.only_at_messages_check.isChecked()
+
+        # 启用或禁用@名称输入框
+        self.at_name_edit.setEnabled(is_checked)
+
+        # 输出调试信息
+        logger.debug(f"复选框状态变化: {state}, 是否选中: {is_checked}, 输入框是否启用: {self.at_name_edit.isEnabled()}")
 
     def _on_priority_changed(self, value):
         """
@@ -396,6 +444,19 @@ class AddEditRuleDialog(QDialog):
         self.priority_spin.setValue(priority)
         self.priority_slider.setValue(priority)
 
+        # 设置@消息设置
+        only_at_messages = self.rule_data.get("only_at_messages", 0)
+        at_name = self.rule_data.get("at_name", "")
+
+        # 设置@名称
+        self.at_name_edit.setText(at_name)
+
+        # 先启用输入框，以便能够设置文本
+        self.at_name_edit.setEnabled(True)
+
+        # 设置复选框状态 - 这会触发状态变化事件，进而控制输入框的启用状态
+        self.only_at_messages_check.setChecked(only_at_messages == 1)
+
     def get_rule_data(self) -> Dict[str, Any]:
         """
         获取规则数据
@@ -414,13 +475,19 @@ class AddEditRuleDialog(QDialog):
         # 处理聊天对象匹配模式
         chat_pattern = self.chat_pattern_edit.text().strip()
 
+        # 获取@消息设置
+        only_at_messages = 1 if self.only_at_messages_check.isChecked() else 0
+        at_name = self.at_name_edit.text().strip()
+
         # 返回规则数据
         return {
             "name": self.name_edit.text().strip(),
             "instance_id": instance_id,
             "chat_pattern": chat_pattern,
             "platform_id": platform_id,
-            "priority": self.priority_spin.value()
+            "priority": self.priority_spin.value(),
+            "only_at_messages": only_at_messages,
+            "at_name": at_name
         }
 
     def accept(self):
@@ -429,8 +496,8 @@ class AddEditRuleDialog(QDialog):
         if not self._validate_input():
             return
 
-        # 检查规则冲突
-        asyncio.create_task(self._check_rule_conflicts())
+        # 直接保存规则到数据库
+        self._save_rule_to_database()
 
     def _validate_input(self) -> bool:
         """
@@ -463,9 +530,14 @@ class AddEditRuleDialog(QDialog):
             self.instance_combo.setFocus()
             return False
 
+        # 验证@消息设置
+        if self.only_at_messages_check.isChecked() and not self.at_name_edit.text().strip():
+            QMessageBox.warning(self, "错误", "请输入被@的名称")
+            self.at_name_edit.setFocus()
+            return False
+
         return True
 
-    @asyncSlot()
     async def _check_rule_conflicts(self):
         """检查规则冲突"""
         try:
@@ -578,6 +650,148 @@ class AddEditRuleDialog(QDialog):
             logger.error(f"检查规则冲突失败: {e}")
             # 出错时也接受，避免阻塞用户操作
             super().accept()
+
+    def _save_rule_to_database(self):
+        """直接保存规则到数据库"""
+        try:
+            # 获取规则数据
+            rule_data = self.get_rule_data()
+
+            # 获取数据库连接
+            import sqlite3
+            import os
+            import json
+            import time
+            import uuid
+            from ....utils.logging import get_logger
+
+            logger = get_logger(__name__)
+
+            # 获取数据库路径
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+            db_path = os.path.join(base_dir, 'data', 'wxauto_mgt.db')
+
+            # 连接数据库
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # 检查表结构，确保必要的列存在
+            self._ensure_table_columns(cursor)
+
+            # 准备数据
+            now = int(time.time())
+
+            if self.is_edit_mode:
+                # 更新现有规则
+                rule_id = self.rule_data.get("rule_id")
+
+                # 执行更新
+                cursor.execute(
+                    """
+                    UPDATE delivery_rules
+                    SET name = ?, instance_id = ?, chat_pattern = ?, platform_id = ?,
+                        priority = ?, only_at_messages = ?, at_name = ?, update_time = ?
+                    WHERE rule_id = ?
+                    """,
+                    (
+                        rule_data["name"],
+                        rule_data["instance_id"],
+                        rule_data["chat_pattern"],
+                        rule_data["platform_id"],
+                        rule_data["priority"],
+                        1 if rule_data["only_at_messages"] else 0,
+                        rule_data["at_name"],
+                        now,
+                        rule_id
+                    )
+                )
+
+                logger.info(f"更新规则: {rule_data['name']} ({rule_id})")
+            else:
+                # 添加新规则
+                rule_id = f"rule_{uuid.uuid4().hex[:8]}"
+
+                # 执行插入
+                cursor.execute(
+                    """
+                    INSERT INTO delivery_rules
+                    (rule_id, name, instance_id, chat_pattern, platform_id, priority,
+                     enabled, only_at_messages, at_name, create_time, update_time)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rule_id,
+                        rule_data["name"],
+                        rule_data["instance_id"],
+                        rule_data["chat_pattern"],
+                        rule_data["platform_id"],
+                        rule_data["priority"],
+                        1,  # enabled
+                        1 if rule_data["only_at_messages"] else 0,
+                        rule_data["at_name"],
+                        now,
+                        now
+                    )
+                )
+
+                logger.info(f"添加规则: {rule_data['name']} ({rule_id})")
+
+            # 提交事务
+            conn.commit()
+
+            # 关闭数据库连接
+            conn.close()
+
+            # 触发规则管理器重新加载规则
+            from ....core.service_platform_manager import rule_manager
+            import asyncio
+
+            # 创建一个异步任务来重新加载规则
+            def reload_rules():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(rule_manager._load_rules())
+                finally:
+                    loop.close()
+
+            # 在新线程中执行异步任务
+            import threading
+            thread = threading.Thread(target=reload_rules)
+            thread.daemon = True
+            thread.start()
+
+            # 关闭对话框
+            super().accept()
+
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            logger.error(f"保存规则失败: {e}")
+            QMessageBox.warning(self, "错误", f"保存规则失败: {str(e)}")
+
+    def _ensure_table_columns(self, cursor):
+        """确保数据库表有必要的列"""
+        try:
+            # 获取表结构
+            cursor.execute("PRAGMA table_info(delivery_rules)")
+            columns = cursor.fetchall()
+
+            # 转换为列名列表
+            column_names = [col['name'] for col in columns]
+
+            # 检查并添加缺失的列
+            if 'only_at_messages' not in column_names:
+                cursor.execute("ALTER TABLE delivery_rules ADD COLUMN only_at_messages INTEGER DEFAULT 0")
+
+            if 'at_name' not in column_names:
+                cursor.execute("ALTER TABLE delivery_rules ADD COLUMN at_name TEXT DEFAULT ''")
+
+        except Exception as e:
+            from ....utils.logging import get_logger
+            logger = get_logger(__name__)
+            logger.error(f"检查和更新表结构失败: {e}")
+            raise
 
     def _get_instance_name(self, instance_id: str) -> str:
         """
