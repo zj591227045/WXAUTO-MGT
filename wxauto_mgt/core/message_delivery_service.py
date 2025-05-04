@@ -723,11 +723,30 @@ class MessageDeliveryService:
                 logger.warning("消息发送器未初始化，尝试初始化")
                 await message_sender.initialize()
 
+            # 获取平台ID
+            platform_id = message.get('platform_id')
+            message_send_mode = None
+
+            # 如果有平台ID，尝试获取平台的消息发送模式
+            if platform_id:
+                try:
+                    # 获取平台信息
+                    platform = await platform_manager.get_platform(platform_id)
+                    if platform and hasattr(platform, 'message_send_mode'):
+                        message_send_mode = platform.message_send_mode
+                        file_logger.info(f"从平台获取消息发送模式: {message_send_mode}")
+                        logger.info(f"从平台获取消息发送模式: {message_send_mode}")
+                except Exception as e:
+                    file_logger.error(f"获取平台消息发送模式失败: {e}")
+                    logger.error(f"获取平台消息发送模式失败: {e}")
+                    # 继续使用默认模式
+
             # 使用消息发送器发送回复
             result, error_msg = await message_sender.send_message(
                 message['instance_id'],
                 message['chat_name'],
-                reply_content
+                reply_content,
+                message_send_mode
             )
 
             if not result:

@@ -26,6 +26,9 @@ class ServicePlatformManager:
         """初始化服务平台管理器"""
         self._platforms: Dict[str, ServicePlatform] = {}
         self._initialized = False
+        # 添加锁，用于确保并发安全
+        import asyncio
+        self._lock = asyncio.Lock()
 
     async def initialize(self) -> bool:
         """
@@ -129,41 +132,57 @@ class ServicePlatformManager:
         if not self._initialized:
             await self.initialize()
 
-        try:
-            # 生成平台ID
-            platform_id = f"{platform_type}_{uuid.uuid4().hex[:8]}"
+        # 使用锁确保同一时间只有一个注册操作
+        async with self._lock:
+            try:
+                # 生成平台ID
+                platform_id = f"{platform_type}_{uuid.uuid4().hex[:8]}"
+                logger.info(f"开始注册平台: {name} (类型: {platform_type})")
 
-            # 创建平台实例
-            platform = create_platform(platform_type, platform_id, name, config)
-            if not platform:
-                logger.error(f"创建平台实例失败: {name}")
+                # 创建平台实例
+                platform = create_platform(platform_type, platform_id, name, config)
+                if not platform:
+                    logger.error(f"创建平台实例失败: {name}")
+                    return None
+
+                # 初始化平台
+                try:
+                    if not await platform.initialize():
+                        logger.error(f"初始化平台失败: {name}")
+                        return None
+                except Exception as init_error:
+                    logger.error(f"初始化平台时出错: {init_error}")
+                    return None
+
+                # 保存到数据库
+                try:
+                    now = int(time.time())
+                    await db_manager.insert('service_platforms', {
+                        'platform_id': platform_id,
+                        'name': name,
+                        'type': platform_type,
+                        'config': json.dumps(config),
+                        'enabled': 1,
+                        'create_time': now,
+                        'update_time': now
+                    })
+                except Exception as db_error:
+                    logger.error(f"保存平台到数据库时出错: {db_error}")
+                    return None
+
+                # 添加到管理器
+                try:
+                    self._platforms[platform_id] = platform
+                    logger.info(f"注册平台成功: {name} ({platform_id})")
+                    return platform_id
+                except Exception as add_error:
+                    logger.error(f"添加平台到管理器时出错: {add_error}")
+                    return None
+            except Exception as e:
+                logger.error(f"注册平台失败: {e}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
                 return None
-
-            # 初始化平台
-            if not await platform.initialize():
-                logger.error(f"初始化平台失败: {name}")
-                return None
-
-            # 保存到数据库
-            now = int(time.time())
-            await db_manager.insert('service_platforms', {
-                'platform_id': platform_id,
-                'name': name,
-                'type': platform_type,
-                'config': json.dumps(config),
-                'enabled': 1,
-                'create_time': now,
-                'update_time': now
-            })
-
-            # 添加到管理器
-            self._platforms[platform_id] = platform
-            logger.info(f"注册平台: {name} ({platform_id})")
-
-            return platform_id
-        except Exception as e:
-            logger.error(f"注册平台失败: {e}")
-            return None
 
     async def get_platform(self, platform_id: str) -> Optional[ServicePlatform]:
         """
@@ -207,6 +226,88 @@ class ServicePlatformManager:
         if not self._initialized:
             await self.initialize()
 
+        # 使用锁确保同一时间只有一个更新操作
+        async with self._lock:
+            try:
+                logger.info(f"开始更新平台: {platform_id}")
+
+                # 检查平台是否存在
+                platform_data = await db_manager.fetchone(
+                    "SELECT * FROM service_platforms WHERE platform_id = ?",
+                    (platform_id,)
+                )
+
+                if not platform_data:
+                    logger.error(f"平台不存在: {platform_id}")
+                    return False
+
+                # 创建新的平台实例
+                platform = create_platform(
+                    platform_data['type'],
+                    platform_id,
+                    name,
+                    config
+                )
+
+                if not platform:
+                    logger.error(f"创建平台实例失败: {name}")
+                    return False
+
+                # 初始化平台
+                try:
+                    if not await platform.initialize():
+                        logger.error(f"初始化平台失败: {name}")
+                        return False
+                except Exception as init_error:
+                    logger.error(f"初始化平台时出错: {init_error}")
+                    return False
+
+                # 更新数据库
+                try:
+                    now = int(time.time())
+                    await db_manager.execute(
+                        """
+                        UPDATE service_platforms
+                        SET name = ?, config = ?, update_time = ?
+                        WHERE platform_id = ?
+                        """,
+                        (name, json.dumps(config), now, platform_id)
+                    )
+                except Exception as db_error:
+                    logger.error(f"更新数据库时出错: {db_error}")
+                    return False
+
+                # 更新管理器
+                try:
+                    self._platforms[platform_id] = platform
+                    logger.info(f"更新平台成功: {name} ({platform_id})")
+                    return True
+                except Exception as update_error:
+                    logger.error(f"更新平台管理器时出错: {update_error}")
+                    return False
+            except Exception as e:
+                logger.error(f"更新平台失败: {e}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
+                return False
+
+    async def update_platform_simple(self, platform_id: str, name: str, config: Dict[str, Any]) -> bool:
+        """
+        简单更新服务平台配置
+
+        这个方法只更新数据库中的配置，不使用锁。
+        适用于UI线程调用，避免任务嵌套问题。
+
+        更新后会自动重新加载平台实例，无需重启应用。
+
+        Args:
+            platform_id: 平台ID
+            name: 平台名称
+            config: 平台配置
+
+        Returns:
+            bool: 是否更新成功
+        """
         try:
             # 检查平台是否存在
             platform_data = await db_manager.fetchone(
@@ -218,24 +319,7 @@ class ServicePlatformManager:
                 logger.error(f"平台不存在: {platform_id}")
                 return False
 
-            # 创建新的平台实例
-            platform = create_platform(
-                platform_data['type'],
-                platform_id,
-                name,
-                config
-            )
-
-            if not platform:
-                logger.error(f"创建平台实例失败: {name}")
-                return False
-
-            # 初始化平台
-            if not await platform.initialize():
-                logger.error(f"初始化平台失败: {name}")
-                return False
-
-            # 更新数据库
+            # 直接更新数据库
             now = int(time.time())
             await db_manager.execute(
                 """
@@ -246,13 +330,34 @@ class ServicePlatformManager:
                 (name, json.dumps(config), now, platform_id)
             )
 
-            # 更新管理器
-            self._platforms[platform_id] = platform
-            logger.info(f"更新平台: {name} ({platform_id})")
+            # 重新加载平台实例
+            try:
+                # 创建新的平台实例
+                platform = create_platform(
+                    platform_data['type'],
+                    platform_id,
+                    name,
+                    config
+                )
 
+                if platform:
+                    # 初始化平台
+                    await platform.initialize()
+
+                    # 更新管理器中的平台实例
+                    self._platforms[platform_id] = platform
+                    logger.info(f"重新加载平台实例成功: {name} ({platform_id})")
+                else:
+                    logger.warning(f"创建平台实例失败，但数据库已更新: {name} ({platform_id})")
+            except Exception as reload_error:
+                logger.warning(f"重新加载平台实例失败，但数据库已更新: {reload_error}")
+
+            logger.info(f"简单更新平台配置成功: {name} ({platform_id})")
             return True
         except Exception as e:
-            logger.error(f"更新平台失败: {e}")
+            logger.error(f"简单更新平台配置失败: {e}")
+            import traceback
+            logger.error(f"异常堆栈: {traceback.format_exc()}")
             return False
 
     async def delete_platform(self, platform_id: str) -> bool:
@@ -268,6 +373,71 @@ class ServicePlatformManager:
         if not self._initialized:
             await self.initialize()
 
+        # 使用锁确保同一时间只有一个删除操作
+        async with self._lock:
+            try:
+                logger.info(f"开始删除平台: {platform_id}")
+
+                # 检查平台是否存在
+                platform_data = await db_manager.fetchone(
+                    "SELECT * FROM service_platforms WHERE platform_id = ?",
+                    (platform_id,)
+                )
+
+                if not platform_data:
+                    logger.error(f"平台不存在: {platform_id}")
+                    return False
+
+                # 检查是否有规则使用该平台
+                rules = await db_manager.fetchall(
+                    "SELECT * FROM delivery_rules WHERE platform_id = ?",
+                    (platform_id,)
+                )
+
+                if rules:
+                    logger.error(f"平台 {platform_id} 被 {len(rules)} 个规则使用，无法删除")
+                    return False
+
+                # 从数据库删除
+                try:
+                    await db_manager.execute(
+                        "DELETE FROM service_platforms WHERE platform_id = ?",
+                        (platform_id,)
+                    )
+                except Exception as db_error:
+                    logger.error(f"从数据库删除平台时出错: {db_error}")
+                    return False
+
+                # 从管理器删除
+                try:
+                    if platform_id in self._platforms:
+                        del self._platforms[platform_id]
+                    logger.info(f"删除平台成功: {platform_id}")
+                    return True
+                except Exception as del_error:
+                    logger.error(f"从管理器删除平台时出错: {del_error}")
+                    return False
+            except Exception as e:
+                logger.error(f"删除平台失败: {e}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
+                return False
+
+    async def delete_platform_simple(self, platform_id: str) -> bool:
+        """
+        简单删除服务平台
+
+        这个方法只从数据库中删除平台，不使用锁。
+        适用于UI线程调用，避免任务嵌套问题。
+
+        删除后会自动从内存中移除平台实例，无需重启应用。
+
+        Args:
+            platform_id: 平台ID
+
+        Returns:
+            bool: 是否删除成功
+        """
         try:
             # 检查平台是否存在
             platform_data = await db_manager.fetchone(
@@ -289,21 +459,26 @@ class ServicePlatformManager:
                 logger.error(f"平台 {platform_id} 被 {len(rules)} 个规则使用，无法删除")
                 return False
 
-            # 从数据库删除
+            # 直接从数据库删除
             await db_manager.execute(
                 "DELETE FROM service_platforms WHERE platform_id = ?",
                 (platform_id,)
             )
 
-            # 从管理器删除
-            if platform_id in self._platforms:
-                del self._platforms[platform_id]
+            # 从内存中移除平台实例
+            try:
+                if platform_id in self._platforms:
+                    del self._platforms[platform_id]
+                    logger.info(f"从内存中移除平台实例成功: {platform_id}")
+            except Exception as remove_error:
+                logger.warning(f"从内存中移除平台实例失败，但数据库已更新: {remove_error}")
 
-            logger.info(f"删除平台: {platform_id}")
-
+            logger.info(f"简单删除平台成功: {platform_id}")
             return True
         except Exception as e:
-            logger.error(f"删除平台失败: {e}")
+            logger.error(f"简单删除平台失败: {e}")
+            import traceback
+            logger.error(f"异常堆栈: {traceback.format_exc()}")
             return False
 
     async def enable_platform(self, platform_id: str, enabled: bool) -> bool:
@@ -320,53 +495,66 @@ class ServicePlatformManager:
         if not self._initialized:
             await self.initialize()
 
-        try:
-            # 检查平台是否存在
-            platform_data = await db_manager.fetchone(
-                "SELECT * FROM service_platforms WHERE platform_id = ?",
-                (platform_id,)
-            )
+        # 使用锁确保同一时间只有一个启用/禁用操作
+        async with self._lock:
+            try:
+                logger.info(f"开始{'启用' if enabled else '禁用'}平台: {platform_id}")
 
-            if not platform_data:
-                logger.error(f"平台不存在: {platform_id}")
-                return False
+                # 检查平台是否存在
+                platform_data = await db_manager.fetchone(
+                    "SELECT * FROM service_platforms WHERE platform_id = ?",
+                    (platform_id,)
+                )
 
-            # 更新数据库
-            now = int(time.time())
-            await db_manager.execute(
-                """
-                UPDATE service_platforms
-                SET enabled = ?, update_time = ?
-                WHERE platform_id = ?
-                """,
-                (1 if enabled else 0, now, platform_id)
-            )
+                if not platform_data:
+                    logger.error(f"平台不存在: {platform_id}")
+                    return False
 
-            # 更新管理器
-            if enabled:
-                if platform_id not in self._platforms:
-                    # 重新加载平台
-                    config = json.loads(platform_data['config'])
-                    platform = create_platform(
-                        platform_data['type'],
-                        platform_id,
-                        platform_data['name'],
-                        config
+                # 更新数据库
+                try:
+                    now = int(time.time())
+                    await db_manager.execute(
+                        """
+                        UPDATE service_platforms
+                        SET enabled = ?, update_time = ?
+                        WHERE platform_id = ?
+                        """,
+                        (1 if enabled else 0, now, platform_id)
                     )
+                except Exception as db_error:
+                    logger.error(f"更新数据库时出错: {db_error}")
+                    return False
 
-                    if platform:
-                        await platform.initialize()
-                        self._platforms[platform_id] = platform
-            else:
-                if platform_id in self._platforms:
-                    del self._platforms[platform_id]
+                # 更新管理器
+                try:
+                    if enabled:
+                        if platform_id not in self._platforms:
+                            # 重新加载平台
+                            config = json.loads(platform_data['config'])
+                            platform = create_platform(
+                                platform_data['type'],
+                                platform_id,
+                                platform_data['name'],
+                                config
+                            )
 
-            logger.info(f"{'启用' if enabled else '禁用'}平台: {platform_id}")
+                            if platform:
+                                await platform.initialize()
+                                self._platforms[platform_id] = platform
+                    else:
+                        if platform_id in self._platforms:
+                            del self._platforms[platform_id]
 
-            return True
-        except Exception as e:
-            logger.error(f"{'启用' if enabled else '禁用'}平台失败: {e}")
-            return False
+                    logger.info(f"{'启用' if enabled else '禁用'}平台成功: {platform_id}")
+                    return True
+                except Exception as update_error:
+                    logger.error(f"更新管理器时出错: {update_error}")
+                    return False
+            except Exception as e:
+                logger.error(f"{'启用' if enabled else '禁用'}平台失败: {e}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
+                return False
 
 
 class DeliveryRuleManager:

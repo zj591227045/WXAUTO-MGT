@@ -38,6 +38,8 @@ class ServicePlatform(ABC):
         self.name = name
         self.config = config
         self._initialized = False
+        # 消息发送模式：normal(普通模式)或typing(打字机模式)，默认为normal
+        self.message_send_mode = config.get('message_send_mode', 'normal')
 
     @abstractmethod
     async def initialize(self) -> bool:
@@ -129,6 +131,7 @@ class DifyPlatform(ServicePlatform):
         self.api_key = config.get('api_key', '')
         self.conversation_id = config.get('conversation_id', '')
         self.user_id = config.get('user_id', 'default_user')
+        # 消息发送模式已在父类中初始化
 
     async def initialize(self) -> bool:
         """
@@ -565,6 +568,7 @@ class OpenAIPlatform(ServicePlatform):
         self.temperature = config.get('temperature', 0.7)
         self.system_prompt = config.get('system_prompt', '你是一个有用的助手。')
         self.max_tokens = config.get('max_tokens', 1000)
+        # 消息发送模式已在父类中初始化
 
     async def initialize(self) -> bool:
         """

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFormLayout, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QTabWidget, QTextEdit, QDialogButtonBox, QWidget,
-    QMessageBox, QGroupBox
+    QMessageBox, QGroupBox, QRadioButton
 )
 
 from wxauto_mgt.core.service_platform_manager import platform_manager
@@ -76,6 +76,20 @@ class AddEditPlatformDialog(QDialog):
         self.type_combo.currentIndexChanged.connect(self._on_type_changed)
         self.type_combo.setMinimumWidth(300)  # 设置最小宽度
         form_layout.addRow("平台类型:", self.type_combo)
+
+        # 消息发送模式
+        self.message_send_mode_group = QGroupBox("消息发送模式")
+        message_send_mode_layout = QHBoxLayout()
+
+        self.normal_mode_radio = QRadioButton("普通模式")
+        self.typing_mode_radio = QRadioButton("打字机模式")
+        self.normal_mode_radio.setChecked(True)  # 默认选择普通模式
+
+        message_send_mode_layout.addWidget(self.normal_mode_radio)
+        message_send_mode_layout.addWidget(self.typing_mode_radio)
+        self.message_send_mode_group.setLayout(message_send_mode_layout)
+
+        form_layout.addRow("", self.message_send_mode_group)
 
         main_layout.addLayout(form_layout)
 
@@ -224,6 +238,13 @@ class AddEditPlatformDialog(QDialog):
         # 获取配置
         config = self.platform_data.get("config", {})
 
+        # 加载消息发送模式
+        message_send_mode = config.get("message_send_mode", "normal")
+        if message_send_mode == "typing":
+            self.typing_mode_radio.setChecked(True)
+        else:
+            self.normal_mode_radio.setChecked(True)
+
         # 根据平台类型加载配置
         if platform_type == "dify":
             self.dify_api_base.setText(config.get("api_base", ""))
@@ -251,12 +272,16 @@ class AddEditPlatformDialog(QDialog):
         # 获取配置
         config = {}
 
+        # 获取消息发送模式
+        message_send_mode = "typing" if self.typing_mode_radio.isChecked() else "normal"
+
         if platform_type == "dify":
             config = {
                 "api_base": self.dify_api_base.text().strip(),
                 "api_key": self.dify_api_key.text().strip(),
                 "conversation_id": self.dify_conversation_id.text().strip(),
-                "user_id": self.dify_user_id.text().strip() or "default_user"
+                "user_id": self.dify_user_id.text().strip() or "default_user",
+                "message_send_mode": message_send_mode
             }
         else:  # openai
             config = {
@@ -265,7 +290,8 @@ class AddEditPlatformDialog(QDialog):
                 "model": self.openai_model.text().strip() or "gpt-3.5-turbo",
                 "temperature": self.openai_temperature.value(),
                 "system_prompt": self.openai_system_prompt.toPlainText().strip() or "你是一个有用的助手。",
-                "max_tokens": self.openai_max_tokens.value()
+                "max_tokens": self.openai_max_tokens.value(),
+                "message_send_mode": message_send_mode
             }
 
         # 返回平台数据

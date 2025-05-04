@@ -34,7 +34,7 @@ class MessageSender:
         self._initialized = True
         logger.info("消息发送器初始化完成")
 
-    async def send_message(self, instance_id: str, chat_name: str, content: str) -> Tuple[bool, str]:
+    async def send_message(self, instance_id: str, chat_name: str, content: str, message_send_mode: str = None) -> Tuple[bool, str]:
         """
         发送消息到微信实例
 
@@ -42,6 +42,7 @@ class MessageSender:
             instance_id: 实例ID
             chat_name: 聊天对象名称
             content: 消息内容
+            message_send_mode: 消息发送模式，可选值为"normal"或"typing"，默认为None（使用平台配置）
 
         Returns:
             Tuple[bool, str]: (是否成功, 错误信息)
@@ -60,11 +61,46 @@ class MessageSender:
             logger.error(error_msg)
             return False, error_msg
 
+        # 如果未指定消息发送模式，尝试从消息来源的平台获取
+        if message_send_mode is None:
+            try:
+                # 查询消息对应的平台ID
+                message_platform = await db_manager.fetchone(
+                    "SELECT platform_id FROM messages WHERE instance_id = ? AND chat_name = ? ORDER BY create_time DESC LIMIT 1",
+                    (instance_id, chat_name)
+                )
+
+                if message_platform and message_platform.get('platform_id'):
+                    platform_id = message_platform.get('platform_id')
+                    # 查询平台配置
+                    platform_data = await db_manager.fetchone(
+                        "SELECT config FROM service_platforms WHERE platform_id = ?",
+                        (platform_id,)
+                    )
+
+                    if platform_data and platform_data.get('config'):
+                        try:
+                            config = json.loads(platform_data.get('config'))
+                            message_send_mode = config.get('message_send_mode', 'normal')
+                            logger.info(f"从平台配置获取消息发送模式: {message_send_mode}")
+                        except Exception as e:
+                            logger.error(f"解析平台配置失败: {e}")
+                            message_send_mode = 'normal'  # 默认使用普通模式
+            except Exception as e:
+                logger.error(f"获取平台配置失败: {e}")
+                message_send_mode = 'normal'  # 默认使用普通模式
+
+        # 如果仍未确定发送模式，使用默认值
+        if message_send_mode is None:
+            message_send_mode = 'normal'
+
+        logger.info(f"使用消息发送模式: {message_send_mode}")
+
         # 尝试发送消息
         for attempt in range(self._retry_count):
             try:
                 # 直接调用API发送消息
-                result = await self._send_via_direct_api(instance, chat_name, content)
+                result = await self._send_via_direct_api(instance, chat_name, content, message_send_mode)
                 if result[0]:
                     return True, "发送成功"
 
@@ -92,8 +128,19 @@ class MessageSender:
             logger.error(f"通过API客户端发送消息时发生异常: {e}")
             return False, f"API客户端异常: {str(e)}"
 
-    async def _send_via_direct_api(self, instance: Dict, chat_name: str, content: str) -> Tuple[bool, str]:
-        """直接调用API发送消息"""
+    async def _send_via_direct_api(self, instance: Dict, chat_name: str, content: str, message_send_mode: str = "normal") -> Tuple[bool, str]:
+        """
+        直接调用API发送消息
+
+        Args:
+            instance: 实例信息
+            chat_name: 聊天对象名称
+            content: 消息内容
+            message_send_mode: 消息发送模式，可选值为"normal"或"typing"，默认为"normal"
+
+        Returns:
+            Tuple[bool, str]: (是否成功, 错误信息)
+        """
         try:
             base_url = instance.get("base_url", "").rstrip("/")
             api_key = instance.get("api_key", "")
@@ -101,8 +148,14 @@ class MessageSender:
             if not base_url or not api_key:
                 return False, "实例配置不完整，缺少base_url或api_key"
 
-            # 构建API请求
-            url = f"{base_url}/api/chat-window/message/send-typing"
+            # 根据消息发送模式选择API端点
+            if message_send_mode == "typing":
+                url = f"{base_url}/api/chat-window/message/send-typing"
+                logger.info(f"使用打字机模式发送消息: {chat_name}")
+            else:
+                url = f"{base_url}/api/chat-window/message/send"
+                logger.info(f"使用普通模式发送消息: {chat_name}")
+
             headers = {
                 "X-API-Key": api_key,
                 "Content-Type": "application/json",
