@@ -352,7 +352,47 @@ class MessageListener:
                             display_sender = sender_remark if sender_remark else sender
                             # 截断内容，避免日志过长
                             short_content = content[:50] + "..." if len(content) > 50 else content
-                            logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
+
+                            # 检查消息是否符合@规则
+                            from wxauto_mgt.core.message_filter import message_filter
+                            from wxauto_mgt.core.service_platform_manager import rule_manager
+
+                            # 获取匹配的规则
+                            rule = await rule_manager.match_rule(instance_id, who, content)
+
+                            # 检查是否需要@规则过滤
+                            is_at_rule_filtered = False
+                            if rule:
+                                # 获取规则ID，但不使用它，只是为了避免IDE警告
+                                _ = rule.get('rule_id', '未知')
+                                only_at_messages = rule.get('only_at_messages', 0)
+
+                                if only_at_messages == 1:
+                                    at_name = rule.get('at_name', '')
+                                    if at_name:
+                                        # 支持多个@名称，用逗号分隔
+                                        at_names = [name.strip() for name in at_name.split(',')]
+
+                                        # 检查消息是否包含任意一个@名称
+                                        at_match = False
+                                        for name in at_names:
+                                            if name and f"@{name}" in content:
+                                                at_match = True
+                                                break
+
+                                        # 如果没有匹配到任何@名称，标记为不符合规则
+                                        if not at_match:
+                                            is_at_rule_filtered = True
+
+                            # 根据是否符合@规则记录不同的日志 - 只记录一条日志
+                            if is_at_rule_filtered:
+                                # 只记录一条带有[不符合消息转发规则]标记的日志
+                                logger.info(f"监控到来自于会话\"{who}\"，发送人是\"{display_sender}\"的新消息，内容：\"{short_content}\" [不符合消息转发规则]")
+
+                                # 重要：将这条消息从filtered_messages中移除，避免后续处理
+                                filtered_messages.remove(msg)
+                            else:
+                                logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
 
                         # 保存消息到数据库
                         for msg in filtered_messages:
@@ -661,7 +701,47 @@ class MessageListener:
                             display_sender = sender_remark if sender_remark else sender
                             # 截断内容，避免日志过长
                             short_content = content[:50] + "..." if len(content) > 50 else content
-                            logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
+
+                            # 检查消息是否符合@规则
+                            from wxauto_mgt.core.message_filter import message_filter
+                            from wxauto_mgt.core.service_platform_manager import rule_manager
+
+                            # 获取匹配的规则
+                            rule = await rule_manager.match_rule(instance_id, who, content)
+
+                            # 检查是否需要@规则过滤
+                            is_at_rule_filtered = False
+                            if rule:
+                                # 获取规则ID，但不使用它，只是为了避免IDE警告
+                                _ = rule.get('rule_id', '未知')
+                                only_at_messages = rule.get('only_at_messages', 0)
+
+                                if only_at_messages == 1:
+                                    at_name = rule.get('at_name', '')
+                                    if at_name:
+                                        # 支持多个@名称，用逗号分隔
+                                        at_names = [name.strip() for name in at_name.split(',')]
+
+                                        # 检查消息是否包含任意一个@名称
+                                        at_match = False
+                                        for name in at_names:
+                                            if name and f"@{name}" in content:
+                                                at_match = True
+                                                break
+
+                                        # 如果没有匹配到任何@名称，标记为不符合规则
+                                        if not at_match:
+                                            is_at_rule_filtered = True
+
+                            # 根据是否符合@规则记录不同的日志 - 只记录一条日志
+                            if is_at_rule_filtered:
+                                # 只记录一条带有[不符合消息转发规则]标记的日志
+                                logger.info(f"监控到来自于会话\"{who}\"，发送人是\"{display_sender}\"的新消息，内容：\"{short_content}\" [不符合消息转发规则]")
+
+                                # 重要：将这条消息从filtered_messages中移除，避免后续处理
+                                filtered_messages.remove(msg)
+                            else:
+                                logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
 
                         async with self._lock:
                             if instance_id in self.listeners and who in self.listeners[instance_id]:
@@ -819,8 +899,8 @@ class MessageListener:
 
                         # 如果没有匹配到任何@名称，不保存消息
                         if not at_match:
-                            # 添加"不符合@规则"标记，用于UI过滤
-                            logger.info(f"消息不符合@规则，不保存: ID={message_id}, 规则={rule_id}, 内容={content[:50]}..., 不符合@规则")
+                            # 添加"不符合消息转发规则"标记，用于UI显示
+                            logger.info(f"消息不符合@规则，不保存: ID={message_id}, 规则={rule_id}, 实例={instance_id}, 聊天={chat_name}, 内容={content[:50]}..., [不符合消息转发规则]")
                             return ""
                     else:
                         logger.info(f"规则要求@消息但未指定@名称，允许保存: ID={message_id}, 规则={rule_id}")
@@ -1120,7 +1200,47 @@ class MessageListener:
                         display_sender = sender_remark if sender_remark else sender
                         # 截断内容，避免日志过长
                         short_content = content[:50] + "..." if len(content) > 50 else content
-                        logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
+
+                        # 检查消息是否符合@规则
+                        from wxauto_mgt.core.message_filter import message_filter
+                        from wxauto_mgt.core.service_platform_manager import rule_manager
+
+                        # 获取匹配的规则
+                        rule = await rule_manager.match_rule(instance_id, who, content)
+
+                        # 检查是否需要@规则过滤
+                        is_at_rule_filtered = False
+                        if rule:
+                            # 获取规则ID，但不使用它，只是为了避免IDE警告
+                            _ = rule.get('rule_id', '未知')
+                            only_at_messages = rule.get('only_at_messages', 0)
+
+                            if only_at_messages == 1:
+                                at_name = rule.get('at_name', '')
+                                if at_name:
+                                    # 支持多个@名称，用逗号分隔
+                                    at_names = [name.strip() for name in at_name.split(',')]
+
+                                    # 检查消息是否包含任意一个@名称
+                                    at_match = False
+                                    for name in at_names:
+                                        if name and f"@{name}" in content:
+                                            at_match = True
+                                            break
+
+                                    # 如果没有匹配到任何@名称，标记为不符合规则
+                                    if not at_match:
+                                        is_at_rule_filtered = True
+
+                        # 根据是否符合@规则记录不同的日志 - 只记录一条日志
+                        if is_at_rule_filtered:
+                            # 只记录一条带有[不符合消息转发规则]标记的日志
+                            logger.info(f"监控到来自于会话\"{who}\"，发送人是\"{display_sender}\"的新消息，内容：\"{short_content}\" [不符合消息转发规则]")
+
+                            # 重要：将这条消息从filtered_messages中移除，避免后续处理
+                            filtered_messages.remove(msg)
+                        else:
+                            logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
 
                     async with self._lock:
                         if instance_id in self.listeners and who in self.listeners[instance_id]:
@@ -1315,7 +1435,47 @@ class MessageListener:
                         display_sender = sender_remark if sender_remark else sender
                         # 截断内容，避免日志过长
                         short_content = content[:50] + "..." if len(content) > 50 else content
-                        logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
+
+                        # 检查消息是否符合@规则
+                        from wxauto_mgt.core.message_filter import message_filter
+                        from wxauto_mgt.core.service_platform_manager import rule_manager
+
+                        # 获取匹配的规则
+                        rule = await rule_manager.match_rule(instance_id, who, content)
+
+                        # 检查是否需要@规则过滤
+                        is_at_rule_filtered = False
+                        if rule:
+                            # 获取规则ID，但不使用它，只是为了避免IDE警告
+                            _ = rule.get('rule_id', '未知')
+                            only_at_messages = rule.get('only_at_messages', 0)
+
+                            if only_at_messages == 1:
+                                at_name = rule.get('at_name', '')
+                                if at_name:
+                                    # 支持多个@名称，用逗号分隔
+                                    at_names = [name.strip() for name in at_name.split(',')]
+
+                                    # 检查消息是否包含任意一个@名称
+                                    at_match = False
+                                    for name in at_names:
+                                        if name and f"@{name}" in content:
+                                            at_match = True
+                                            break
+
+                                    # 如果没有匹配到任何@名称，标记为不符合规则
+                                    if not at_match:
+                                        is_at_rule_filtered = True
+
+                        # 根据是否符合@规则记录不同的日志 - 只记录一条日志
+                        if is_at_rule_filtered:
+                            # 只记录一条带有[不符合消息转发规则]标记的日志
+                            logger.info(f"监控到来自于会话\"{who}\"，发送人是\"{display_sender}\"的新消息，内容：\"{short_content}\" [不符合消息转发规则]")
+
+                            # 重要：将这条消息从filtered_messages中移除，避免后续处理
+                            filtered_messages.remove(msg)
+                        else:
+                            logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
 
                     async with self._lock:
                         if instance_id in self.listeners and who in self.listeners[instance_id]:

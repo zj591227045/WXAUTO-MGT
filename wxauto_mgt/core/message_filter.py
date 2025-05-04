@@ -76,8 +76,9 @@ class MessageFilter:
                         return True
 
                 # 如果没有匹配到任何@名称，返回False
-                # 添加"不符合@规则"标记，用于UI过滤
-                logger.info(f"消息不符合@规则，将被过滤: ID={message_id}, 规则={rule_id}, 内容={content[:50]}..., 不符合@规则")
+                # 添加"不符合@规则"标记，用于UI显示
+                # 使用特殊格式，便于UI识别并特殊处理
+                logger.info(f"消息不符合@规则，将被过滤: ID={message_id}, 规则={rule_id}, 实例={instance_id}, 聊天={chat_name}, 内容={content[:50]}..., [不符合消息转发规则]")
                 return False
             else:
                 # 规则不要求@消息，直接返回True

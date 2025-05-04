@@ -165,10 +165,10 @@ class QTextEditLogger(logging.Handler):
             pass  # 允许显示
         # 检查是否是监控到新消息日志（特定格式）
         elif "获取到新消息: 实例=" in msg and "聊天=" in msg and "发送者=" in msg:
-            # 检查是否包含"不符合@规则"标记，如果有则不显示
-            if "不符合@规则" in msg:
-                return
             pass  # 允许显示
+        # 检查是否是不符合@规则的消息（特殊标记）- 直接过滤掉，不显示
+        elif "[不符合消息转发规则]" in msg:
+            return  # 不显示不符合规则的消息
         # 其他所有日志都过滤掉
         else:
             return
@@ -193,8 +193,8 @@ class QTextEditLogger(logging.Handler):
         # 特殊处理三类关键信息
         timestamp = datetime.now().strftime('%H:%M:%S')
 
-        # 1. 监控到新消息
-        if "获取到新消息: 实例=" in msg and "聊天=" in msg and "发送者=" in msg:
+        # 1. 监控到新消息 - 支持两种格式
+        if ("获取到新消息: 实例=" in msg and "聊天=" in msg and "发送者=" in msg) or "监控到来自于会话" in msg:
             try:
                 # 提取会话名称和发送人
                 parts = msg.split(", ")
@@ -203,23 +203,49 @@ class QTextEditLogger(logging.Handler):
                 content_info = ""
                 instance_id = ""
 
-                # 检查是否包含"不符合@规则"的标记，如果有则不显示
-                if "不符合@规则" in msg:
-                    return
+                # 检查是否包含"不符合消息转发规则"的标记，如果有则特殊处理
+                is_not_match_rule = "[不符合消息转发规则]" in msg
 
-                for part in parts:
-                    if "聊天=" in part:
-                        chat_info = part.split("=")[1]
-                    elif "发送者=" in part:
-                        sender_info = part.split("=")[1]
-                    elif "内容=" in part:
-                        content_info = part.split("=")[1]
-                    elif "实例=" in part:
-                        instance_id = part.split("=")[1]
+                # 检查是否是新格式的日志（直接包含会话和发送人信息）
+                if "监控到来自于会话" in msg:
+                    # 新格式: "监控到来自于会话"测试test"，发送人是"张杰"的新消息，内容："@客服 今天要去买玉米淀粉" [不符合消息转发规则]"
+                    try:
+                        # 提取会话名称
+                        chat_match = re.search(r'监控到来自于会话"([^"]+)"', msg)
+                        if chat_match:
+                            chat_info = chat_match.group(1)
+
+                        # 提取发送人
+                        sender_match = re.search(r'发送人是"([^"]+)"', msg)
+                        if sender_match:
+                            sender_info = sender_match.group(1)
+
+                        # 提取内容
+                        content_match = re.search(r'内容："([^"]+)"', msg)
+                        if content_match:
+                            content_info = content_match.group(1)
+                    except Exception as e:
+                        logger.error(f"解析新格式日志失败: {e}")
+                else:
+                    # 旧格式: "获取到新消息: 实例=xxx, 聊天=xxx, 发送者=xxx, 内容=xxx"
+                    for part in parts:
+                        if "聊天=" in part:
+                            chat_info = part.split("=")[1]
+                        elif "发送者=" in part:
+                            sender_info = part.split("=")[1]
+                        elif "内容=" in part:
+                            content_info = part.split("=")[1]
+                        elif "实例=" in part:
+                            instance_id = part.split("=")[1]
 
                 if chat_info:
-                    formatted_msg = f"{timestamp} - INFO - 监控到来自于会话\"{chat_info}\"，发送人是\"{sender_info or '未知'}\"的新消息，内容：\"{content_info or ''}\""
-                    color = "green"
+                    # 根据是否符合@规则设置不同的消息格式和颜色
+                    if is_not_match_rule:
+                        # 不显示不符合规则的消息
+                        return
+                    else:
+                        formatted_msg = f"{timestamp} - INFO - 监控到来自于会话\"{chat_info}\"，发送人是\"{sender_info or '未知'}\"的新消息，内容：\"{content_info or ''}\""
+                        color = "green"
 
                     # 更新UI
                     QMetaObject.invokeMethod(
@@ -1110,21 +1136,24 @@ class MessageListenerPanel(QWidget):
                 count = 1
 
             try:
-                # 获取当前文本内容
-                current_text = self.log_text.toPlainText()
+                # 获取当前HTML内容而不是纯文本
+                current_html = self.log_text.toHtml()
 
-                # 分割成行
-                lines = current_text.split('\n')
+                # 分割成行 - 保留HTML标签
+                # 使用正则表达式匹配所有行，包括它们的HTML标签
+                import re
+                html_lines = re.findall(r'<p[^>]*>(.*?)</p>', current_html, re.DOTALL)
 
                 # 过滤掉所有包含"自动刷新完成"的行
-                filtered_lines = [line for line in lines if "自动刷新完成" not in line]
+                filtered_html_lines = [line for line in html_lines if "自动刷新完成" not in line]
 
                 # 清空日志窗口
                 self.log_text.clear()
 
-                # 重新添加过滤后的行
-                for line in filtered_lines:
+                # 重新添加过滤后的行，保留原始HTML格式
+                for line in filtered_html_lines:
                     if line.strip():  # 只添加非空行
+                        # 直接使用HTML内容添加，保留原始颜色
                         self.log_text.append(line)
 
                 # 添加新的自动刷新日志（带刷新次数）
