@@ -496,8 +496,8 @@ class AddEditRuleDialog(QDialog):
         if not self._validate_input():
             return
 
-        # 直接保存规则到数据库
-        self._save_rule_to_database()
+        # 检查规则冲突
+        asyncio.create_task(self._check_rule_conflicts())
 
     def _validate_input(self) -> bool:
         """
