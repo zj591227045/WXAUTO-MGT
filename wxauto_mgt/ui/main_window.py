@@ -21,6 +21,7 @@ from wxauto_mgt.core.api_client import instance_manager
 from wxauto_mgt.data.config_store import config_store
 from wxauto_mgt.utils.logging import logger
 from wxauto_mgt.web import start_web_service, stop_web_service, is_web_service_running, get_web_service_config, set_web_service_config
+from wxauto_mgt.core.service_platform_manager import platform_manager, rule_manager
 
 # 延迟导入UI组件，避免循环导入
 # 实际使用时在方法内导入
@@ -419,6 +420,23 @@ class MainWindow(QMainWindow):
         # 添加到主布局
         web_service_layout.addWidget(web_service_group)
 
+        # 添加重载配置按钮
+        self.reload_config_btn = QPushButton("重载配置")
+        self.reload_config_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #fa8c16;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #ffa940;
+            }
+        """)
+        self.reload_config_btn.clicked.connect(self._reload_config)
+        web_service_layout.addWidget(self.reload_config_btn)
+
         # 将Web服务控制区域添加到工具栏
         self.toolbar.addWidget(web_service_container)
 
@@ -589,3 +607,51 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.status_changed.emit(f"停止Web服务时出错: {str(e)}", 3000)
             logger.error(f"停止Web服务时出错: {e}")
+
+    def _reload_config(self):
+        """重载配置"""
+        # 创建异步任务重载配置
+        asyncio.create_task(self._reload_config_async())
+
+    async def _reload_config_async(self):
+        """异步重载配置"""
+        try:
+            self.status_changed.emit("正在重载配置...", 0)
+            logger.info("开始重载配置")
+
+            # 重新初始化服务平台管理器
+            logger.info("重新初始化服务平台管理器")
+            await platform_manager.initialize()
+
+            # 重新初始化投递规则管理器
+            logger.info("重新初始化投递规则管理器")
+            await rule_manager.initialize()
+
+            # 重新加载消息监听器的监听对象
+            logger.info("重新加载消息监听对象")
+            from wxauto_mgt.core.message_listener import message_listener
+            # 清空并强制从数据库重新加载
+            message_listener.listeners = {}
+            await message_listener._load_listeners_from_db()
+
+            # 刷新UI上的实例列表
+            if hasattr(self, 'instance_panel') and hasattr(self.instance_panel, 'instance_list'):
+                self.instance_panel.instance_list.refresh_instances()
+
+            # 刷新实例状态
+            if hasattr(self, 'instance_panel'):
+                self.instance_panel.refresh_status()
+
+            # 刷新消息监听面板
+            if hasattr(self, 'message_panel'):
+                await self.message_panel.refresh_listeners(force_reload=True, silent=False)
+
+            self.status_changed.emit("配置重载完成", 3000)
+            logger.info("配置重载完成")
+
+        except Exception as e:
+            error_msg = f"重载配置失败: {str(e)}"
+            self.status_changed.emit(error_msg, 3000)
+            logger.error(error_msg)
+            import traceback
+            logger.error(f"异常堆栈: {traceback.format_exc()}")
