@@ -39,6 +39,8 @@ class AddEditPlatformDialog(QDialog):
 
         self.platform_data = platform_data
         self.is_edit_mode = platform_data is not None
+        # 初始化原始API密钥为空字符串
+        self.original_api_key = ""
 
         self._init_ui()
 
@@ -112,6 +114,7 @@ class AddEditPlatformDialog(QDialog):
         self.dify_api_key = QLineEdit()
         self.dify_api_key.setPlaceholderText("例如: app-o5gCcjyOUnlnVkgwXgQeGHoK")
         self.dify_api_key.setMinimumWidth(300)  # 设置最小宽度
+        self.dify_api_key.setEchoMode(QLineEdit.Password)  # 设置为密码模式
         dify_layout.addRow("API密钥:", self.dify_api_key)
 
         # Dify会话ID（可选）
@@ -144,6 +147,7 @@ class AddEditPlatformDialog(QDialog):
         self.openai_api_key = QLineEdit()
         self.openai_api_key.setPlaceholderText("例如: sk-...")
         self.openai_api_key.setMinimumWidth(300)  # 设置最小宽度
+        self.openai_api_key.setEchoMode(QLineEdit.Password)  # 设置为密码模式
         openai_layout.addRow("API密钥:", self.openai_api_key)
 
         # OpenAI模型
@@ -248,12 +252,18 @@ class AddEditPlatformDialog(QDialog):
         # 根据平台类型加载配置
         if platform_type == "dify":
             self.dify_api_base.setText(config.get("api_base", ""))
-            self.dify_api_key.setText(config.get("api_key", ""))
+            # 设置API密钥为掩码，实际值会在保存时处理
+            self.dify_api_key.setText("******")
+            # 保存原始API密钥，用于后续处理
+            self.original_api_key = config.get("api_key", "")
             self.dify_conversation_id.setText(config.get("conversation_id", ""))
             self.dify_user_id.setText(config.get("user_id", ""))
         else:  # openai
             self.openai_api_base.setText(config.get("api_base", ""))
-            self.openai_api_key.setText(config.get("api_key", ""))
+            # 设置API密钥为掩码，实际值会在保存时处理
+            self.openai_api_key.setText("******")
+            # 保存原始API密钥，用于后续处理
+            self.original_api_key = config.get("api_key", "")
             self.openai_model.setText(config.get("model", "gpt-3.5-turbo"))
             self.openai_temperature.setValue(config.get("temperature", 0.7))
             self.openai_system_prompt.setPlainText(config.get("system_prompt", ""))
@@ -276,17 +286,29 @@ class AddEditPlatformDialog(QDialog):
         message_send_mode = "typing" if self.typing_mode_radio.isChecked() else "normal"
 
         if platform_type == "dify":
+            # 获取API密钥，如果是掩码且在编辑模式下，则使用原始值
+            api_key = self.dify_api_key.text().strip()
+            if self.is_edit_mode and api_key == "******" and hasattr(self, 'original_api_key'):
+                api_key = self.original_api_key
+                logger.info("使用原始API密钥而不是掩码值")
+
             config = {
                 "api_base": self.dify_api_base.text().strip(),
-                "api_key": self.dify_api_key.text().strip(),
+                "api_key": api_key,
                 "conversation_id": self.dify_conversation_id.text().strip(),
                 "user_id": self.dify_user_id.text().strip() or "default_user",
                 "message_send_mode": message_send_mode
             }
         else:  # openai
+            # 获取API密钥，如果是掩码且在编辑模式下，则使用原始值
+            api_key = self.openai_api_key.text().strip()
+            if self.is_edit_mode and api_key == "******" and hasattr(self, 'original_api_key'):
+                api_key = self.original_api_key
+                logger.info("使用原始API密钥而不是掩码值")
+
             config = {
                 "api_base": self.openai_api_base.text().strip() or "https://api.openai.com/v1",
-                "api_key": self.openai_api_key.text().strip(),
+                "api_key": api_key,
                 "model": self.openai_model.text().strip() or "gpt-3.5-turbo",
                 "temperature": self.openai_temperature.value(),
                 "system_prompt": self.openai_system_prompt.toPlainText().strip() or "你是一个有用的助手。",
