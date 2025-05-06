@@ -731,6 +731,11 @@ class MessageDeliveryService:
             platform_id = message.get('platform_id')
             message_send_mode = None
 
+            # 强制设置为True，用于测试
+            reply_at_sender = True
+            file_logger.info("强制设置reply_at_sender=True用于测试")
+            logger.info("强制设置reply_at_sender=True用于测试")
+
             # 如果有平台ID，尝试获取平台的消息发送模式
             if platform_id:
                 try:
@@ -741,16 +746,34 @@ class MessageDeliveryService:
                         file_logger.info(f"从平台获取消息发送模式: {message_send_mode}")
                         logger.info(f"从平台获取消息发送模式: {message_send_mode}")
                 except Exception as e:
-                    file_logger.error(f"获取平台消息发送模式失败: {e}")
-                    logger.error(f"获取平台消息发送模式失败: {e}")
+                    file_logger.error(f"获取平台信息失败: {e}")
+                    logger.error(f"获取平台信息失败: {e}")
                     # 继续使用默认模式
+
+            # 准备@列表
+            at_list = None
+            if reply_at_sender and 'sender' in message and message['sender']:
+                sender = message['sender']
+                at_list = [sender]
+                file_logger.info(f"将在回复中@发送者: {sender}")
+                logger.info(f"将在回复中@发送者: {sender}")
+
+                # 记录消息类型，用于调试
+                message_type = message.get('message_type', '')
+                file_logger.info(f"消息类型: {message_type}")
+                logger.info(f"消息类型: {message_type}")
+
+                # 记录完整的消息数据，用于调试
+                file_logger.info(f"完整的消息数据: {message}")
+                logger.info(f"完整的消息数据: {message}")
 
             # 使用消息发送器发送回复
             result, error_msg = await message_sender.send_message(
                 message['instance_id'],
                 message['chat_name'],
                 reply_content,
-                message_send_mode
+                message_send_mode,
+                at_list
             )
 
             if not result:

@@ -511,7 +511,8 @@ class DeliveryRulePanel(QWidget):
                 rule_data["platform_id"],
                 rule_data["priority"],
                 rule_data["only_at_messages"],
-                rule_data["at_name"]
+                rule_data["at_name"],
+                rule_data["reply_at_sender"]
             )
 
             if rule_id:
@@ -605,7 +606,8 @@ class DeliveryRulePanel(QWidget):
                 updated_data["platform_id"],
                 updated_data["priority"],
                 updated_data["only_at_messages"],
-                updated_data["at_name"]
+                updated_data["at_name"],
+                updated_data["reply_at_sender"]
             )
 
             if success:

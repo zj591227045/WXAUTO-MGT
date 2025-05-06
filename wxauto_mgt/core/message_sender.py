@@ -10,7 +10,7 @@ import time
 import json
 import aiohttp
 import requests
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
 from wxauto_mgt.data.db_manager import db_manager
 from wxauto_mgt.core.api_client import instance_manager
@@ -34,7 +34,7 @@ class MessageSender:
         self._initialized = True
         logger.info("消息发送器初始化完成")
 
-    async def send_message(self, instance_id: str, chat_name: str, content: str, message_send_mode: str = None) -> Tuple[bool, str]:
+    async def send_message(self, instance_id: str, chat_name: str, content: str, message_send_mode: str = None, at_list: List[str] = None) -> Tuple[bool, str]:
         """
         发送消息到微信实例
 
@@ -43,6 +43,7 @@ class MessageSender:
             chat_name: 聊天对象名称
             content: 消息内容
             message_send_mode: 消息发送模式，可选值为"normal"或"typing"，默认为None（使用平台配置）
+            at_list: 要@的用户列表，默认为None
 
         Returns:
             Tuple[bool, str]: (是否成功, 错误信息)
@@ -100,7 +101,7 @@ class MessageSender:
         for attempt in range(self._retry_count):
             try:
                 # 直接调用API发送消息
-                result = await self._send_via_direct_api(instance, chat_name, content, message_send_mode)
+                result = await self._send_via_direct_api(instance, chat_name, content, message_send_mode, at_list)
                 if result[0]:
                     return True, "发送成功"
 
@@ -128,7 +129,7 @@ class MessageSender:
             logger.error(f"通过API客户端发送消息时发生异常: {e}")
             return False, f"API客户端异常: {str(e)}"
 
-    async def _send_via_direct_api(self, instance: Dict, chat_name: str, content: str, message_send_mode: str = "normal") -> Tuple[bool, str]:
+    async def _send_via_direct_api(self, instance: Dict, chat_name: str, content: str, message_send_mode: str = "normal", at_list: List[str] = None) -> Tuple[bool, str]:
         """
         直接调用API发送消息
 
@@ -137,6 +138,7 @@ class MessageSender:
             chat_name: 聊天对象名称
             content: 消息内容
             message_send_mode: 消息发送模式，可选值为"normal"或"typing"，默认为"normal"
+            at_list: 要@的用户列表，默认为None
 
         Returns:
             Tuple[bool, str]: (是否成功, 错误信息)
@@ -170,10 +172,34 @@ class MessageSender:
                 "clear": True
             }
 
+            # 记录完整的请求数据，方便调试
+            logger.info(f"发送消息完整数据: URL={url}, 聊天对象={chat_name}, 消息模式={message_send_mode}")
+            logger.debug(f"请求头: {headers}")
+            logger.debug(f"初始请求体: {data}")
+
+            # 如果有@列表，添加到数据中
+            if at_list and len(at_list) > 0:
+                data["at_list"] = at_list
+                logger.info(f"添加@列表到消息: {at_list}")
+                logger.debug(f"添加@列表后的请求体: {data}")
+            else:
+                logger.info(f"没有@列表，不添加at_list参数")
+
             # 使用同步requests库发送请求（在异步函数中使用）
             def send_request():
                 try:
+                    logger.info(f"开始发送消息请求: {chat_name}")
                     response = requests.post(url, headers=headers, json=data, timeout=30)
+                    logger.info(f"消息请求完成，状态码: {response.status_code}")
+
+                    # 记录响应内容
+                    try:
+                        response_json = response.json()
+                        logger.debug(f"响应内容: {response_json}")
+                    except Exception as e:
+                        logger.error(f"解析响应JSON失败: {e}")
+                        logger.debug(f"原始响应内容: {response.text}")
+
                     return response
                 except Exception as e:
                     logger.error(f"同步请求异常: {e}")

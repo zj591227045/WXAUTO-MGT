@@ -144,6 +144,11 @@ class AddEditRuleDialog(QDialog):
 
         at_layout.addLayout(at_name_layout)
 
+        # 回复时@发送者复选框
+        self.reply_at_sender_check = QCheckBox("回复时@发送者")
+        self.reply_at_sender_check.setToolTip("勾选后，回复消息时会自动@消息发送者")
+        at_layout.addWidget(self.reply_at_sender_check)
+
         # 添加提示标签
         at_hint = QLabel("注意: 勾选此选项后，聊天对象必须为群聊，且消息内容中必须包含\"@名称\"才会处理\n支持多个@名称，用逗号分隔，消息中包含任意一个名称即可触发")
         at_hint.setStyleSheet("color: #666666; font-size: 12px;")
@@ -447,6 +452,7 @@ class AddEditRuleDialog(QDialog):
         # 设置@消息设置
         only_at_messages = self.rule_data.get("only_at_messages", 0)
         at_name = self.rule_data.get("at_name", "")
+        reply_at_sender = self.rule_data.get("reply_at_sender", 0)
 
         # 设置@名称
         self.at_name_edit.setText(at_name)
@@ -456,6 +462,9 @@ class AddEditRuleDialog(QDialog):
 
         # 设置复选框状态 - 这会触发状态变化事件，进而控制输入框的启用状态
         self.only_at_messages_check.setChecked(only_at_messages == 1)
+
+        # 设置回复时@发送者复选框状态
+        self.reply_at_sender_check.setChecked(reply_at_sender == 1)
 
     def get_rule_data(self) -> Dict[str, Any]:
         """
@@ -478,6 +487,7 @@ class AddEditRuleDialog(QDialog):
         # 获取@消息设置
         only_at_messages = 1 if self.only_at_messages_check.isChecked() else 0
         at_name = self.at_name_edit.text().strip()
+        reply_at_sender = 1 if self.reply_at_sender_check.isChecked() else 0
 
         # 返回规则数据
         return {
@@ -487,7 +497,8 @@ class AddEditRuleDialog(QDialog):
             "platform_id": platform_id,
             "priority": self.priority_spin.value(),
             "only_at_messages": only_at_messages,
-            "at_name": at_name
+            "at_name": at_name,
+            "reply_at_sender": reply_at_sender
         }
 
     def accept(self):
