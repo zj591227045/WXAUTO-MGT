@@ -10,6 +10,7 @@ import os
 import signal
 import sys
 import time
+import platform
 from pathlib import Path
 
 # 添加项目根目录到Python路径
@@ -80,6 +81,42 @@ async def init_services():
         # 确保downloads目录存在
         downloads_dir = os.path.join(data_dir, 'downloads')
         os.makedirs(downloads_dir, exist_ok=True)
+
+        # 检查目录权限
+        try:
+            # 测试写入权限
+            test_files = {
+                data_dir: os.path.join(data_dir, '.test_write'),
+                log_dir: os.path.join(log_dir, '.test_write'),
+                downloads_dir: os.path.join(downloads_dir, '.test_write')
+            }
+
+            for dir_path, test_file in test_files.items():
+                with open(test_file, 'w') as f:
+                    f.write('test')
+                os.remove(test_file)
+                print(f"目录 {dir_path} 写入权限正常")
+        except Exception as e:
+            print(f"目录权限检查失败: {e}")
+
+        # 在打包环境下，确保目录有完全权限
+        if getattr(sys, 'frozen', False):
+            try:
+                import stat
+                # 设置目录权限为完全读写
+                for dir_path in [data_dir, log_dir, downloads_dir]:
+                    if platform.system() == "Windows":
+                        # Windows下使用icacls命令设置权限
+                        import subprocess
+                        subprocess.run(['icacls', dir_path, '/grant', 'Everyone:(OI)(CI)F'],
+                                      shell=True, check=False)
+                    else:
+                        # Unix系统使用chmod
+                        os.chmod(dir_path,
+                                stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)  # 777权限
+                print("已设置目录完全权限")
+            except Exception as e:
+                print(f"设置目录权限失败: {e}")
 
         # 初始化日志
         setup_logging(log_dir, console_level="DEBUG", file_level="DEBUG")

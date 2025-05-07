@@ -426,13 +426,22 @@ class WxAutoApiClient:
             import requests
             import json
             import asyncio
+            import platform
+            import os
 
             file_logger.info(f"开始下载文件，原始路径: {file_path}")
             logger.info(f"开始下载文件: {file_path}")
 
-            # 确保文件路径使用双反斜杠
-            file_path_fixed = file_path.replace('/', '\\')
+            # 确保文件路径格式正确（根据操作系统）
+            if platform.system() == "Windows":
+                # Windows下确保使用反斜杠
+                file_path_fixed = file_path.replace('/', '\\')
+            else:
+                # macOS/Linux下确保使用正斜杠
+                file_path_fixed = file_path.replace('\\', '/')
+
             file_logger.debug(f"修正后的文件路径: {file_path_fixed}")
+            file_logger.debug(f"当前操作系统: {platform.system()}")
 
             # 构建请求数据
             data = {'file_path': file_path_fixed}
@@ -457,9 +466,23 @@ class WxAutoApiClient:
             def send_request():
                 try:
                     file_logger.debug(f"开始发送同步下载请求...")
-                    response = requests.post(url, headers=headers, json=data, timeout=60)  # 文件下载可能需要更长的超时时间
-                    file_logger.debug(f"同步下载请求完成，状态码: {response.status_code}")
-                    return response
+                    # 增加重试机制
+                    max_retries = 3
+                    retry_count = 0
+
+                    while retry_count < max_retries:
+                        try:
+                            response = requests.post(url, headers=headers, json=data, timeout=60)  # 文件下载可能需要更长的超时时间
+                            file_logger.debug(f"同步下载请求完成，状态码: {response.status_code}")
+                            return response
+                        except requests.exceptions.RequestException as e:
+                            retry_count += 1
+                            file_logger.warning(f"下载请求失败，正在重试 ({retry_count}/{max_retries}): {e}")
+                            if retry_count >= max_retries:
+                                raise
+                            # 等待一段时间再重试
+                            import time
+                            time.sleep(1)
                 except Exception as e:
                     file_logger.error(f"文件下载同步请求异常: {e}")
                     logger.error(f"文件下载同步请求异常: {e}")
@@ -490,7 +513,11 @@ class WxAutoApiClient:
             content_type = response.headers.get('Content-Type', '')
             file_logger.debug(f"响应Content-Type: {content_type}")
 
-            if 'application/octet-stream' in content_type:
+            # 更宽松地检查Content-Type，有些服务器可能返回不同的MIME类型
+            valid_content_types = ['application/octet-stream', 'binary/octet-stream', 'application/binary']
+            is_binary_content = any(ct in content_type for ct in valid_content_types) or len(response.content) > 0
+
+            if is_binary_content:
                 # 成功获取文件内容
                 file_content = response.content
                 file_size = len(file_content)
@@ -501,11 +528,11 @@ class WxAutoApiClient:
                 if file_size == 0:
                     file_logger.warning(f"下载的文件内容为空: {file_path}")
                     logger.warning(f"下载的文件内容为空: {file_path}")
+                    return None
                 else:
                     file_logger.debug(f"文件内容前100字节: {file_content[:100]}")
 
                     # 检查文件类型
-                    import os
                     _, ext = os.path.splitext(file_path)
                     if ext:
                         file_logger.info(f"文件扩展名: {ext.upper()}")

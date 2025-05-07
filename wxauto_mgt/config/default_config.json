@@ -3,7 +3,8 @@
     "name": "WxAuto管理程序",
     "version": "0.1.0",
     "log_level": "INFO",
-    "ui_theme": "default"
+    "ui_theme": "default",
+    "use_temp_dir_for_downloads": false
   },
   "message_listener": {
     "poll_interval": 5,
@@ -17,4 +18,4 @@
     "path": "./data/wxauto_mgt.db"
   },
   "instances": []
-} 
+}

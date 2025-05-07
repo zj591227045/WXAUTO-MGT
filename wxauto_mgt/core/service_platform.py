@@ -9,6 +9,7 @@
 
 import logging
 import json
+import sys
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -206,11 +207,23 @@ class DifyPlatform(ServicePlatform):
 
             # 如果只提供了文件名，构建完整路径
             if not os.path.dirname(file_path):
-                # 默认使用项目根目录下的data/downloads文件夹
-                project_root = Path(__file__).parent.parent.parent
+                # 确定项目根目录
+                if getattr(sys, 'frozen', False):
+                    # 打包环境 - 使用可执行文件所在目录
+                    project_root = os.path.dirname(sys.executable)
+                else:
+                    # 开发环境 - 使用项目根目录
+                    project_root = Path(__file__).parent.parent.parent
+
                 download_dir = os.path.join(project_root, "data", "downloads")
+
+                # 确保下载目录存在
+                os.makedirs(download_dir, exist_ok=True)
+
                 full_path = os.path.join(download_dir, file_path)
                 file_logger.debug(f"只提供了文件名，构建完整路径: {full_path}")
+                file_logger.debug(f"项目根目录: {project_root}")
+                file_logger.debug(f"下载目录: {download_dir}")
             else:
                 full_path = file_path
 
