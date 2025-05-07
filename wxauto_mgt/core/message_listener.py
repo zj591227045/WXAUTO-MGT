@@ -21,8 +21,10 @@ from collections import defaultdict
 from wxauto_mgt.core.api_client import instance_manager
 from wxauto_mgt.data.db_manager import db_manager
 
-# 配置日志
-logger = logging.getLogger(__name__)
+# 配置日志 - 使用主日志记录器，确保所有日志都记录到主日志文件
+logger = logging.getLogger('wxauto_mgt')
+# 设置为DEBUG级别，确保捕获所有详细日志
+logger.setLevel(logging.DEBUG)
 
 @dataclass
 class ListenerInfo:

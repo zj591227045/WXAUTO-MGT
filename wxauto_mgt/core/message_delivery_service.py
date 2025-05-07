@@ -16,10 +16,12 @@ from wxauto_mgt.core.api_client import instance_manager
 from wxauto_mgt.core.service_platform_manager import platform_manager, rule_manager
 from wxauto_mgt.core.message_sender import message_sender
 
-# 导入标准日志记录器
-logger = logging.getLogger(__name__)
+# 导入标准日志记录器 - 使用主日志记录器，确保所有日志都记录到主日志文件
+logger = logging.getLogger('wxauto_mgt')
+# 设置为DEBUG级别，确保捕获所有详细日志
+logger.setLevel(logging.DEBUG)
 
-# 导入文件处理专用日志记录器
+# 导入文件处理专用日志记录器 - 现在也使用主日志记录器
 from wxauto_mgt.utils import file_logger
 
 class MessageDeliveryService:
@@ -354,13 +356,20 @@ class MessageDeliveryService:
         """
         message_id = message['message_id']
 
-        # 使用专用日志记录器记录详细信息
-        file_logger.info(f"开始处理消息: {message_id}, 类型: {message.get('mtype', '')}, 消息类型: {message.get('message_type', '')}")
-        file_logger.debug(f"消息详情: {message}")
+        # 使用主日志记录器记录详细信息
+        logger.info(f"开始处理消息: ID={message_id}, 实例={message.get('instance_id')}, 聊天={message.get('chat_name')}, 发送者={message.get('sender')}, 类型={message.get('mtype', '')}, 消息类型={message.get('message_type', '')}")
+        logger.debug(f"消息内容: {message.get('content', '')[:100]}{'...' if len(message.get('content', '')) > 100 else ''}")
+
+        # 如果是文件类型消息，记录文件信息
+        if message.get('mtype') in ['image', 'file'] or message.get('file_type') in ['image', 'file']:
+            logger.debug(f"文件消息: ID={message_id}, 本地路径={message.get('local_file_path', '未知')}, 文件大小={message.get('file_size', '未知')}")
+
+        # 记录完整消息详情到调试日志
+        logger.debug(f"消息完整详情: {message}")
 
         # 添加到正在处理的集合
         self._processing_messages.add(message_id)
-        file_logger.debug(f"消息 {message_id} 已添加到处理队列")
+        logger.debug(f"消息 {message_id} 已添加到处理队列")
 
         # 获取监听对象的会话ID
         try:
@@ -441,14 +450,17 @@ class MessageDeliveryService:
             file_logger.info(f"获取到服务平台: {platform.name}, 类型: {platform.get_type() if hasattr(platform, 'get_type') else 'unknown'}")
 
             # 投递消息 - 记录详细信息
-            file_logger.info(f"投递消息 {message_id} 到平台 {platform.name}")
-            logger.info(f"投递消息 {message_id} 到平台 {platform.name}")
+            logger.info(f"投递消息: ID={message_id}, 实例={message.get('instance_id')}, 聊天={message.get('chat_name')}, 平台={platform.name}, 平台类型={platform.get_type() if hasattr(platform, 'get_type') else 'unknown'}")
+
+            # 记录消息内容摘要
+            content = message.get('content', '')
+            logger.debug(f"投递消息内容: {content[:100]}{'...' if len(content) > 100 else ''}")
 
             # 检查消息类型，记录更多信息
             if message.get('mtype') in ['image', 'file'] or message.get('file_type') in ['image', 'file']:
-                file_logger.info(f"投递文件类型消息: {message_id}, 类型: {message.get('mtype') or message.get('file_type')}")
+                logger.info(f"投递文件类型消息: ID={message_id}, 类型={message.get('mtype') or message.get('file_type')}, 文件大小={message.get('file_size', '未知')}")
                 if 'local_file_path' in message:
-                    file_logger.info(f"文件路径: {message.get('local_file_path')}")
+                    logger.debug(f"文件路径: {message.get('local_file_path')}")
 
             delivery_result = await self.deliver_message(message, platform)
             file_logger.debug(f"投递结果: {delivery_result}")
@@ -466,35 +478,47 @@ class MessageDeliveryService:
                 message_id, 1, rule['platform_id']
             )
 
-            # 发送回复 - 只记录关键信息
+            # 发送回复 - 记录详细信息
             reply_content = delivery_result.get('content', '')
             if reply_content:
-                logger.info(f"发送回复: {message['chat_name']}, 内容: {reply_content[:50]}...")
-                file_logger.info(f"准备发送回复到微信: 实例={message['instance_id']}, 聊天={message['chat_name']}")
-                file_logger.debug(f"回复内容: {reply_content}")
+                # 记录详细的回复信息
+                logger.info(f"准备发送回复: ID={message_id}, 实例={message['instance_id']}, 聊天={message['chat_name']}, 内容长度={len(reply_content)}")
+                logger.debug(f"回复内容摘要: {reply_content[:100]}{'...' if len(reply_content) > 100 else ''}")
+
+                # 记录完整回复内容到调试日志
+                logger.debug(f"完整回复内容: {reply_content}")
 
                 # 检查是否有会话ID
                 if 'conversation_id' in delivery_result:
-                    logger.info(f"回复包含会话ID: {delivery_result['conversation_id']}")
-                    file_logger.info(f"回复包含会话ID: {delivery_result['conversation_id']}")
+                    logger.info(f"回复使用会话ID: {delivery_result['conversation_id']}, 消息ID={message_id}")
+
+                    # 更新数据库中的会话ID
+                    try:
+                        # 更新监听对象的会话ID
+                        from wxauto_mgt.data.db_manager import db_manager
+                        await db_manager.execute(
+                            "UPDATE listeners SET conversation_id = ? WHERE instance_id = ? AND who = ?",
+                            (delivery_result['conversation_id'], message['instance_id'], message['chat_name'])
+                        )
+                        logger.info(f"已更新监听对象的会话ID: {message['instance_id']} - {message['chat_name']} - {delivery_result['conversation_id']}")
+                    except Exception as e:
+                        logger.error(f"更新会话ID时出错: {e}")
 
                 # 发送回复
+                logger.info(f"开始发送回复到微信: ID={message_id}, 实例={message['instance_id']}, 聊天={message['chat_name']}")
                 reply_success = await self.send_reply(message, reply_content)
 
                 if reply_success:
                     # 标记为已回复
-                    logger.info(f"回复发送成功: {message['chat_name']}")
-                    file_logger.info(f"回复发送成功: {message['chat_name']}")
+                    logger.info(f"回复发送成功: ID={message_id}, 聊天={message['chat_name']}")
                     await self._update_message_reply_status(message_id, 1, reply_content)
                 else:
                     # 标记为回复失败
-                    logger.error(f"回复发送失败: {message['chat_name']}")
-                    file_logger.error(f"回复发送失败: {message['chat_name']}")
+                    logger.error(f"回复发送失败: ID={message_id}, 聊天={message['chat_name']}")
                     await self._update_message_reply_status(message_id, 2, reply_content)
             else:
-                # 不记录警告日志，只在调试级别记录
-                logger.debug(f"平台没有返回回复内容")
-                file_logger.warning(f"平台没有返回回复内容: {message_id}")
+                # 记录警告日志
+                logger.warning(f"平台没有返回回复内容: ID={message_id}, 实例={message['instance_id']}, 聊天={message['chat_name']}")
                 # 标记为回复失败
                 await self._update_message_reply_status(message_id, 2, '')
 

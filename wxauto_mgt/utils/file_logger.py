@@ -2,6 +2,7 @@
 文件处理专用日志模块
 
 提供专门用于文件处理（下载、上传、发送）的日志记录功能
+现在将所有日志重定向到主日志文件，不再单独记录file_processing.log
 """
 
 import os
@@ -10,68 +11,25 @@ import sys
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
-# 创建专用日志记录器
-file_logger = logging.getLogger('file_processing')
+# 创建专用日志记录器 - 使用与主日志相同的名称，确保日志被记录到主日志文件
+file_logger = logging.getLogger('wxauto_mgt')
 file_logger.setLevel(logging.DEBUG)  # 设置为DEBUG级别，记录所有日志
 
 # 标记是否已初始化
-_initialized = False
+_initialized = True  # 直接标记为已初始化，避免创建单独的日志文件
 
 def setup_file_logger(log_dir=None):
     """
-    设置文件处理专用日志记录器
-    
-    Args:
-        log_dir: 日志目录，如果为None，则使用默认的data/logs目录
-    """
-    global _initialized
-    
-    if _initialized:
-        return
-    
-    # 设置日志目录
-    if log_dir is None:
-        # 使用项目根目录下的data/logs目录
-        project_root = Path(__file__).parent.parent.parent
-        log_dir = os.path.join(project_root, 'data', 'logs')
-    
-    # 确保日志目录存在
-    os.makedirs(log_dir, exist_ok=True)
-    
-    # 设置日志文件路径
-    log_file = os.path.join(log_dir, 'file_processing.log')
-    
-    # 创建文件处理器
-    file_handler = RotatingFileHandler(
-        log_file,
-        maxBytes=10 * 1024 * 1024,  # 10MB
-        backupCount=5,
-        encoding='utf-8'
-    )
-    file_handler.setLevel(logging.DEBUG)
-    
-    # 创建控制台处理器
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.DEBUG)
-    
-    # 设置日志格式
-    formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(name)s - %(funcName)s:%(lineno)d - %(message)s'
-    )
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-    
-    # 添加处理器
-    file_logger.addHandler(file_handler)
-    file_logger.addHandler(console_handler)
-    
-    # 标记为已初始化
-    _initialized = True
-    
-    file_logger.info(f"文件处理专用日志记录器已初始化，日志文件: {log_file}")
+    设置文件处理专用日志记录器 - 现在只是一个空函数，所有日志都会被重定向到主日志
 
-# 初始化日志记录器
-setup_file_logger()
+    Args:
+        log_dir: 日志目录，不再使用
+    """
+    # 不执行任何操作，所有日志都会被重定向到主日志
+    pass
+
+# 不再需要初始化，直接使用主日志记录器
+# setup_file_logger()
 
 # 导出日志记录函数
 def debug(msg, *args, **kwargs):

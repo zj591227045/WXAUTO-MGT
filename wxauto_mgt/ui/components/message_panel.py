@@ -141,6 +141,10 @@ class QTextEditLogger(logging.Handler):
         logger.debug("日志处理器初始化完成，关键事件过滤词已设置")
 
     def emit(self, record):
+        # 首先过滤掉DEBUG级别的日志
+        if record.levelno == logging.DEBUG:
+            return  # 不显示DEBUG级别的日志
+
         # 获取日志消息
         msg = self.format(record)
 
@@ -166,6 +170,131 @@ class QTextEditLogger(logging.Handler):
         # 检查是否是监控到新消息日志（特定格式）
         elif "获取到新消息: 实例=" in msg and "聊天=" in msg and "发送者=" in msg:
             pass  # 允许显示
+        # 检查是否是添加监听对象的日志
+        elif "添加监听对象: 实例=" in msg or "成功添加实例" in msg or "成功添加监听对象" in msg:
+            # 提取实例ID和聊天对象名称，用于事件分组
+            try:
+                instance_id = ""
+                chat_name = ""
+
+                # 尝试提取实例ID和聊天对象
+                if "添加监听对象: 实例=" in msg:
+                    # 格式: "添加监听对象: 实例=xxx, 聊天=xxx"
+                    parts = msg.split(", ")
+                    for part in parts:
+                        if "实例=" in part:
+                            instance_id = part.split("=")[1]
+                        elif "聊天=" in part:
+                            chat_name = part.split("=")[1]
+                elif "成功添加实例" in msg:
+                    # 格式: "成功添加实例 xxx 的监听对象: xxx"
+                    import re
+                    match = re.search(r'成功添加实例\s+([^\s]+)\s+的监听对象:\s+([^\s]+)', msg)
+                    if match:
+                        instance_id = match.group(1)
+                        chat_name = match.group(2)
+                elif "成功添加监听对象" in msg:
+                    # 格式: "成功添加监听对象: xxx"
+                    chat_name = msg.split("成功添加监听对象:")[1].strip()
+
+                # 如果能提取到聊天对象，使用它作为事件分组的键
+                if chat_name:
+                    # 使用更简单的键，只基于聊天对象名称，不考虑实例ID
+                    # 这样可以更有效地去重，避免不同格式的日志导致去重失败
+                    event_key = f"添加监听对象_{chat_name}"
+                    current_time = time.time()
+
+                    # 检查是否在最近的事件分组间隔时间内已经显示过该事件
+                    if event_key in self.event_timestamps:
+                        last_time = self.event_timestamps[event_key]
+                        interval = self.event_grouping_interval.get("添加监听对象", 2)
+                        if current_time - last_time < interval:
+                            return  # 在分组间隔内，不显示
+
+                    # 更新事件时间戳
+                    self.event_timestamps[event_key] = current_time
+            except Exception as e:
+                # 使用print而不是logger，避免递归
+                print(f"处理添加监听对象日志分组时出错: {e}")
+
+            pass  # 允许显示
+        # 检查是否是移除监听对象的日志
+        elif "手动移除监听对象: 实例=" in msg or "超时移除监听对象: 实例=" in msg or "已移除实例" in msg or "成功移除监听对象" in msg or "成功超时移除监听对象" in msg or "成功移除监听对象 " in msg:
+            # 提取实例ID和聊天对象名称，用于事件分组
+            try:
+                instance_id = ""
+                chat_name = ""
+                is_timeout = "超时" in msg
+
+                # 尝试提取实例ID和聊天对象
+                if "移除监听对象: 实例=" in msg:
+                    # 格式: "手动移除监听对象: 实例=xxx, 聊天=xxx" 或 "超时移除监听对象: 实例=xxx, 聊天=xxx"
+                    parts = msg.split(", ")
+                    for part in parts:
+                        if "实例=" in part:
+                            instance_id = part.split("=")[1]
+                        elif "聊天=" in part:
+                            chat_name = part.split("=")[1]
+                elif "已移除实例" in msg:
+                    # 格式: "已移除实例 xxx 的监听对象: xxx"
+                    import re
+                    match = re.search(r'已移除实例\s+([^\s]+)\s+的监听对象:\s+([^\s]+)', msg)
+                    if match:
+                        instance_id = match.group(1)
+                        chat_name = match.group(2)
+                elif "成功移除监听对象:" in msg:
+                    # 格式: "成功移除监听对象: xxx"
+                    chat_name = msg.split("成功移除监听对象:")[1].strip()
+                elif "成功超时移除监听对象:" in msg:
+                    # 格式: "成功超时移除监听对象: xxx"
+                    chat_name = msg.split("成功超时移除监听对象:")[1].strip()
+                elif "成功移除监听对象 " in msg:
+                    # 格式: "成功移除监听对象 xxx"
+                    chat_name = msg.split("成功移除监听对象 ")[1].strip()
+
+                # 尝试从DEBUG日志中提取聊天对象名称
+                if not chat_name and "DEBUG" in msg and "成功移除监听对象" in msg:
+                    import re
+                    match = re.search(r'成功移除监听对象\s+([^\s]+)', msg)
+                    if match:
+                        chat_name = match.group(1)
+
+                # 如果能提取到聊天对象，使用它作为事件分组的键
+                if chat_name:
+                    # 使用更简单的键，只基于聊天对象名称，不考虑实例ID和是否超时
+                    # 这样可以更有效地去重，避免不同格式的日志导致去重失败
+                    event_key = f"移除监听对象_{chat_name}"
+                    current_time = time.time()
+
+                    # 检查是否在最近的事件分组间隔时间内已经显示过该事件
+                    if event_key in self.event_timestamps:
+                        last_time = self.event_timestamps[event_key]
+                        # 使用更长的间隔时间，确保能够有效去重
+                        interval = 10  # 10秒内的相同对象移除操作视为重复
+                        if current_time - last_time < interval:
+                            return  # 在分组间隔内，不显示
+
+                    # 更新事件时间戳
+                    self.event_timestamps[event_key] = current_time
+                else:
+                    # 如果无法提取聊天对象，使用整个消息作为键进行去重
+                    # 这是一个额外的保护措施，确保即使无法提取聊天对象也能去重
+                    current_time = time.time()
+                    # 使用消息的前50个字符作为键，避免过长
+                    msg_key = f"移除监听对象_msg_{msg[:50]}"
+
+                    if msg_key in self.event_timestamps:
+                        last_time = self.event_timestamps[msg_key]
+                        if current_time - last_time < 10:  # 10秒内相同消息视为重复
+                            return  # 在分组间隔内，不显示
+
+                    # 更新事件时间戳
+                    self.event_timestamps[msg_key] = current_time
+            except Exception as e:
+                # 使用print而不是logger，避免递归
+                print(f"处理移除监听对象日志分组时出错: {e}")
+
+            pass  # 允许显示
         # 检查是否是不符合@规则的消息（特殊标记）- 直接过滤掉，不显示
         elif "[不符合消息转发规则]" in msg:
             return  # 不显示不符合规则的消息
@@ -190,8 +319,16 @@ class QTextEditLogger(logging.Handler):
         for k in expired_keys:
             del self.message_timestamps[k]
 
-        # 特殊处理三类关键信息
+        # 清理过期的事件时间戳记录（超过60秒）
+        expired_event_keys = [k for k, v in self.event_timestamps.items() if current_time - v > 60]
+        for k in expired_event_keys:
+            del self.event_timestamps[k]
+
+        # 特殊处理关键信息
         timestamp = datetime.now().strftime('%H:%M:%S')
+
+        # 导入re模块，用于正则表达式匹配
+        import re
 
         # 1. 监控到新消息 - 支持两种格式
         if ("获取到新消息: 实例=" in msg and "聊天=" in msg and "发送者=" in msg) or "监控到来自于会话" in msg:
@@ -304,6 +441,149 @@ class QTextEditLogger(logging.Handler):
                 # 直接显示原始消息
                 formatted_msg = f"{timestamp} - INFO - {msg}"
                 color = "green"
+
+                # 更新UI
+                QMetaObject.invokeMethod(
+                    self.text_widget,
+                    "append",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                )
+                return
+
+        # 4. 添加监听对象
+        elif "添加监听对象: 实例=" in msg or "成功添加实例" in msg or "成功添加监听对象" in msg:
+            try:
+                # 提取实例ID和聊天对象
+                instance_id = ""
+                chat_name = ""
+
+                # 尝试提取实例ID和聊天对象
+                if "添加监听对象: 实例=" in msg:
+                    # 格式: "添加监听对象: 实例=xxx, 聊天=xxx"
+                    parts = msg.split(", ")
+                    for part in parts:
+                        if "实例=" in part:
+                            instance_id = part.split("=")[1]
+                        elif "聊天=" in part:
+                            chat_name = part.split("=")[1]
+                elif "成功添加实例" in msg:
+                    # 格式: "成功添加实例 xxx 的监听对象: xxx"
+                    match = re.search(r'成功添加实例\s+([^\s]+)\s+的监听对象:\s+([^\s]+)', msg)
+                    if match:
+                        instance_id = match.group(1)
+                        chat_name = match.group(2)
+                elif "成功添加监听对象" in msg:
+                    # 格式: "成功添加监听对象: xxx"
+                    chat_name = msg.split("成功添加监听对象:")[1].strip()
+
+                # 构建格式化消息
+                if instance_id and chat_name:
+                    formatted_msg = f"{timestamp} - INFO - 成功添加监听对象: 实例={instance_id}, 聊天={chat_name}"
+                elif chat_name:
+                    formatted_msg = f"{timestamp} - INFO - 成功添加监听对象: {chat_name}"
+                else:
+                    formatted_msg = f"{timestamp} - INFO - {msg}"
+
+                # 使用橙黄色显示
+                color = "#FFA500"  # 橙黄色
+
+                # 更新UI
+                QMetaObject.invokeMethod(
+                    self.text_widget,
+                    "append",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                )
+                return
+            except Exception as e:
+                # 如果解析失败，使用原始消息
+                logger.debug(f"解析添加监听对象日志失败: {e}, 原始消息: {msg}")
+                # 直接显示原始消息，使用橙黄色
+                formatted_msg = f"{timestamp} - INFO - {msg}"
+                color = "#FFA500"  # 橙黄色
+
+                # 更新UI
+                QMetaObject.invokeMethod(
+                    self.text_widget,
+                    "append",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                )
+                return
+
+        # 5. 移除监听对象 - 这部分已经在前面的去重逻辑中处理过了，这里只需要格式化显示
+        elif "手动移除监听对象: 实例=" in msg or "超时移除监听对象: 实例=" in msg or "已移除实例" in msg or "成功移除监听对象" in msg or "成功超时移除监听对象" in msg or "成功移除监听对象 " in msg:
+            try:
+                # 提取实例ID和聊天对象
+                instance_id = ""
+                chat_name = ""
+                is_timeout = "超时" in msg
+
+                # 尝试提取实例ID和聊天对象
+                if "移除监听对象: 实例=" in msg:
+                    # 格式: "手动移除监听对象: 实例=xxx, 聊天=xxx" 或 "超时移除监听对象: 实例=xxx, 聊天=xxx"
+                    parts = msg.split(", ")
+                    for part in parts:
+                        if "实例=" in part:
+                            instance_id = part.split("=")[1]
+                        elif "聊天=" in part:
+                            chat_name = part.split("=")[1]
+                elif "已移除实例" in msg:
+                    # 格式: "已移除实例 xxx 的监听对象: xxx"
+                    match = re.search(r'已移除实例\s+([^\s]+)\s+的监听对象:\s+([^\s]+)', msg)
+                    if match:
+                        instance_id = match.group(1)
+                        chat_name = match.group(2)
+                elif "成功移除监听对象:" in msg:
+                    # 格式: "成功移除监听对象: xxx"
+                    chat_name = msg.split("成功移除监听对象:")[1].strip()
+                elif "成功超时移除监听对象:" in msg:
+                    # 格式: "成功超时移除监听对象: xxx"
+                    chat_name = msg.split("成功超时移除监听对象:")[1].strip()
+                elif "成功移除监听对象 " in msg:
+                    # 格式: "成功移除监听对象 xxx"
+                    chat_name = msg.split("成功移除监听对象 ")[1].strip()
+
+                # 尝试从DEBUG日志中提取聊天对象名称
+                if not chat_name and "DEBUG" in msg and "成功移除监听对象" in msg:
+                    match = re.search(r'成功移除监听对象\s+([^\s]+)', msg)
+                    if match:
+                        chat_name = match.group(1)
+
+                # 构建统一格式的消息，不管原始日志格式如何，都使用相同的格式输出
+                # 这样可以确保去重逻辑能够正常工作
+                if instance_id and chat_name:
+                    # 使用统一的格式，不区分手动/超时
+                    formatted_msg = f"{timestamp} - INFO - 移除监听对象: 实例={instance_id}, 聊天={chat_name}"
+                elif chat_name:
+                    # 只有聊天对象名称时的统一格式
+                    formatted_msg = f"{timestamp} - INFO - 移除监听对象: 聊天={chat_name}"
+                else:
+                    # 如果无法提取信息，使用原始消息但去掉DEBUG标记
+                    clean_msg = msg
+                    if "DEBUG" in clean_msg:
+                        clean_msg = clean_msg.replace("DEBUG - ", "")
+                    formatted_msg = f"{timestamp} - INFO - {clean_msg}"
+
+                # 使用橙黄色显示
+                color = "#FFA500"  # 橙黄色
+
+                # 更新UI
+                QMetaObject.invokeMethod(
+                    self.text_widget,
+                    "append",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                )
+                return
+            except Exception as e:
+                # 如果解析失败，使用原始消息但去掉DEBUG标记
+                clean_msg = msg
+                if "DEBUG" in clean_msg:
+                    clean_msg = clean_msg.replace("DEBUG - ", "")
+                formatted_msg = f"{timestamp} - INFO - {clean_msg}"
+                color = "#FFA500"  # 橙黄色
 
                 # 更新UI
                 QMetaObject.invokeMethod(
@@ -886,8 +1166,13 @@ class MessageListenerPanel(QWidget):
     async def _add_listener_async(self, instance_id: str, chat_name: str, **kwargs):
         """异步添加监听对象"""
         try:
-            # 确保使用能匹配关键词的日志格式
+            # 只记录一条日志，确保使用能匹配关键词的日志格式
             logger.info(f"添加监听对象: 实例={instance_id}, 聊天={chat_name}")
+
+            # 在日志窗口中显示添加操作（橙黄色）- 日志处理器会自动去重
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            formatted_msg = f"{timestamp} - INFO - 添加监听对象: 实例={instance_id}, 聊天={chat_name}"
+            self.appendLogMessage(formatted_msg, "orange")
 
             # 调用消息监听器添加监听对象
             success = await message_listener.add_listener(
@@ -897,7 +1182,8 @@ class MessageListenerPanel(QWidget):
             )
 
             if success:
-                logger.info(f"成功添加监听对象: {chat_name}")
+                # 不再记录成功日志，避免重复
+                # 只显示成功对话框
                 QMetaObject.invokeMethod(
                     self,
                     "showSuccessMessage",
@@ -910,7 +1196,14 @@ class MessageListenerPanel(QWidget):
                 # 刷新监听对象列表
                 QMetaObject.invokeMethod(self, "refresh_listeners", Qt.QueuedConnection)
             else:
+                # 记录失败日志
                 logger.warning(f"添加监听对象失败: {chat_name}")
+
+                # 在日志窗口中显示失败信息（橙黄色）
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                formatted_msg = f"{timestamp} - WARNING - 添加监听对象失败: 实例={instance_id}, 聊天={chat_name}"
+                self.appendLogMessage(formatted_msg, "orange")
+
                 QMetaObject.invokeMethod(
                     self,
                     "showWarningMessage",
@@ -919,7 +1212,14 @@ class MessageListenerPanel(QWidget):
                     Q_ARG(str, f"无法添加监听对象: {chat_name}")
                 )
         except Exception as e:
+            # 记录错误日志
             logger.error(f"异步添加监听对象时出错: {e}")
+
+            # 在日志窗口中显示错误信息（橙黄色）
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            formatted_msg = f"{timestamp} - ERROR - 添加监听对象出错: 实例={instance_id}, 聊天={chat_name}, 错误={str(e)}"
+            self.appendLogMessage(formatted_msg, "orange")
+
             QMetaObject.invokeMethod(
                 self,
                 "showErrorMessage",
@@ -940,11 +1240,17 @@ class MessageListenerPanel(QWidget):
         try:
             # 如果是超时移除，不需要输出详细日志，由_update_countdown统一记录
             is_timeout_removal = not show_dialog
+            timestamp = datetime.now().strftime('%H:%M:%S')
 
+            # 只记录一条日志，避免重复
             if not is_timeout_removal:
+                # 记录手动移除日志 - 日志处理器会自动处理并显示在UI中
                 logger.info(f"手动移除监听对象: 实例={instance_id}, 聊天={who}")
+                # 不再直接调用appendLogMessage，避免重复显示
             else:
+                # 记录超时移除日志 - 日志处理器会自动处理并显示在UI中
                 logger.info(f"超时移除监听对象: 实例={instance_id}, 聊天={who}")
+                # 不再直接调用appendLogMessage，避免重复显示
 
             # 确保message_listener已经初始化
             from wxauto_mgt.core.message_listener import message_listener
@@ -953,10 +1259,7 @@ class MessageListenerPanel(QWidget):
             success = await message_listener.remove_listener(instance_id, who)
 
             if success:
-                if not is_timeout_removal:
-                    logger.info(f"成功移除监听对象: {who}")
-                else:
-                    logger.info(f"成功超时移除监听对象: {who}")
+                # 不再记录成功日志，避免重复
                 # 发送信号
                 self.listener_removed.emit(instance_id, who)
                 # 强制刷新监听对象列表
@@ -966,7 +1269,13 @@ class MessageListenerPanel(QWidget):
                     QMessageBox.information(self, "移除成功", f"成功移除监听对象: {who}")
             else:
                 if not is_timeout_removal:
+                    # 记录移除失败日志
                     logger.warning(f"移除监听对象失败: {who}")
+
+                    # 在日志窗口中显示移除失败信息（橙黄色）
+                    formatted_msg = f"{timestamp} - WARNING - 移除监听对象失败: 实例={instance_id}, 聊天={who}"
+                    self.appendLogMessage(formatted_msg, "orange")
+
                 # 尝试强制刷新
                 if not is_timeout_removal:
                     await self.refresh_listeners(force_reload=True)
@@ -975,10 +1284,15 @@ class MessageListenerPanel(QWidget):
         except Exception as e:
             # 只在手动移除时记录详细错误
             if not show_dialog:
-                logger.error(f"超时移除监听对象时出错: {str(e)}")
+                # 记录超时移除错误日志 - 日志处理器会自动处理并显示在UI中
+                logger.error(f"超时移除监听对象时出错: 实例={instance_id}, 聊天={who}, 错误={str(e)}")
+                # 不再直接调用appendLogMessage，避免重复显示
             else:
-                logger.error(f"手动移除监听对象时出错: {e}")
+                # 记录手动移除错误日志 - 日志处理器会自动处理并显示在UI中
+                logger.error(f"手动移除监听对象时出错: 实例={instance_id}, 聊天={who}, 错误={str(e)}")
                 logger.exception(e)  # 只在手动移除时记录完整的错误堆栈
+                # 不再直接调用appendLogMessage，避免重复显示
+
                 if show_dialog:
                     QMessageBox.critical(self, "操作失败", f"移除监听对象时出错: {str(e)}")
 
@@ -2161,7 +2475,10 @@ class MessageListenerPanel(QWidget):
                             # 添加到待移除列表
                             to_remove.append((instance_id, who))
                             # 只有当实际要移除时，才记录日志
-                            logger.info(f"监听对象 {instance_id}:{who} 已超时，即将移除")
+                            # 使用统一格式，确保日志处理器能正确去重
+                            logger.info(f"超时移除监听对象: 实例={instance_id}, 聊天={who}")
+
+                            # 不再在这里添加日志窗口消息，避免重复
                 except Exception as e:
                     # 不记录此类错误日志，降低日志量
                     pass
