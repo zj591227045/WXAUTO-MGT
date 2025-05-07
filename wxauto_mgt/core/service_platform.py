@@ -9,11 +9,11 @@
 
 import logging
 import json
+import os
 import sys
 import time
-import uuid
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 import aiohttp
 
@@ -227,6 +227,13 @@ class DifyPlatform(ServicePlatform):
             else:
                 full_path = file_path
 
+            # 记录文件路径详细信息
+            file_logger.debug(f"文件路径详情: 原始={file_path}, 完整路径={full_path}")
+            file_logger.debug(f"文件是否存在: {os.path.exists(full_path)}")
+            if os.path.exists(full_path):
+                file_logger.debug(f"文件大小: {os.path.getsize(full_path)} 字节")
+                file_logger.debug(f"文件绝对路径: {os.path.abspath(full_path)}")
+
             # 检查文件是否存在
             if not os.path.exists(full_path):
                 file_logger.error(f"文件不存在: {full_path}")
@@ -247,48 +254,113 @@ class DifyPlatform(ServicePlatform):
             file_logger.debug(f"文件 {file_name} 的Dify类型: {dify_file_type}")
 
             # 读取文件内容
-            async with aiofiles.open(full_path, 'rb') as f:
-                file_content = await f.read()
-                file_logger.debug(f"已读取文件内容，大小: {len(file_content)}字节")
+            try:
+                async with aiofiles.open(full_path, 'rb') as f:
+                    file_content = await f.read()
+                    file_logger.debug(f"已读取文件内容，大小: {len(file_content)}字节")
+
+                # 验证文件内容是否有效
+                if len(file_content) == 0:
+                    file_logger.error(f"文件内容为空: {full_path}")
+                    return {"error": f"文件内容为空: {full_path}"}
+
+                file_logger.debug(f"文件内容有效，前20字节: {file_content[:20]}")
+            except Exception as e:
+                file_logger.error(f"读取文件内容时出错: {e}")
+                file_logger.exception(e)
+                return {"error": f"读取文件内容时出错: {str(e)}"}
 
             # 构建表单数据
-            form_data = aiohttp.FormData()
-            form_data.add_field('file',
-                                file_content,
-                                filename=file_name,
-                                content_type=content_type)
+            try:
+                form_data = aiohttp.FormData()
+                form_data.add_field('file',
+                                    file_content,
+                                    filename=file_name,
+                                    content_type=content_type)
+                file_logger.debug(f"已创建表单数据，文件名: {file_name}, 内容类型: {content_type}")
+            except Exception as e:
+                file_logger.error(f"创建表单数据时出错: {e}")
+                file_logger.exception(e)
+                return {"error": f"创建表单数据时出错: {str(e)}"}
 
             # 构建请求URL和头信息
             upload_url = f"{self.api_base}/files/upload"
             headers = {"Authorization": f"Bearer {self.api_key}"}
 
+            # 记录API信息
+            file_logger.debug(f"Dify API基础URL: {self.api_base}")
+            file_logger.debug(f"上传URL: {upload_url}")
+            # 记录API密钥的前5个字符，其余用*替代
+            masked_key = self.api_key[:5] + "*" * (len(self.api_key) - 5) if self.api_key else "未设置"
+            file_logger.debug(f"API密钥(部分隐藏): {masked_key}")
+
             file_logger.debug(f"准备发送上传请求: URL={upload_url}, 文件名={file_name}")
 
             # 发送请求
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    upload_url,
-                    headers=headers,
-                    data=form_data
-                ) as response:
-                    response_status = response.status
-                    file_logger.debug(f"上传文件响应状态码: {response_status}")
+                try:
+                    # 记录完整的请求信息
+                    file_logger.debug(f"上传文件请求URL: {upload_url}")
+                    file_logger.debug(f"上传文件请求头: {headers}")
+                    file_logger.debug(f"上传文件表单数据: {form_data}")
 
-                    # Dify文件上传API返回201状态码表示成功
-                    if response_status not in [200, 201]:
-                        error_text = await response.text()
-                        file_logger.error(f"上传文件到Dify失败: {response_status}, {error_text}")
-                        logger.error(f"上传文件到Dify失败: {response_status}")
-                        return {"error": f"上传文件失败: {response_status}"}
+                    # 记录请求开始时间
+                    start_time = time.time()
+                    file_logger.info(f"开始发送文件上传请求: {time.strftime('%H:%M:%S')}")
 
+                    async with session.post(
+                        upload_url,
+                        headers=headers,
+                        data=form_data
+                    ) as response:
+                        # 记录响应时间
+                        response_time = time.time() - start_time
+                        response_status = response.status
+                        file_logger.debug(f"上传文件响应状态码: {response_status}, 耗时: {response_time:.2f}秒")
+
+                        # 尝试获取响应内容
+                        try:
+                            response_text = await response.text()
+                            file_logger.debug(f"上传文件响应内容: {response_text[:1000]}")
+                        except Exception as e:
+                            file_logger.warning(f"无法读取响应内容: {e}")
+                            response_text = "无法读取"
+
+                        # Dify文件上传API返回201状态码表示成功
+                        if response_status not in [200, 201]:
+                            file_logger.error(f"上传文件到Dify失败: {response_status}, {response_text}")
+                            logger.error(f"上传文件到Dify失败: {response_status}, 响应: {response_text[:200]}")
+                            return {"error": f"上传文件失败: 状态码={response_status}, 响应={response_text[:200]}"}
+                except Exception as e:
+                    file_logger.error(f"发送文件上传请求时出错: {e}")
+                    file_logger.exception(e)
+                    logger.error(f"发送文件上传请求时出错: {e}")
+                    return {"error": f"发送文件上传请求时出错: {str(e)}"}
+
+                # 处理成功响应
+                try:
                     result = await response.json()
-                    file_logger.info(f"成功上传文件到Dify: {file_name}, 文件ID: {result.get('id')}")
+                    file_id = result.get('id')
+                    if not file_id:
+                        file_logger.error(f"上传文件成功但未返回文件ID: {result}")
+                        logger.error(f"上传文件成功但未返回文件ID")
+                        return {"error": "上传文件成功但未返回文件ID"}
+
+                    file_logger.info(f"成功上传文件到Dify: {file_name}, 文件ID: {file_id}")
                     file_logger.debug(f"上传文件完整响应: {result}")
-                    logger.info(f"成功上传文件到Dify: {file_name}, 文件ID: {result.get('id')}")
+                    logger.info(f"成功上传文件到Dify: {file_name}, 文件ID: {file_id}")
 
                     # 添加文件类型信息到结果中
                     result['dify_file_type'] = dify_file_type
+
+                    # 记录更多详细信息
+                    file_logger.debug(f"文件上传成功详情: ID={file_id}, 类型={dify_file_type}, 名称={file_name}")
                     return result
+                except Exception as e:
+                    file_logger.error(f"解析上传响应时出错: {e}")
+                    file_logger.exception(e)
+                    logger.error(f"解析上传响应时出错: {e}")
+                    return {"error": f"解析上传响应时出错: {str(e)}"}
 
         except Exception as e:
             file_logger.error(f"上传文件到Dify时出错: {e}")
@@ -416,11 +488,51 @@ class DifyPlatform(ServicePlatform):
                 # 上传文件到Dify
                 file_path = message['local_file_path']
                 file_logger.info(f"准备上传文件到Dify: {file_path}")
+
+                # 检查文件是否存在
+                import os
+                if not os.path.exists(file_path):
+                    # 如果只提供了文件名，尝试构建完整路径
+                    if not os.path.dirname(file_path):
+                        from pathlib import Path
+                        import sys
+
+                        # 确定项目根目录
+                        if getattr(sys, 'frozen', False):
+                            # 打包环境 - 使用可执行文件所在目录
+                            project_root = os.path.dirname(sys.executable)
+                        else:
+                            # 开发环境 - 使用项目根目录
+                            project_root = Path(__file__).parent.parent.parent
+
+                        download_dir = os.path.join(project_root, "data", "downloads")
+                        full_path = os.path.join(download_dir, file_path)
+
+                        file_logger.debug(f"尝试构建完整文件路径: {full_path}")
+
+                        if os.path.exists(full_path):
+                            file_path = full_path
+                            file_logger.info(f"找到文件的完整路径: {file_path}")
+                        else:
+                            file_logger.error(f"文件不存在: 原始路径={file_path}, 尝试的完整路径={full_path}")
+                            logger.error(f"文件不存在，无法上传")
+                            return {"error": f"文件不存在: {file_path}"}
+                    else:
+                        file_logger.error(f"文件不存在: {file_path}")
+                        logger.error(f"文件不存在，无法上传")
+                        return {"error": f"文件不存在: {file_path}"}
+
+                # 记录文件信息
+                file_size = os.path.getsize(file_path)
+                file_logger.debug(f"准备上传的文件: 路径={file_path}, 大小={file_size}字节")
+
+                # 上传文件
                 upload_result = await self.upload_file_to_dify(file_path)
 
                 if 'error' in upload_result:
                     file_logger.error(f"上传文件失败: {upload_result['error']}")
                     logger.error(f"上传文件失败: {upload_result['error']}")
+                    return {"error": f"上传文件失败: {upload_result['error']}"}
                 else:
                     # 获取文件ID
                     file_id = upload_result.get('id')
@@ -447,6 +559,10 @@ class DifyPlatform(ServicePlatform):
                         file_logger.debug(f"完整的文件信息: {file_info}")
                         file_logger.debug(f"当前请求数据: {request_data}")
                         logger.info(f"添加文件到请求: {file_id}, 类型: {dify_file_type}")
+                    else:
+                        file_logger.error("文件上传成功但未获取到文件ID")
+                        logger.error("文件上传成功但未获取到文件ID")
+                        return {"error": "文件上传成功但未获取到文件ID"}
 
             # 发送请求 - 使用主日志记录器记录详细信息
             logger.info(f"准备调用Dify API: URL={self.api_base}/chat-messages")

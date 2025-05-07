@@ -447,13 +447,19 @@ class WxAutoApiClient:
             data = {'file_path': file_path_fixed}
             file_logger.debug(f"下载文件请求数据: {data}")
 
+            # 记录文件路径信息，便于调试
+            file_logger.debug(f"文件路径详情: 原始={file_path}, 修正后={file_path_fixed}")
+            file_logger.debug(f"文件名: {os.path.basename(file_path_fixed)}")
+
             # 构建完整的API URL和请求头
             url = f"{self.base_url}/api/file/download"
             headers = {
                 'X-API-Key': self.api_key,
                 'Content-Type': 'application/json'
             }
+
             file_logger.debug(f"下载文件请求URL: {url}")
+            file_logger.debug(f"下载文件请求头: {headers}")
 
             # 记录完整的curl命令，方便调试
             curl_cmd = f"""curl -X POST '{url}' \\
