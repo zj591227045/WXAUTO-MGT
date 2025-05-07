@@ -16,10 +16,12 @@ from typing import Dict, Any, Optional, List
 
 import aiohttp
 
-# 导入标准日志记录器
-logger = logging.getLogger(__name__)
+# 导入标准日志记录器 - 使用主日志记录器，确保所有日志都记录到主日志文件
+logger = logging.getLogger('wxauto_mgt')
+# 设置为DEBUG级别，确保捕获所有详细日志
+logger.setLevel(logging.DEBUG)
 
-# 导入文件处理专用日志记录器
+# 导入文件处理专用日志记录器 - 现在也使用主日志记录器
 from wxauto_mgt.utils import file_logger
 
 class ServicePlatform(ABC):
@@ -433,9 +435,16 @@ class DifyPlatform(ServicePlatform):
                         file_logger.debug(f"当前请求数据: {request_data}")
                         logger.info(f"添加文件到请求: {file_id}, 类型: {dify_file_type}")
 
-            # 发送请求
-            file_logger.debug(f"准备发送消息到Dify API，请求数据: {request_data}")
-            logger.debug(f"准备发送消息到Dify API")
+            # 发送请求 - 使用主日志记录器记录详细信息
+            logger.info(f"准备调用Dify API: URL={self.api_base}/chat-messages")
+            logger.debug(f"Dify API完整请求数据: {json.dumps(request_data, ensure_ascii=False, indent=2)}")
+
+            # 记录请求中的关键信息
+            if 'conversation_id' in request_data:
+                logger.info(f"使用会话ID: {request_data['conversation_id']}")
+            if 'files' in request_data:
+                file_ids = [f.get('upload_file_id') for f in request_data.get('files', [])]
+                logger.info(f"请求包含文件: {file_ids}")
 
             chat_url = f"{self.api_base}/chat-messages"
             headers = {
@@ -443,7 +452,15 @@ class DifyPlatform(ServicePlatform):
                 "Content-Type": "application/json"
             }
 
-            file_logger.debug(f"发送请求: URL={chat_url}, 头信息={headers}")
+            # 记录请求头（隐藏API密钥）
+            safe_headers = headers.copy()
+            if 'Authorization' in safe_headers:
+                safe_headers['Authorization'] = 'Bearer ******'
+            logger.debug(f"Dify API请求头: {safe_headers}")
+
+            # 记录请求开始时间
+            start_time = time.time()
+            logger.info(f"开始发送Dify API请求: {time.strftime('%H:%M:%S')}")
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -451,8 +468,10 @@ class DifyPlatform(ServicePlatform):
                     headers=headers,
                     json=request_data
                 ) as response:
+                    # 记录响应时间和状态
+                    response_time = time.time() - start_time
                     response_status = response.status
-                    file_logger.debug(f"Dify API响应状态码: {response_status}")
+                    logger.info(f"收到Dify API响应: 状态码={response_status}, 耗时={response_time:.2f}秒")
 
                     if response_status == 404 and ('conversation_id' in request_data):
                         # 会话不存在，清除会话ID并重试
@@ -509,12 +528,18 @@ class DifyPlatform(ServicePlatform):
                         return {"error": f"API错误: {response_status}"}
                     else:
                         result = await response.json()
-                        file_logger.debug(f"Dify API响应数据: {result}")
+
+                        # 记录响应摘要
+                        answer = result.get("answer", "")
+                        logger.info(f"收到Dify响应: 长度={len(answer)}")
+                        logger.debug(f"Dify响应摘要: {answer[:100]}{'...' if len(answer) > 100 else ''}")
+
+                        # 记录完整响应（仅在DEBUG级别）
+                        logger.debug(f"Dify完整响应: {json.dumps(result, ensure_ascii=False, indent=2)}")
 
                         # 检查是否包含文件信息的请求
                         if "files" in request_data:
-                            file_logger.info(f"包含文件的请求成功发送，响应状态码: {response_status}")
-                            logger.info(f"包含文件的请求成功发送")
+                            logger.info(f"包含文件的请求成功发送，响应状态码: {response_status}, 响应长度: {len(answer)}")
 
                     # 获取会话ID
                     new_conversation_id = result.get("conversation_id", "")
@@ -569,32 +594,58 @@ class DifyPlatform(ServicePlatform):
                 return {"error": "API基础URL或API密钥未设置"}
 
             # 使用更简单的API端点测试连接，避免创建新的聊天消息
+            logger.info(f"测试Dify API连接: URL={self.api_base}/app-info")
+
+            # 记录请求头（隐藏API密钥）
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            safe_headers = headers.copy()
+            if 'Authorization' in safe_headers:
+                safe_headers['Authorization'] = 'Bearer ******'
+            logger.debug(f"Dify API测试请求头: {safe_headers}")
+
+            # 记录请求开始时间
+            start_time = time.time()
+
             # 尝试获取应用信息而不是发送消息
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{self.api_base}/app-info",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    }
+                    headers=headers
                 ) as response:
+                    # 记录响应时间和状态
+                    response_time = time.time() - start_time
+                    logger.info(f"收到Dify API测试响应: 状态码={response.status}, 耗时={response_time:.2f}秒")
+
                     if response.status != 200:
+                        logger.warning(f"Dify app-info端点不可用，尝试使用parameters端点")
+
+                        # 记录备用请求开始时间
+                        fallback_start_time = time.time()
+
                         # 如果app-info端点不可用，尝试使用其他端点
-                        # 但不发送实际的聊天消息
                         async with session.get(
                             f"{self.api_base}/parameters",
-                            headers={
-                                "Authorization": f"Bearer {self.api_key}",
-                                "Content-Type": "application/json"
-                            }
+                            headers=headers
                         ) as fallback_response:
+                            # 记录备用响应时间和状态
+                            fallback_response_time = time.time() - fallback_start_time
+                            logger.info(f"收到Dify parameters端点响应: 状态码={fallback_response.status}, 耗时={fallback_response_time:.2f}秒")
+
                             if fallback_response.status != 200:
                                 error_text = await fallback_response.text()
-                                return {"error": f"API错误: {fallback_response.status}, {error_text}"}
+                                logger.error(f"Dify API测试错误: 状态码={fallback_response.status}, 错误信息={error_text}")
+                                return {"error": f"API错误: {fallback_response.status}, {error_text[:200]}"}
 
                             result = await fallback_response.json()
+                            logger.info("Dify API测试成功(使用parameters端点)")
+                            logger.debug(f"Dify parameters响应: {json.dumps(result, ensure_ascii=False, indent=2)}")
                     else:
                         result = await response.json()
+                        logger.info("Dify API测试成功(使用app-info端点)")
+                        logger.debug(f"Dify app-info响应: {json.dumps(result, ensure_ascii=False, indent=2)}")
 
                     return {
                         "success": True,
@@ -675,28 +726,62 @@ class OpenAIPlatform(ServicePlatform):
                 {"role": "user", "content": message['content']}
             ]
 
+            # 记录API调用详情
+            logger.info(f"准备调用OpenAI API: URL={self.api_base}/chat/completions, 模型={self.model}")
+            logger.debug(f"OpenAI请求消息: {json.dumps(messages, ensure_ascii=False, indent=2)}")
+
+            # 构建请求体
+            request_body = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens
+            }
+
+            # 记录请求体
+            logger.debug(f"OpenAI API完整请求体: {json.dumps(request_body, ensure_ascii=False, indent=2)}")
+
+            # 记录请求头（隐藏API密钥）
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            safe_headers = headers.copy()
+            if 'Authorization' in safe_headers:
+                safe_headers['Authorization'] = 'Bearer ******'
+            logger.debug(f"OpenAI API请求头: {safe_headers}")
+
+            # 记录请求开始时间
+            start_time = time.time()
+            logger.info(f"开始发送OpenAI API请求: {time.strftime('%H:%M:%S')}")
+
             # 发送请求
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{self.api_base}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "temperature": self.temperature,
-                        "max_tokens": self.max_tokens
-                    }
+                    headers=headers,
+                    json=request_body
                 ) as response:
+                    # 记录响应时间和状态
+                    response_time = time.time() - start_time
+                    logger.info(f"收到OpenAI API响应: 状态码={response.status}, 耗时={response_time:.2f}秒")
+
                     if response.status != 200:
                         error_text = await response.text()
-                        logger.error(f"OpenAI API错误: {response.status}, {error_text}")
-                        return {"error": f"API错误: {response.status}"}
+                        logger.error(f"OpenAI API错误: 状态码={response.status}, 错误信息={error_text}")
+                        return {"error": f"API错误: {response.status}, {error_text[:200]}"}
 
                     result = await response.json()
+
+                    # 记录响应摘要
                     content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    logger.info(f"收到OpenAI响应: 长度={len(content)}")
+                    logger.debug(f"OpenAI响应摘要: {content[:100]}{'...' if len(content) > 100 else ''}")
+
+                    # 记录完整响应（仅在DEBUG级别）
+                    logger.debug(f"OpenAI完整响应: {json.dumps(result, ensure_ascii=False, indent=2)}")
+
+                    logger.info(f"OpenAI API调用完成: 响应长度={len(content)}")
                     return {
                         "content": content,
                         "raw_response": result
@@ -717,19 +802,46 @@ class OpenAIPlatform(ServicePlatform):
                 return {"error": "API密钥未设置"}
 
             # 使用模型列表API测试连接，避免创建聊天完成
+            logger.info(f"测试OpenAI API连接: URL={self.api_base}/models")
+
+            # 记录请求头（隐藏API密钥）
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            safe_headers = headers.copy()
+            if 'Authorization' in safe_headers:
+                safe_headers['Authorization'] = 'Bearer ******'
+            logger.debug(f"OpenAI API测试请求头: {safe_headers}")
+
+            # 记录请求开始时间
+            start_time = time.time()
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{self.api_base}/models",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    }
+                    headers=headers
                 ) as response:
+                    # 记录响应时间和状态
+                    response_time = time.time() - start_time
+                    logger.info(f"收到OpenAI API测试响应: 状态码={response.status}, 耗时={response_time:.2f}秒")
+
                     if response.status != 200:
                         error_text = await response.text()
-                        return {"error": f"API错误: {response.status}, {error_text}"}
+                        logger.error(f"OpenAI API测试错误: 状态码={response.status}, 错误信息={error_text}")
+                        return {"error": f"API错误: {response.status}, {error_text[:200]}"}
 
                     result = await response.json()
+
+                    # 记录响应摘要
+                    model_count = len(result.get("data", []))
+                    logger.info(f"OpenAI API测试成功: 获取到 {model_count} 个模型")
+
+                    # 记录可用模型列表（仅在DEBUG级别）
+                    if model_count > 0:
+                        model_ids = [model.get("id") for model in result.get("data", [])]
+                        logger.debug(f"可用模型列表: {model_ids}")
+
                     return {
                         "success": True,
                         "message": "连接成功",
