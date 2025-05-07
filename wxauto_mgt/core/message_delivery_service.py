@@ -639,21 +639,137 @@ class MessageDeliveryService:
 
                     # 如果是Dify平台，需要先上传文件
                     try:
+                        # 创建专用的Dify上传调试日志记录器
+                        import logging
+                        import os
+                        import sys
+                        from pathlib import Path
+
+                        dify_debug_logger = logging.getLogger('dify_upload_debug')
+                        if not dify_debug_logger.handlers:
+                            # 确定日志文件路径
+                            if getattr(sys, 'frozen', False):
+                                # 打包环境 - 使用可执行文件所在目录
+                                project_root = os.path.dirname(sys.executable)
+                            else:
+                                # 开发环境 - 使用项目根目录
+                                project_root = Path(__file__).parent.parent.parent
+
+                            log_dir = os.path.join(project_root, "data", "logs")
+                            os.makedirs(log_dir, exist_ok=True)
+
+                            log_file = os.path.join(log_dir, "dify_upload_debug.log")
+
+                            # 创建文件处理器
+                            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+                            file_handler.setLevel(logging.DEBUG)
+                            formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
+                            file_handler.setFormatter(formatter)
+                            dify_debug_logger.addHandler(file_handler)
+                            dify_debug_logger.setLevel(logging.DEBUG)
+
+                            # 添加控制台处理器
+                            console_handler = logging.StreamHandler()
+                            console_handler.setLevel(logging.DEBUG)
+                            console_handler.setFormatter(formatter)
+                            dify_debug_logger.addHandler(console_handler)
+
+                            dify_debug_logger.info("Dify上传调试日志记录器已初始化 (message_delivery_service)")
+
                         # 强制检查平台类型，确保是Dify平台
                         platform_type = platform.get_type() if hasattr(platform, "get_type") else "unknown"
                         file_logger.info(f"平台类型: {platform_type}")
+                        dify_debug_logger.info(f"平台类型: {platform_type}")
+
+                        # 记录平台详细信息
+                        dify_debug_logger.info(f"平台ID: {platform.platform_id if hasattr(platform, 'platform_id') else 'unknown'}")
+                        dify_debug_logger.info(f"平台名称: {platform.name if hasattr(platform, 'name') else 'unknown'}")
+                        dify_debug_logger.info(f"平台API基础URL: {platform.api_base if hasattr(platform, 'api_base') else 'unknown'}")
+
+                        # 记录消息ID和类型
+                        message_id = processed_message.get('message_id', 'unknown')
+                        dify_debug_logger.info(f"处理消息: ID={message_id}, 类型={processed_message.get('mtype', 'unknown')}")
 
                         if platform_type == "dify" and hasattr(platform, "upload_file_to_dify"):
                             file_path = processed_message['local_file_path']
                             file_logger.info(f"准备上传文件到Dify: {file_path}")
+                            dify_debug_logger.info(f"准备上传文件到Dify: {file_path}")
+
+                            # 检查文件是否存在
+                            if os.path.exists(file_path):
+                                dify_debug_logger.info(f"文件存在，大小: {os.path.getsize(file_path)} 字节")
+                            else:
+                                dify_debug_logger.error(f"文件不存在: {file_path}")
+                                # 尝试构建完整路径
+                                if not os.path.dirname(file_path):
+                                    # 确定项目根目录
+                                    if getattr(sys, 'frozen', False):
+                                        # 打包环境 - 使用可执行文件所在目录
+                                        project_root = os.path.dirname(sys.executable)
+                                    else:
+                                        # 开发环境 - 使用项目根目录
+                                        project_root = Path(__file__).parent.parent.parent
+
+                                    download_dir = os.path.join(project_root, "data", "downloads")
+                                    full_path = os.path.join(download_dir, file_path)
+
+                                    dify_debug_logger.info(f"尝试构建完整路径: {full_path}")
+
+                                    if os.path.exists(full_path):
+                                        dify_debug_logger.info(f"找到文件的完整路径: {full_path}")
+                                        file_path = full_path
+                                    else:
+                                        dify_debug_logger.error(f"文件不存在: 原始路径={file_path}, 尝试的完整路径={full_path}")
 
                             # 先上传文件到Dify
-                            upload_result = await platform.upload_file_to_dify(file_path)
-                            file_logger.debug(f"上传结果: {upload_result}")
+                            dify_debug_logger.info(f"调用platform.upload_file_to_dify({file_path})...")
+                            print(f"[DEBUG] 开始上传文件到Dify: {file_path}")
+
+                            # 记录文件详细信息
+                            try:
+                                import os
+                                if os.path.exists(file_path):
+                                    file_size = os.path.getsize(file_path)
+                                    file_name = os.path.basename(file_path)
+                                    file_ext = os.path.splitext(file_path)[1]
+                                    dify_debug_logger.info(f"文件详情: 名称={file_name}, 大小={file_size}字节, 扩展名={file_ext}")
+                                    print(f"[DEBUG] 文件详情: 名称={file_name}, 大小={file_size}字节, 扩展名={file_ext}")
+
+                                    # 检查文件权限
+                                    try:
+                                        with open(file_path, 'rb') as f:
+                                            test_read = f.read(10)
+                                        dify_debug_logger.info(f"文件可读取，前10个字节: {test_read}")
+                                        print(f"[DEBUG] 文件可读取")
+                                    except Exception as e:
+                                        dify_debug_logger.error(f"文件读取测试失败: {e}")
+                                        print(f"[ERROR] 文件读取测试失败: {e}")
+                                else:
+                                    dify_debug_logger.error(f"文件不存在: {file_path}")
+                                    print(f"[ERROR] 文件不存在: {file_path}")
+                            except Exception as e:
+                                dify_debug_logger.error(f"检查文件详情时出错: {e}")
+                                print(f"[ERROR] 检查文件详情时出错: {e}")
+
+                            # 执行上传
+                            try:
+                                upload_result = await platform.upload_file_to_dify(file_path)
+                                file_logger.debug(f"上传结果: {upload_result}")
+                                dify_debug_logger.info(f"上传结果: {upload_result}")
+                                print(f"[DEBUG] 上传结果: {upload_result}")
+                            except Exception as e:
+                                dify_debug_logger.error(f"调用upload_file_to_dify时出错: {e}")
+                                print(f"[ERROR] 调用upload_file_to_dify时出错: {e}")
+                                import traceback
+                                tb = traceback.format_exc()
+                                dify_debug_logger.error(f"错误堆栈: {tb}")
+                                print(f"[ERROR] 错误堆栈: {tb}")
+                                raise
 
                             if 'error' in upload_result:
                                 file_logger.error(f"上传文件失败: {upload_result['error']}")
                                 logger.error(f"上传文件失败: {upload_result['error']}")
+                                dify_debug_logger.error(f"上传文件失败: {upload_result['error']}")
                                 # 如果上传失败，返回错误，不继续处理
                                 return {"error": f"上传文件失败: {upload_result['error']}"}
                             else:
@@ -661,9 +777,11 @@ class MessageDeliveryService:
                                 file_id = upload_result.get('id')
                                 if file_id:
                                     file_logger.info(f"文件上传成功，获取到文件ID: {file_id}")
+                                    dify_debug_logger.info(f"文件上传成功，获取到文件ID: {file_id}")
 
                                     # 从上传结果中获取Dify文件类型
                                     dify_file_type = upload_result.get('dify_file_type', 'document')
+                                    dify_debug_logger.info(f"文件类型: {dify_file_type}")
 
                                     # 添加文件信息到消息中
                                     processed_message['dify_file'] = {
@@ -674,15 +792,47 @@ class MessageDeliveryService:
 
                                     file_logger.info(f"已添加文件信息到消息: {file_id}, 类型: {dify_file_type}")
                                     logger.info(f"已添加文件信息到消息: {file_id}")
+                                    dify_debug_logger.info(f"已添加文件信息到消息: {file_id}, 类型: {dify_file_type}")
+                                    dify_debug_logger.info(f"消息处理完成，准备发送到Dify")
                                 else:
                                     # 如果没有获取到文件ID，返回错误，不继续处理
                                     file_logger.error("上传文件成功但未获取到文件ID")
+                                    dify_debug_logger.error("上传文件成功但未获取到文件ID")
                                     return {"error": "上传文件成功但未获取到文件ID"}
                         else:
                             file_logger.warning(f"不是Dify平台或平台不支持上传文件: platform_type={platform_type}, has_upload_method={hasattr(platform, 'upload_file_to_dify')}")
+                            dify_debug_logger.warning(f"不是Dify平台或平台不支持上传文件: platform_type={platform_type}, has_upload_method={hasattr(platform, 'upload_file_to_dify')}")
                     except Exception as e:
                         file_logger.error(f"处理文件上传时出错: {e}")
                         file_logger.exception(e)
+
+                        # 确保dify_debug_logger已初始化
+                        try:
+                            dify_debug_logger.error(f"处理文件上传时出错: {e}")
+                            dify_debug_logger.exception(e)
+
+                            # 记录更详细的错误信息
+                            import traceback
+                            error_traceback = traceback.format_exc()
+                            dify_debug_logger.error(f"详细错误堆栈: {error_traceback}")
+
+                            # 检查是否与文件相关的错误
+                            error_str = str(e).lower()
+                            if 'file' in error_str or 'upload' in error_str or 'permission' in error_str:
+                                dify_debug_logger.error(f"检测到可能与文件相关的错误: {e}")
+
+                            # 记录文件路径信息
+                            if 'file_path' in locals():
+                                dify_debug_logger.error(f"错误发生时的文件路径: {file_path}")
+
+                            # 记录平台信息
+                            if platform and hasattr(platform, 'get_type'):
+                                dify_debug_logger.error(f"平台类型: {platform.get_type()}")
+                            if platform and hasattr(platform, 'platform_id'):
+                                dify_debug_logger.error(f"平台ID: {platform.platform_id}")
+                        except Exception as inner_e:
+                            file_logger.error(f"记录错误详情时出错: {inner_e}")
+
                         # 如果处理文件上传时出错，返回错误，不继续处理
                         return {"error": f"处理文件上传时出错: {str(e)}"}
 
@@ -690,13 +840,86 @@ class MessageDeliveryService:
             file_logger.info(f"准备调用平台处理消息: {message_id}, 平台类型: {platform.get_type() if hasattr(platform, 'get_type') else 'unknown'}")
             file_logger.debug(f"处理前的消息数据: {processed_message}")
 
+            # 确保dify_debug_logger已初始化
+            try:
+                dify_debug_logger.info(f"准备调用平台处理消息: {message_id}, 平台类型: {platform.get_type() if hasattr(platform, 'get_type') else 'unknown'}")
+                print(f"[DEBUG] 准备调用平台处理消息: {message_id}, 平台类型: {platform.get_type() if hasattr(platform, 'get_type') else 'unknown'}")
+            except Exception as e:
+                # 如果dify_debug_logger未定义，创建一个新的
+                import logging
+                import os
+                import sys
+                from pathlib import Path
+
+                dify_debug_logger = logging.getLogger('dify_upload_debug')
+                if not dify_debug_logger.handlers:
+                    # 确定日志文件路径
+                    if getattr(sys, 'frozen', False):
+                        # 打包环境 - 使用可执行文件所在目录
+                        project_root = os.path.dirname(sys.executable)
+                    else:
+                        # 开发环境 - 使用项目根目录
+                        project_root = Path(__file__).parent.parent.parent
+
+                    log_dir = os.path.join(project_root, "data", "logs")
+                    os.makedirs(log_dir, exist_ok=True)
+
+                    log_file = os.path.join(log_dir, "dify_upload_debug.log")
+
+                    # 创建文件处理器
+                    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+                    file_handler.setLevel(logging.DEBUG)
+                    formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
+                    file_handler.setFormatter(formatter)
+                    dify_debug_logger.addHandler(file_handler)
+                    dify_debug_logger.setLevel(logging.DEBUG)
+
+                dify_debug_logger.info(f"准备调用平台处理消息: {message_id}, 平台类型: {platform.get_type() if hasattr(platform, 'get_type') else 'unknown'}")
+                print(f"[DEBUG] 准备调用平台处理消息: {message_id}, 平台类型: {platform.get_type() if hasattr(platform, 'get_type') else 'unknown'}")
+
             # 检查是否包含文件信息
             if 'dify_file' in processed_message:
                 file_logger.info(f"消息包含已上传的文件信息: {processed_message.get('dify_file')}")
+                dify_debug_logger.info(f"消息包含已上传的文件信息: {processed_message.get('dify_file')}")
+                print(f"[DEBUG] 消息包含已上传的文件信息: {processed_message.get('dify_file')}")
             elif 'local_file_path' in processed_message:
                 file_logger.info(f"消息包含本地文件路径: {processed_message.get('local_file_path')}")
+                dify_debug_logger.info(f"消息包含本地文件路径: {processed_message.get('local_file_path')}")
+                print(f"[DEBUG] 消息包含本地文件路径: {processed_message.get('local_file_path')}")
+            else:
+                dify_debug_logger.warning(f"消息不包含文件信息，但之前已上传文件")
+                print(f"[WARNING] 消息不包含文件信息，但之前已上传文件")
 
-            result = await platform.process_message(processed_message)
+            # 记录会话ID
+            if 'conversation_id' in processed_message:
+                dify_debug_logger.info(f"使用会话ID: {processed_message['conversation_id']}")
+                print(f"[DEBUG] 使用会话ID: {processed_message['conversation_id']}")
+            else:
+                dify_debug_logger.info("未使用会话ID，将创建新会话")
+                print(f"[DEBUG] 未使用会话ID，将创建新会话")
+
+            # 记录完整的消息数据
+            dify_debug_logger.info(f"完整的消息数据: {processed_message}")
+            print(f"[DEBUG] 完整的消息数据: {processed_message}")
+
+            # 调用平台处理消息
+            try:
+                dify_debug_logger.info("开始调用platform.process_message...")
+                print(f"[DEBUG] 开始调用platform.process_message...")
+                result = await platform.process_message(processed_message)
+                dify_debug_logger.info(f"平台处理消息完成: {message_id}")
+                dify_debug_logger.info(f"处理结果: {result}")
+                print(f"[DEBUG] 平台处理消息完成: {message_id}")
+                print(f"[DEBUG] 处理结果: {result}")
+            except Exception as e:
+                dify_debug_logger.error(f"调用platform.process_message时出错: {e}")
+                print(f"[ERROR] 调用platform.process_message时出错: {e}")
+                import traceback
+                tb = traceback.format_exc()
+                dify_debug_logger.error(f"错误堆栈: {tb}")
+                print(f"[ERROR] 错误堆栈: {tb}")
+                raise
+
             file_logger.info(f"平台处理消息完成: {message_id}")
             file_logger.debug(f"处理结果: {result}")
 
