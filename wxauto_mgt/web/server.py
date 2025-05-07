@@ -87,9 +87,18 @@ def create_app(config: Optional[Dict[str, Any]] = None) -> "FastAPI":
             )
 
         # 挂载前端静态文件
-        frontend_path = os.path.join(os.path.dirname(__file__), "frontend", "dist")
-        if os.path.exists(frontend_path):
-            app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+        try:
+            frontend_path = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+            # 确保路径存在
+            if os.path.exists(frontend_path):
+                logger.info(f"挂载前端静态文件: {frontend_path}")
+                app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+            else:
+                logger.warning(f"前端静态文件路径不存在: {frontend_path}")
+        except Exception as e:
+            logger.error(f"挂载前端静态文件失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
         # 启动和关闭事件
         @app.on_event("startup")

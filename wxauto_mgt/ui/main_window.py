@@ -555,6 +555,15 @@ class MainWindow(QMainWindow):
             port: 端口号
         """
         try:
+            # 确保端口是整数
+            if isinstance(port, str):
+                try:
+                    port = int(port)
+                except ValueError:
+                    self.status_changed.emit(f"无效的端口号: {port}", 3000)
+                    logger.error(f"无效的端口号: {port}")
+                    return
+
             # 更新配置
             config = get_web_service_config()
             config['port'] = port
@@ -568,6 +577,30 @@ class MainWindow(QMainWindow):
                 # 确保配置中不包含debug参数
                 if 'debug' in config:
                     del config['debug']
+
+                # 检查依赖项
+                try:
+                    import fastapi
+                    import uvicorn
+                    import jose
+                    import passlib
+                except ImportError as e:
+                    error_msg = f"缺少必要的依赖项: {e}\n请安装: pip install fastapi uvicorn python-jose[cryptography] passlib[bcrypt]"
+                    self.status_changed.emit(f"启动Web服务失败: 缺少依赖项", 3000)
+                    logger.error(error_msg)
+                    return
+
+                # 检查端口是否被占用
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                try:
+                    sock.bind(('127.0.0.1', port))
+                    sock.close()
+                except socket.error:
+                    error_msg = f"端口 {port} 已被占用，请尝试其他端口"
+                    self.status_changed.emit(error_msg, 3000)
+                    logger.error(error_msg)
+                    return
 
                 success = await start_web_service(config)
 
@@ -586,8 +619,10 @@ class MainWindow(QMainWindow):
             # 更新状态显示
             self._update_web_service_status()
         except Exception as e:
+            import traceback
+            error_msg = f"启动Web服务时出错: {str(e)}\n{traceback.format_exc()}"
             self.status_changed.emit(f"启动Web服务时出错: {str(e)}", 3000)
-            logger.error(f"启动Web服务时出错: {e}")
+            logger.error(error_msg)
 
     async def _stop_web_service(self):
         """停止Web服务"""
