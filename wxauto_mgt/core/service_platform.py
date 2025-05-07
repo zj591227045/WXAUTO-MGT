@@ -305,26 +305,61 @@ class DifyPlatform(ServicePlatform):
             is_file_message = 'dify_file' in message or ('local_file_path' in message and message.get('file_type') in ['image', 'file'])
 
             # 构建请求数据
+            # 获取发送者和聊天名称
+            sender = message.get('sender', '')
+            chat_name = message.get('chat_name', '')
+
+            # 根据消息对象名称与发送者名称是否相同来判断群聊
+            # 当消息对象名称与发送者名称不同时，则判定为群聊
+            if sender and chat_name and sender != chat_name:
+                # 对于群聊消息，使用"群聊名称==发送者"格式的用户ID
+                combined_user_id = f"{chat_name}=={sender}"
+                file_logger.info(f"群聊消息，使用组合用户ID: {combined_user_id}")
+                user_id = combined_user_id
+            else:
+                # 对于私聊消息，使用原始发送者ID
+                user_id = sender or self.user_id
+                file_logger.info(f"私聊消息，使用原始用户ID: {user_id}")
+
             request_data = {
                 "inputs": {},
                 # 如果是文件类型消息，使用空格作为query，否则使用原始内容
                 "query": " " if is_file_message else message['content'],
                 "response_mode": "blocking",
-                "user": message.get('sender', '') or self.user_id
+                "user": user_id
             }
 
             file_logger.debug(f"初始请求数据: {request_data}")
 
-            # 检查消息中是否包含会话ID（从监听对象获取）
-            message_conversation_id = message.get('conversation_id', '')
+            # 导入用户会话管理器
+            from .user_conversation_manager import user_conversation_manager
 
-            # 优先使用消息中的会话ID，其次使用平台配置的会话ID
-            if message_conversation_id:
-                request_data["conversation_id"] = message_conversation_id
-                file_logger.debug(f"使用消息中的会话ID: {message_conversation_id}")
-            elif self.conversation_id:
-                request_data["conversation_id"] = self.conversation_id
-                file_logger.debug(f"使用平台配置的会话ID: {self.conversation_id}")
+            # 获取实例ID和平台ID
+            instance_id = message.get('instance_id', '')
+            platform_id = self.platform_id
+
+            # 尝试从用户会话管理器获取会话ID
+            conversation_id = None
+            if instance_id and chat_name and user_id and platform_id:
+                conversation_id = await user_conversation_manager.get_conversation_id(
+                    instance_id, chat_name, user_id, platform_id
+                )
+                if conversation_id:
+                    request_data["conversation_id"] = conversation_id
+                    file_logger.debug(f"从用户会话管理器获取会话ID: {conversation_id}")
+
+            # 如果用户会话管理器中没有会话ID，则尝试使用消息中的会话ID或平台配置的会话ID
+            if not conversation_id:
+                # 检查消息中是否包含会话ID（从监听对象获取）
+                message_conversation_id = message.get('conversation_id', '')
+
+                # 优先使用消息中的会话ID，其次使用平台配置的会话ID
+                if message_conversation_id:
+                    request_data["conversation_id"] = message_conversation_id
+                    file_logger.debug(f"使用消息中的会话ID: {message_conversation_id}")
+                elif self.conversation_id:
+                    request_data["conversation_id"] = self.conversation_id
+                    file_logger.debug(f"使用平台配置的会话ID: {self.conversation_id}")
 
             # 处理文件类型消息
             # 检查是否已经在deliver_message中处理过文件上传
@@ -419,12 +454,32 @@ class DifyPlatform(ServicePlatform):
                     response_status = response.status
                     file_logger.debug(f"Dify API响应状态码: {response_status}")
 
-                    if response_status == 404 and self.conversation_id:
+                    if response_status == 404 and ('conversation_id' in request_data):
                         # 会话不存在，清除会话ID并重试
-                        file_logger.warning(f"会话ID {self.conversation_id} 不存在，将创建新会话")
-                        logger.warning(f"会话ID {self.conversation_id} 不存在，将创建新会话")
-                        self.conversation_id = ""
-                        self.config["conversation_id"] = ""
+                        invalid_conversation_id = request_data.get('conversation_id', '')
+                        file_logger.warning(f"会话ID {invalid_conversation_id} 不存在，将创建新会话")
+                        logger.warning(f"会话ID {invalid_conversation_id} 不存在，将创建新会话")
+
+                        # 如果是平台配置的会话ID，清除它
+                        if self.conversation_id == invalid_conversation_id:
+                            self.conversation_id = ""
+                            self.config["conversation_id"] = ""
+                            file_logger.info("已清除平台配置的会话ID")
+
+                        # 从用户会话管理器中删除无效的会话ID
+                        instance_id = message.get('instance_id', '')
+                        platform_id = self.platform_id
+                        if instance_id and chat_name and user_id and platform_id:
+                            await user_conversation_manager.delete_conversation_id(
+                                instance_id, chat_name, user_id, platform_id
+                            )
+                            file_logger.info(f"已从用户会话管理器中删除无效会话ID: {instance_id} - {chat_name} - {user_id}")
+
+                        # 如果是消息中的会话ID，需要从数据库中清除
+                        if message.get('conversation_id') == invalid_conversation_id:
+                            # 记录需要清除的会话ID信息，但不在这里执行清除操作
+                            # 清除操作将在message_delivery_service.py中处理
+                            file_logger.info(f"需要清除监听对象的无效会话ID: {message.get('instance_id')} - {message.get('chat_name')}")
 
                         # 移除会话ID并重新构建请求
                         request_data.pop("conversation_id", None)
@@ -466,7 +521,18 @@ class DifyPlatform(ServicePlatform):
 
                     # 如果获取到新的会话ID
                     if new_conversation_id:
-                        # 如果消息中没有会话ID或平台没有会话ID，保存新的会话ID
+                        # 获取实例ID和平台ID
+                        instance_id = message.get('instance_id', '')
+                        platform_id = self.platform_id
+
+                        # 保存会话ID到用户会话管理器
+                        if instance_id and chat_name and user_id and platform_id:
+                            await user_conversation_manager.save_conversation_id(
+                                instance_id, chat_name, user_id, platform_id, new_conversation_id
+                            )
+                            file_logger.info(f"已更新用户会话ID: {instance_id} - {chat_name} - {user_id} - {new_conversation_id}")
+
+                        # 如果消息中没有会话ID或平台没有会话ID，保存新的会话ID到平台配置
                         message_conversation_id = message.get('conversation_id', '')
                         if not message_conversation_id and not self.conversation_id:
                             self.conversation_id = new_conversation_id

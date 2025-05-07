@@ -676,6 +676,16 @@ class MessageDeliveryService:
             file_logger.info(f"平台处理消息完成: {message_id}")
             file_logger.debug(f"处理结果: {result}")
 
+            # 检查是否有错误信息
+            if 'error' in result and '404' in result.get('error', '') and 'Conversation Not Exists' in result.get('error', ''):
+                # 处理404错误，清除无效的会话ID
+                instance_id = message.get('instance_id')
+                chat_name = message.get('chat_name')
+                if instance_id and chat_name:
+                    file_logger.warning(f"检测到会话ID不存在错误，清除监听对象的会话ID: {instance_id} - {chat_name}")
+                    logger.warning(f"检测到会话ID不存在错误，清除监听对象的会话ID: {instance_id} - {chat_name}")
+                    await self._clear_invalid_conversation_id(instance_id, chat_name)
+
             # 检查是否返回了新的会话ID
             if 'conversation_id' in result:
                 new_conversation_id = result.get('conversation_id')
@@ -935,6 +945,40 @@ class MessageDeliveryService:
             return True
         except Exception as e:
             logger.error(f"更新消息回复状态失败: {e}")
+            return False
+
+    async def _clear_invalid_conversation_id(self, instance_id: str, chat_name: str) -> bool:
+        """
+        清除无效的会话ID
+
+        Args:
+            instance_id: 实例ID
+            chat_name: 聊天对象名称
+
+        Returns:
+            bool: 是否清除成功
+        """
+        try:
+            # 导入消息监听器
+            from wxauto_mgt.core.message_listener import message_listener
+
+            # 清除监听对象的会话ID（设置为空字符串）
+            await message_listener.add_listener(
+                instance_id,
+                chat_name,
+                conversation_id=""  # 清空会话ID
+            )
+
+            file_logger.info(f"已清除监听对象的无效会话ID: {instance_id} - {chat_name}")
+            logger.info(f"已清除监听对象的无效会话ID: {instance_id} - {chat_name}")
+
+            # 注意：用户会话管理器中的会话ID已经在service_platform.py中处理
+            # 这里只需要清除监听对象的会话ID
+
+            return True
+        except Exception as e:
+            file_logger.error(f"清除监听对象会话ID时出错: {e}")
+            logger.error(f"清除监听对象会话ID时出错: {e}")
             return False
 
 
