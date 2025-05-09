@@ -38,11 +38,15 @@ EXCLUDED_MODULES = [
 
 # 需要包含的隐藏导入
 HIDDEN_IMPORTS = [
+    # 项目模块
     "wxauto_mgt",
     "wxauto_mgt.ui",
     "wxauto_mgt.core",
     "wxauto_mgt.data",
     "wxauto_mgt.utils",
+    "wxauto_mgt.web",
+
+    # 加密相关
     "cryptography",
     "cryptography.hazmat",
     "cryptography.hazmat.backends",
@@ -52,12 +56,79 @@ HIDDEN_IMPORTS = [
     "cryptography.hazmat.primitives.asymmetric",
     "cryptography.hazmat.primitives.ciphers",
     "cryptography.hazmat.primitives.kdf",
-    "cryptography.hazmat.primitives.serialization"
+    "cryptography.hazmat.primitives.serialization",
+
+    # Web相关
+    "fastapi",
+    "fastapi.middleware",
+    "fastapi.middleware.cors",
+    "fastapi.security",
+    "fastapi.responses",
+    "fastapi.staticfiles",
+    "fastapi.templating",
+    "fastapi.encoders",
+    "fastapi.exceptions",
+
+    "uvicorn",
+    "uvicorn.config",
+    "uvicorn.main",
+    "uvicorn.middleware",
+    "uvicorn.lifespan",
+    "uvicorn.protocols",
+
+    "pydantic",
+    "pydantic.fields",
+    "pydantic.main",
+    "pydantic.error_wrappers",
+    "pydantic.validators",
+
+    "jose",
+    "jose.jwt",
+    "jose.exceptions",
+    "jose.constants",
+    "python_jose",
+    "python_jose.jwt",
+
+    "passlib",
+    "passlib.context",
+    "passlib.hash",
+    "passlib.ifc",
+    "passlib.registry",
+    "passlib.handlers",
+    "passlib.handlers.bcrypt",
+    "bcrypt",
+
+    "python_multipart",
+    "aiofiles",
+
+    # 其他可能需要的依赖
+    "starlette",
+    "starlette.middleware",
+    "starlette.responses",
+    "starlette.routing",
+    "starlette.staticfiles",
+    "starlette.templating",
+    "starlette.exceptions",
+    "starlette.background",
+    "starlette.concurrency",
+    "starlette.config",
+    "starlette.datastructures",
+    "starlette.formparsers",
+    "starlette.types",
+
+    "email_validator",
+    "typing_extensions",
+    "httptools",
+    "websockets",
+    "watchgod",
+    "itsdangerous",
+    "jinja2"
 ]
 
 # 需要包含的数据文件
 DATAS = [
-    (str(ROOT_DIR / "wxauto_mgt" / "config"), os.path.join("wxauto_mgt", "config"))
+    (str(ROOT_DIR / "wxauto_mgt" / "config"), os.path.join("wxauto_mgt", "config")),
+    (str(ROOT_DIR / "wxauto_mgt" / "web" / "requirements.txt"), os.path.join("wxauto_mgt", "web"))
 ]
 
 # 创建必要的数据目录结构
@@ -204,6 +275,64 @@ def build_executable():
     print(f"构建成功，可执行文件位于: {os.path.join(OUTPUT_DIR, APP_NAME)}")
     return True
 
+def check_dependencies():
+    """检查并安装依赖"""
+    print("检查依赖...")
+
+    # 需要安装的Web服务器依赖
+    web_deps = [
+        "aiofiles",
+        "fastapi",
+        "uvicorn",
+        "python-jose[cryptography]",
+        "passlib[bcrypt]",
+        "python-multipart"
+    ]
+
+    # 检查并安装每个依赖
+    for dep in web_deps:
+        module_name = dep.split('[')[0].replace('-', '_')
+        try:
+            __import__(module_name)
+            print(f"{dep}已安装")
+        except ImportError:
+            print(f"{dep}未安装，正在安装...")
+            try:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", dep])
+                print(f"{dep}安装成功")
+            except subprocess.CalledProcessError:
+                print(f"警告: {dep}安装失败，可能会影响程序运行")
+
+    # 检查web模块依赖
+    web_requirements_path = os.path.join(ROOT_DIR, "wxauto_mgt", "web", "requirements.txt")
+    if os.path.exists(web_requirements_path):
+        print(f"检查web模块依赖: {web_requirements_path}")
+        try:
+            # 读取requirements.txt文件
+            with open(web_requirements_path, 'r') as f:
+                requirements = f.read().splitlines()
+
+            # 过滤掉空行和注释
+            requirements = [r.split('>=')[0].strip() for r in requirements if r and not r.startswith('#')]
+
+            # 检查每个依赖
+            for req in requirements:
+                try:
+                    module_name = req.replace('-', '_').split('[')[0]
+                    __import__(module_name)
+                    print(f"{req}已安装")
+                except ImportError:
+                    print(f"{req}未安装，正在安装...")
+                    try:
+                        subprocess.check_call([sys.executable, "-m", "pip", "install", req])
+                        print(f"{req}安装成功")
+                    except subprocess.CalledProcessError:
+                        print(f"警告: {req}安装失败，可能会影响程序运行")
+        except Exception as e:
+            print(f"检查web模块依赖时出错: {e}")
+
+    return True
+
 def main():
     """主函数"""
     print("=" * 80)
@@ -217,6 +346,9 @@ def main():
     except ImportError:
         print("错误: PyInstaller未安装，请先安装: pip install pyinstaller")
         return False
+
+    # 检查并安装依赖
+    check_dependencies()
 
     # 清理构建目录
     clean_build_dirs()
