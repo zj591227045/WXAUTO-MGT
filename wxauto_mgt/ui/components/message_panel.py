@@ -1106,7 +1106,16 @@ class MessageListenerPanel(QWidget):
 
                     # 操作按钮
                     remove_btn = QPushButton("移除")
-                    remove_btn.clicked.connect(lambda checked, i=instance_id, w=who: asyncio.create_task(self._remove_listener(i, w)))
+                    # 使用lambda函数创建一个闭包，保存当前的instance_id和who值
+                    def create_remove_handler(instance_id, who):
+                        def handler(checked=False):
+                            # 在主线程中安全地调用异步方法
+                            import asyncio
+                            asyncio.ensure_future(self._remove_listener(instance_id, who))
+                        return handler
+
+                    # 连接按钮点击事件到处理函数
+                    remove_btn.clicked.connect(create_remove_handler(instance_id, who))
                     self.listener_table.setCellWidget(row, 4, remove_btn)
 
                     # 检查是否是之前选中的项
@@ -1406,12 +1415,37 @@ class MessageListenerPanel(QWidget):
     @asyncSlot()
     async def _auto_refresh(self):
         """自动刷新监听对象和消息"""
+        # 检查是否启用了自动刷新
         if not self.auto_refresh_check.isChecked():
             return
 
+        # 检查是否有正在进行的刷新操作
+        if hasattr(self, "_is_refreshing") and self._is_refreshing:
+            logger.debug("已有刷新操作正在进行，跳过本次刷新")
+            return
+
+        # 设置刷新标志
+        self._is_refreshing = True
+
         try:
-            # 刷新监听对象列表 - 使用静默模式，不产生大量日志
-            await self.refresh_listeners(force_reload=False, silent=True)
+            # 使用超时机制，避免长时间阻塞
+            import asyncio
+
+            try:
+                # 直接调用refresh_listeners方法，因为它已经被@asyncSlot()装饰器装饰，返回的是Task
+                # 设置超时时间
+                await asyncio.wait_for(
+                    self.refresh_listeners(force_reload=False, silent=True),
+                    timeout=2.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("刷新监听对象超时")
+            except asyncio.CancelledError:
+                logger.warning("刷新监听对象任务被取消")
+                return
+            except Exception as e:
+                logger.error(f"刷新监听对象出错: {e}")
+                # 继续执行，不要因为这个错误而中断整个刷新过程
 
             # 更新倒计时
             self._update_countdown()
@@ -1419,14 +1453,45 @@ class MessageListenerPanel(QWidget):
             # 刷新消息列表（如果有选中的监听对象）- 使用静默模式
             if self.selected_listener:
                 instance_id, wxid = self.selected_listener
-                await self._view_listener_messages(instance_id=instance_id, wxid=wxid, silent=True)
+
+                # 检查实例是否存在
+                from wxauto_mgt.data.db_manager import db_manager
+                instance_exists = await db_manager.fetchone(
+                    "SELECT 1 FROM instances WHERE instance_id = ?",
+                    (instance_id,)
+                )
+
+                if instance_exists:
+                    try:
+                        # 直接调用_view_listener_messages方法，因为它已经被@asyncSlot()装饰器装饰
+                        # 设置超时时间
+                        await asyncio.wait_for(
+                            self._view_listener_messages(instance_id=instance_id, wxid=wxid, silent=True),
+                            timeout=2.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("刷新消息超时")
+                    except asyncio.CancelledError:
+                        logger.warning("刷新消息任务被取消")
+                    except Exception as e:
+                        logger.error(f"刷新消息出错: {e}")
+                else:
+                    # 如果实例不存在，清除选中的监听对象
+                    logger.warning(f"实例 {instance_id} 不存在，清除选中的监听对象")
+                    self.selected_listener = None
 
             # 添加简短状态更新到日志窗口
             refresh_time = datetime.now().strftime('%H:%M:%S')
             listener_count = self.listener_table.rowCount()
 
             # 获取已处理和未处理消息数量
-            processed_count, pending_count = await self._get_processed_pending_count()
+            try:
+                # 直接调用方法，不需要额外的asyncio.create_task
+                processed_count, pending_count = await self._get_processed_pending_count()
+            except Exception as e:
+                logger.warning(f"获取消息计数出错: {e}")
+                processed_count, pending_count = 0, 0
+
             total_count = processed_count + pending_count
 
             # 构建当前日志内容的关键部分（用于比较）
@@ -1436,6 +1501,9 @@ class MessageListenerPanel(QWidget):
             log_base = f"自动刷新完成: {listener_count}个监听对象, {total_count}条消息 (已处理: {processed_count}, 未处理: {pending_count})"
 
             # 检查是否是重复的日志内容
+            if not hasattr(self, "refresh_log_dict"):
+                self.refresh_log_dict = {}
+
             if current_log_key in self.refresh_log_dict:
                 # 更新计数
                 self.refresh_log_dict[current_log_key] += 1
@@ -1490,6 +1558,11 @@ class MessageListenerPanel(QWidget):
             # 只记录严重错误，普通连接错误不记录
             if "Connection refused" not in str(e) and "Not connected" not in str(e):
                 logger.error(f"自动刷新出错: {e}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
+        finally:
+            # 清除刷新标志
+            self._is_refreshing = False
 
     @Slot("QVariant")
     def _add_message_to_table_safe(self, message):

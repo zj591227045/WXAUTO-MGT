@@ -222,6 +222,18 @@ class DeliveryRulePanel(QWidget):
         Returns:
             str: 实例名称，如果找不到则返回实例ID
         """
+        # 特殊情况处理
+        if not instance_id or instance_id == "*":
+            return "全部"
+
+        # 使用缓存避免频繁查询数据库
+        if hasattr(self, "_instance_name_cache") and instance_id in self._instance_name_cache:
+            return self._instance_name_cache[instance_id]
+
+        # 初始化缓存（如果不存在）
+        if not hasattr(self, "_instance_name_cache"):
+            self._instance_name_cache = {}
+
         try:
             # 从数据库获取实例名称
             from wxauto_mgt.data.db_manager import db_manager
@@ -235,24 +247,38 @@ class DeliveryRulePanel(QWidget):
                         (instance_id,)
                     )
                     if instance and "name" in instance:
+                        # 更新缓存
+                        self._instance_name_cache[instance_id] = instance["name"]
                         return instance["name"]
                     return instance_id
                 except Exception as e:
                     logger.error(f"获取实例名称失败: {e}")
                     return instance_id
 
-            # 使用同步方式执行异步任务
+            # 使用同步方式执行异步任务，但添加更多的错误处理
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # 如果事件循环正在运行，使用Future
-                future = asyncio.run_coroutine_threadsafe(_get_name(), loop)
                 try:
-                    return future.result(timeout=1.0)  # 设置超时时间
-                except Exception:
+                    # 如果事件循环正在运行，使用Future，但设置更短的超时时间
+                    future = asyncio.run_coroutine_threadsafe(_get_name(), loop)
+                    try:
+                        return future.result(timeout=0.5)  # 减少超时时间，避免阻塞UI
+                    except asyncio.TimeoutError:
+                        logger.warning(f"获取实例名称超时: {instance_id}")
+                        return instance_id
+                    except asyncio.CancelledError:
+                        logger.warning(f"获取实例名称任务被取消: {instance_id}")
+                        return instance_id
+                    except Exception as e:
+                        logger.error(f"获取实例名称失败: {e}")
+                        return instance_id
+                except Exception as e:
+                    logger.error(f"创建异步任务失败: {e}")
                     return instance_id
             else:
-                # 如果事件循环未运行，直接运行协程
-                return loop.run_until_complete(_get_name())
+                # 如果事件循环未运行，直接返回实例ID，避免阻塞
+                logger.warning("事件循环未运行，无法获取实例名称")
+                return instance_id
         except Exception as e:
             logger.error(f"获取实例名称失败: {e}")
             return instance_id

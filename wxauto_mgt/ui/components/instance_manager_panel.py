@@ -482,8 +482,48 @@ class InstanceManagerPanel(QWidget):
     async def _delete_instance_async(self, instance_id):
         """异步删除实例"""
         from wxauto_mgt.core.config_manager import config_manager
+        import asyncio
+        import gc
 
         try:
+            # 1. 首先停止所有与该实例相关的异步任务
+            logger.info(f"正在停止与实例 {instance_id} 相关的异步任务...")
+
+            # 获取当前所有正在运行的任务
+            pending_tasks = [task for task in asyncio.all_tasks()
+                            if not task.done() and not task.cancelled()]
+
+            # 记录任务数量
+            logger.info(f"当前有 {len(pending_tasks)} 个正在运行的异步任务")
+
+            # 取消与该实例相关的任务
+            cancelled_count = 0
+            for task in pending_tasks:
+                # 检查任务名称或任务字符串表示中是否包含实例ID
+                task_str = str(task)
+                if instance_id in task_str:
+                    try:
+                        task.cancel()
+                        cancelled_count += 1
+                        logger.info(f"已取消任务: {task}")
+                    except Exception as e:
+                        logger.error(f"取消任务时出错: {e}")
+
+            logger.info(f"已取消 {cancelled_count} 个与实例 {instance_id} 相关的任务")
+
+            # 2. 等待一小段时间，确保任务有机会被取消
+            await asyncio.sleep(0.5)
+
+            # 3. 从API客户端管理器中移除实例
+            from wxauto_mgt.core.api_client import instance_manager
+            instance_manager.remove_instance(instance_id)
+            logger.info(f"已从API客户端管理器中移除实例: {instance_id}")
+
+            # 4. 强制进行垃圾回收，释放资源
+            gc.collect()
+            logger.info(f"已执行垃圾回收")
+
+            # 5. 从配置管理器中删除实例
             result = await config_manager.remove_instance(instance_id)
 
             if result:
@@ -502,9 +542,52 @@ class InstanceManagerPanel(QWidget):
                 ))
             else:
                 error_message = f"无法删除实例: {instance_id}"
-                QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", error_message))
+                logger.error(error_message)
+
+                # 尝试强制删除
+                try:
+                    # 直接从数据库中删除实例记录
+                    from wxauto_mgt.data.db_manager import db_manager
+
+                    # 1. 首先删除与该实例相关的监听对象
+                    await db_manager.execute(
+                        "DELETE FROM listeners WHERE instance_id = ?",
+                        (instance_id,)
+                    )
+                    logger.info(f"已强制删除实例 {instance_id} 的监听对象")
+
+                    # 2. 删除与该实例相关的消息记录
+                    await db_manager.execute(
+                        "DELETE FROM messages WHERE instance_id = ?",
+                        (instance_id,)
+                    )
+                    logger.info(f"已强制删除实例 {instance_id} 的消息记录")
+
+                    # 3. 删除实例本身
+                    await db_manager.execute(
+                        "DELETE FROM instances WHERE instance_id = ?",
+                        (instance_id,)
+                    )
+                    logger.info(f"已强制删除实例 {instance_id} 的配置记录")
+
+                    # 刷新实例列表
+                    QTimer.singleShot(0, lambda: self.instance_list.refresh_instances())
+
+                    # 刷新状态监控
+                    QTimer.singleShot(0, lambda: self.refresh_status())
+
+                    # 显示成功消息
+                    QTimer.singleShot(0, lambda: QMessageBox.information(
+                        self, "成功", f"已强制删除实例: {instance_id}"
+                    ))
+                except Exception as e:
+                    logger.error(f"强制删除实例时出错: {e}")
+                    QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"无法删除实例: {instance_id}\n错误: {str(e)}"))
+
         except Exception as e:
             logger.error(f"删除实例时出错: {e}")
+            import traceback
+            logger.error(f"异常堆栈: {traceback.format_exc()}")
             QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"删除实例时出错: {str(e)}"))
 
     def _initialize_instance(self, instance_id: str):
@@ -582,7 +665,8 @@ class InstanceManagerPanel(QWidget):
         except Exception as e:
             logger.error(f"实例状态检查失败: {instance_id}, 错误: {e}")
 
-    def _add_instance(self):
+    @asyncSlot()
+    async def _add_instance(self):
         """添加新实例"""
         # 导入对话框
         dialog = AddInstanceDialog(self)
@@ -591,8 +675,15 @@ class InstanceManagerPanel(QWidget):
             instance_data = dialog.get_instance_data()
             logger.debug(f"获取到新实例数据: {instance_data}")
 
-            # 使用asyncSlot装饰器处理异步调用
-            self._add_instance_async(instance_data)
+            # 正确地等待异步方法完成
+            try:
+                await self._add_instance_async(instance_data)
+                logger.debug("实例添加过程已完成")
+            except Exception as e:
+                logger.error(f"添加实例时发生异常: {e}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
+                QMessageBox.warning(self, "错误", f"添加实例失败: {str(e)}")
 
     def _create_status_monitor_area(self) -> QWidget:
         """创建状态监控区域"""
@@ -924,46 +1015,163 @@ class InstanceManagerPanel(QWidget):
             instance_data: 实例数据
         """
         try:
+            # 记录详细的实例数据
+            logger.info(f"开始添加实例: {instance_data}")
+
+            # 检查实例数据是否完整
+            required_fields = ["instance_id", "name", "base_url", "api_key"]
+            missing_fields = [field for field in required_fields if field not in instance_data]
+
+            if missing_fields:
+                error_message = f"实例数据不完整，缺少字段: {missing_fields}"
+                logger.error(error_message)
+                QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", error_message))
+                return
+
             # 从配置管理器获取实例
             from wxauto_mgt.core.config_manager import config_manager
 
-            # 添加实例到配置管理器
-            result = await config_manager.add_instance(
-                instance_data["instance_id"],
-                instance_data["name"],
-                instance_data["base_url"],
-                instance_data["api_key"],
-                instance_data.get("enabled", True),
-                **instance_data.get("config", {})
-            )
+            # 检查数据库连接
+            from wxauto_mgt.data.db_manager import db_manager
+            if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+                logger.warning("数据库管理器未初始化，尝试初始化...")
+                try:
+                    await db_manager.initialize()
+                    logger.info("数据库管理器初始化成功")
+                except Exception as db_init_error:
+                    logger.error(f"数据库管理器初始化失败: {db_init_error}")
+                    import traceback
+                    logger.error(f"异常堆栈: {traceback.format_exc()}")
+                    QTimer.singleShot(0, lambda: QMessageBox.warning(
+                        self, "错误", f"数据库初始化失败: {str(db_init_error)}"
+                    ))
+                    return
 
-            if result:
-                logger.info(f"添加实例成功: {instance_data['name']} ({instance_data['instance_id']})")
+            # 检查实例是否已存在
+            try:
+                existing = await db_manager.fetchone(
+                    "SELECT id FROM instances WHERE instance_id = ?",
+                    (instance_data["instance_id"],)
+                )
 
-                # 添加实例到API客户端
+                if existing:
+                    error_message = f"实例ID已存在: {instance_data['instance_id']}"
+                    logger.error(error_message)
+                    QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", error_message))
+                    return
+            except Exception as check_error:
+                logger.error(f"检查实例是否存在时出错: {check_error}")
+                # 继续执行，假设实例不存在
+
+            # 直接使用SQL插入实例数据
+            try:
+                logger.info("尝试直接使用SQL插入实例数据...")
+
+                # 准备数据
+                import time
+                import json
+
+                current_time = int(time.time())
+                insert_data = {
+                    "instance_id": instance_data["instance_id"],
+                    "name": instance_data["name"],
+                    "base_url": instance_data["base_url"],
+                    "api_key": instance_data["api_key"],
+                    "status": "inactive",
+                    "enabled": 1 if instance_data.get("enabled", True) else 0,
+                    "created_at": current_time,
+                    "updated_at": current_time
+                }
+
+                # 添加配置字段
+                if "config" in instance_data:
+                    insert_data["config"] = json.dumps(instance_data["config"])
+
+                # 执行插入
+                fields = ", ".join(insert_data.keys())
+                placeholders = ", ".join(["?" for _ in insert_data.keys()])
+                values = list(insert_data.values())
+
+                insert_sql = f"INSERT INTO instances ({fields}) VALUES ({placeholders})"
+                logger.debug(f"执行SQL: {insert_sql}")
+                logger.debug(f"参数值: {values}")
+
+                await db_manager.execute(insert_sql, tuple(values))
+                logger.info(f"直接SQL插入成功: {instance_data['instance_id']}")
+
+                # 获取插入的ID
+                result_id = await db_manager.fetchone(
+                    "SELECT id FROM instances WHERE instance_id = ?",
+                    (instance_data["instance_id"],)
+                )
+
+                if result_id:
+                    logger.info(f"插入的记录ID: {result_id.get('id')}")
+                    direct_insert_success = True
+                else:
+                    logger.warning(f"无法获取插入记录的ID")
+                    direct_insert_success = False
+            except Exception as direct_error:
+                logger.error(f"直接SQL插入失败: {direct_error}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
+                direct_insert_success = False
+
+            # 如果直接插入失败，尝试使用配置管理器添加实例
+            if not direct_insert_success:
+                logger.info("尝试使用配置管理器添加实例...")
+
+                # 添加实例到配置管理器
+                result = await config_manager.add_instance(
+                    instance_data["instance_id"],
+                    instance_data["name"],
+                    instance_data["base_url"],
+                    instance_data["api_key"],
+                    instance_data.get("enabled", True),
+                    **instance_data.get("config", {})
+                )
+
+                if not result:
+                    error_message = f"无法添加实例: {instance_data['name']}"
+                    logger.error(error_message)
+                    QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", error_message))
+                    return
+
+            # 添加实例到API客户端
+            try:
+                from wxauto_mgt.core.api_client import instance_manager
                 instance_manager.add_instance(
                     instance_data["instance_id"],
                     instance_data["base_url"],
                     instance_data["api_key"],
                     instance_data.get("timeout", 30)
                 )
+                logger.info(f"已添加实例到API客户端: {instance_data['instance_id']}")
+            except Exception as api_error:
+                logger.error(f"添加实例到API客户端失败: {api_error}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
+                # 继续执行，不要因为API客户端错误而中断
 
-                # 发送实例添加信号
-                self.instance_added.emit(instance_data["instance_id"])
+            # 发送实例添加信号
+            self.instance_added.emit(instance_data["instance_id"])
+            logger.info(f"已发送实例添加信号: {instance_data['instance_id']}")
 
-                # 刷新实例列表
-                QTimer.singleShot(0, lambda: self.instance_list.refresh_instances())
+            # 刷新实例列表
+            QTimer.singleShot(0, lambda: self.instance_list.refresh_instances())
 
-                # 刷新状态监控
-                QTimer.singleShot(0, lambda: self.refresh_status())
+            # 刷新状态监控
+            QTimer.singleShot(0, lambda: self.refresh_status())
 
-                # 显示成功消息
-                QTimer.singleShot(0, lambda: QMessageBox.information(
-                    self, "成功", f"已成功添加实例: {instance_data['name']}"
-                ))
-            else:
-                error_message = f"无法添加实例: {instance_data['name']}"
-                QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", error_message))
+            # 显示成功消息
+            QTimer.singleShot(0, lambda: QMessageBox.information(
+                self, "成功", f"已成功添加实例: {instance_data['name']}"
+            ))
+
+            logger.info(f"添加实例完成: {instance_data['name']} ({instance_data['instance_id']})")
+
         except Exception as e:
             logger.error(f"添加实例失败: {e}")
+            import traceback
+            logger.error(f"异常堆栈: {traceback.format_exc()}")
             QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"添加实例失败: {str(e)}"))

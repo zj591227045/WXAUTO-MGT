@@ -399,16 +399,52 @@ class InstanceCardList(QWidget):
             # 从数据库获取实例列表
             from wxauto_mgt.data.db_manager import db_manager
 
-            # 查询所有启用的实例
-            query = "SELECT * FROM instances WHERE enabled = 1"
-            instances = await db_manager.fetchall(query)
+            # 检查数据库管理器是否已初始化
+            if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+                logger.warning("数据库管理器未初始化，尝试初始化...")
+                try:
+                    await db_manager.initialize()
+                    logger.info("数据库管理器初始化成功")
+                except Exception as db_init_error:
+                    logger.error(f"数据库管理器初始化失败: {db_init_error}")
+                    import traceback
+                    logger.error(f"异常堆栈: {traceback.format_exc()}")
+                    # 显示空列表
+                    self.status_label.setText("数据库连接失败，无法加载实例")
+                    return
 
-            # 如果没有实例，尝试查询所有实例(不限制enabled)
-            if not instances:
-                query = "SELECT * FROM instances"
+            # 查询所有启用的实例
+            try:
+                query = "SELECT * FROM instances WHERE enabled = 1"
+                logger.debug(f"执行查询: {query}")
                 instances = await db_manager.fetchall(query)
+                logger.debug(f"查询结果: {len(instances)} 个实例")
+
+                # 如果没有实例，尝试查询所有实例(不限制enabled)
+                if not instances:
+                    query = "SELECT * FROM instances"
+                    logger.debug(f"执行查询: {query}")
+                    instances = await db_manager.fetchall(query)
+                    logger.debug(f"查询结果: {len(instances)} 个实例")
+            except Exception as query_error:
+                logger.error(f"查询实例失败: {query_error}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
+                # 显示空列表
+                self.status_label.setText("查询实例失败")
+                return
+
+            # 检查实例列表是否为空
+            if not instances:
+                logger.warning("没有找到任何实例")
+                self.status_label.setText("没有找到任何实例")
+                return
 
             logger.debug(f"加载了 {len(instances)} 个实例")
+
+            # 记录实例详情
+            for i, instance in enumerate(instances):
+                logger.debug(f"实例 {i+1}: ID={instance.get('instance_id')}, 名称={instance.get('name')}")
 
             # 添加实例卡片
             for instance in instances:
@@ -425,16 +461,32 @@ class InstanceCardList(QWidget):
                     instance["base_url"] = "未设置"
 
                 # 添加实例卡片
-                self._add_instance_card(instance)
+                try:
+                    self._add_instance_card(instance)
+                    logger.debug(f"已添加实例卡片: {instance.get('instance_id')}")
+                except Exception as card_error:
+                    logger.error(f"添加实例卡片失败: {card_error}")
+                    import traceback
+                    logger.error(f"异常堆栈: {traceback.format_exc()}")
+                    # 继续添加其他卡片
 
             # 更新状态标签
             self.status_label.setText(f"共 {len(instances)} 个实例")
 
             # 更新实例状态
-            await self._update_instance_status()
+            try:
+                await self._update_instance_status()
+            except Exception as status_error:
+                logger.error(f"更新实例状态失败: {status_error}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
 
         except Exception as e:
             logger.error(f"刷新实例列表失败: {e}")
+            import traceback
+            logger.error(f"异常堆栈: {traceback.format_exc()}")
+            # 显示错误信息
+            self.status_label.setText("刷新实例列表失败")
 
     def _add_instance_card(self, instance_data: Dict[str, Any]):
         """

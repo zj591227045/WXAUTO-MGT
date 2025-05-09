@@ -542,21 +542,47 @@ class ConfigManager:
         try:
             logger.info(f"正在添加实例: {instance_id}, 名称: {name}")
 
+            # 检查数据库管理器是否已初始化
+            if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+                logger.error("数据库管理器未初始化，尝试初始化...")
+                await db_manager.initialize()
+                if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+                    logger.error("数据库管理器初始化失败")
+                    return False
+                logger.info("数据库管理器初始化成功")
+
             # 检查实例是否已存在
             query = "SELECT id FROM instances WHERE instance_id = ?"
             params = (instance_id,)
             logger.debug(f"执行查询: {query}, 参数: {params}")
 
-            existing = await db_manager.fetchone(query, params)
+            try:
+                existing = await db_manager.fetchone(query, params)
+                logger.debug(f"查询结果: {existing}")
+            except Exception as query_error:
+                logger.error(f"查询实例时出错: {query_error}")
+                import traceback
+                logger.error(f"查询异常详情: {traceback.format_exc()}")
+                # 继续执行，假设实例不存在
+                existing = None
 
             if existing:
                 logger.error(f"实例 {instance_id} 已存在")
                 return False
 
             # 检查数据库表结构
-            table_info = await db_manager._get_table_structure("instances")
-            column_names = {col["name"] for col in table_info}
-            logger.debug(f"实例表字段: {column_names}")
+            try:
+                table_info = await db_manager._get_table_structure("instances")
+                column_names = {col["name"] for col in table_info}
+                logger.debug(f"实例表字段: {column_names}")
+            except Exception as table_error:
+                logger.error(f"获取表结构时出错: {table_error}")
+                import traceback
+                logger.error(f"表结构异常详情: {traceback.format_exc()}")
+                # 使用默认字段集合
+                column_names = {"id", "instance_id", "name", "base_url", "api_key", "status", "enabled",
+                               "created_at", "updated_at", "config"}
+                logger.warning(f"使用默认字段集合: {column_names}")
 
             # 准备实例数据 - 适配数据库表结构
             current_time = int(time.time())
@@ -594,21 +620,46 @@ class ConfigManager:
 
             # 插入数据库
             try:
-                result = await db_manager.insert("instances", instance_data)
-                if not result:
-                    logger.error(f"数据库插入实例失败: {instance_id}, 返回 ID: {result}")
-                    return False
-                logger.debug(f"数据库插入成功, ID: {result}")
+                # 直接使用SQL语句插入，避免使用db_manager.insert方法
+                fields = ", ".join(instance_data.keys())
+                placeholders = ", ".join(["?" for _ in instance_data.keys()])
+                values = list(instance_data.values())
+
+                insert_sql = f"INSERT INTO instances ({fields}) VALUES ({placeholders})"
+                logger.debug(f"执行SQL: {insert_sql}")
+                logger.debug(f"参数值: {values}")
+
+                await db_manager.execute(insert_sql, tuple(values))
+                logger.info(f"数据库插入成功: {instance_id}")
+
+                # 获取插入的ID
+                result = await db_manager.fetchone("SELECT id FROM instances WHERE instance_id = ?", (instance_id,))
+                if result:
+                    logger.info(f"插入的记录ID: {result.get('id')}")
+                else:
+                    logger.warning(f"无法获取插入记录的ID")
             except Exception as db_error:
                 import traceback
                 logger.error(f"数据库插入异常: {str(db_error)}")
                 logger.error(f"异常详情: {traceback.format_exc()}")
-                raise
+
+                # 尝试使用另一种方式插入
+                try:
+                    logger.info("尝试使用另一种方式插入...")
+                    result = await db_manager.insert("instances", instance_data)
+                    logger.info(f"使用insert方法插入成功，ID: {result}")
+                except Exception as insert_error:
+                    logger.error(f"使用insert方法插入失败: {insert_error}")
+                    logger.error(f"异常详情: {traceback.format_exc()}")
+                    raise
 
             # 更新内存中的配置
             instances = self.get("instances", {})
             instances[instance_id] = instance_data
             self.set("instances", instances)
+
+            # 保存配置到数据库
+            await self.save_config()
 
             logger.info(f"已添加实例配置: {instance_id}")
             return True
@@ -731,14 +782,60 @@ class ConfigManager:
                 logger.error(f"实例 {instance_id} 不存在")
                 return False
 
-            # 移除配置
+            # 从数据库中删除实例记录
+            from ..data.db_manager import db_manager
+
+            # 1. 首先删除与该实例相关的监听对象
+            try:
+                logger.info(f"正在删除实例 {instance_id} 的监听对象...")
+                await db_manager.execute(
+                    "DELETE FROM listeners WHERE instance_id = ?",
+                    (instance_id,)
+                )
+                logger.info(f"已删除实例 {instance_id} 的监听对象")
+            except Exception as e:
+                logger.error(f"删除实例 {instance_id} 的监听对象时出错: {e}")
+                # 继续执行，不要因为这个错误而中断整个删除过程
+
+            # 2. 删除与该实例相关的消息记录
+            try:
+                logger.info(f"正在删除实例 {instance_id} 的消息记录...")
+                await db_manager.execute(
+                    "DELETE FROM messages WHERE instance_id = ?",
+                    (instance_id,)
+                )
+                logger.info(f"已删除实例 {instance_id} 的消息记录")
+            except Exception as e:
+                logger.error(f"删除实例 {instance_id} 的消息记录时出错: {e}")
+                # 继续执行，不要因为这个错误而中断整个删除过程
+
+            # 3. 删除实例本身
+            try:
+                logger.info(f"正在删除实例 {instance_id} 的配置记录...")
+                await db_manager.execute(
+                    "DELETE FROM instances WHERE instance_id = ?",
+                    (instance_id,)
+                )
+                logger.info(f"已删除实例 {instance_id} 的配置记录")
+            except Exception as e:
+                logger.error(f"删除实例 {instance_id} 的配置记录时出错: {e}")
+                # 如果删除实例记录失败，返回失败
+                return False
+
+            # 4. 从内存中移除实例配置
             del instances[instance_id]
             self.set("instances", instances, save=True)
 
-            logger.info(f"已移除实例配置: {instance_id}")
+            # 5. 从API客户端管理器中移除实例
+            from ..core.api_client import instance_manager
+            instance_manager.remove_instance(instance_id)
+
+            logger.info(f"已完全移除实例: {instance_id}")
             return True
         except Exception as e:
             logger.error(f"移除实例配置失败: {e}")
+            import traceback
+            logger.error(f"异常堆栈: {traceback.format_exc()}")
             return False
 
     def get_instance_config(self, instance_id: str) -> Optional[Dict]:

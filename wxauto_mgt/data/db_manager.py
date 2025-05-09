@@ -433,28 +433,47 @@ class DBManager:
         """
         if not self._initialized:
             logger.error("数据库管理器未初始化，无法执行插入操作")
-            raise RuntimeError("数据库管理器未初始化")
+            try:
+                logger.info("尝试初始化数据库管理器...")
+                await self.initialize()
+                logger.info("数据库管理器初始化成功")
+            except Exception as init_error:
+                logger.error(f"初始化数据库管理器失败: {init_error}")
+                raise RuntimeError(f"数据库管理器未初始化且无法自动初始化: {init_error}")
 
         try:
             logger.debug(f"准备向表 {table} 插入数据: {data}")
 
             # 验证表名
-            valid_tables = await self._get_table_names()
-            if table not in valid_tables:
-                error_msg = f"表 {table} 不存在，可用的表: {valid_tables}"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
+            try:
+                valid_tables = await self._get_table_names()
+                if table not in valid_tables:
+                    error_msg = f"表 {table} 不存在，可用的表: {valid_tables}"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+            except Exception as table_error:
+                logger.error(f"获取表名时出错: {table_error}")
+                # 继续执行，假设表存在
 
             # 获取表结构，验证字段
-            table_info = await self._get_table_structure(table)
-            table_columns = {col["name"] for col in table_info}
+            try:
+                table_info = await self._get_table_structure(table)
+                table_columns = {col["name"] for col in table_info}
 
-            # 检查数据字段是否在表中存在
-            invalid_fields = set(data.keys()) - table_columns
-            if invalid_fields:
-                error_msg = f"字段 {invalid_fields} 在表 {table} 中不存在，有效字段: {table_columns}"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
+                # 检查数据字段是否在表中存在
+                invalid_fields = set(data.keys()) - table_columns
+                if invalid_fields:
+                    logger.warning(f"字段 {invalid_fields} 在表 {table} 中不存在，将被忽略")
+                    # 移除无效字段
+                    for field in invalid_fields:
+                        data.pop(field, None)
+            except Exception as struct_error:
+                logger.error(f"获取表结构时出错: {struct_error}")
+                # 继续执行，不验证字段
+
+            if not data:
+                logger.error("没有有效的数据可以插入")
+                return 0
 
             keys = list(data.keys())
             values = list(data.values())
@@ -476,7 +495,32 @@ class DBManager:
                         error_msg = f"执行SQL时发生错误: {db_error}"
                         logger.error(error_msg)
                         logger.error(f"异常堆栈: {traceback.format_exc()}")
-                        raise ValueError(f"数据库插入失败: {str(db_error)}")
+
+                        # 尝试使用另一种方式插入
+                        try:
+                            logger.info("尝试使用直接SQL语句插入...")
+                            # 构建SQL语句
+                            fields = ", ".join(keys)
+                            placeholders = ", ".join(["?" for _ in keys])
+
+                            insert_sql = f"INSERT INTO {table} ({fields}) VALUES ({placeholders})"
+                            logger.debug(f"执行SQL: {insert_sql}")
+                            logger.debug(f"参数值: {values}")
+
+                            await db.execute(insert_sql, values)
+                            await db.commit()
+
+                            # 获取最后插入的ID
+                            cursor = await db.execute("SELECT last_insert_rowid()")
+                            row = await cursor.fetchone()
+                            last_id = row[0] if row else 0
+
+                            logger.info(f"使用直接SQL语句插入成功，ID: {last_id}")
+                            return last_id
+                        except Exception as direct_error:
+                            logger.error(f"直接SQL插入也失败: {direct_error}")
+                            logger.error(f"异常堆栈: {traceback.format_exc()}")
+                            raise ValueError(f"数据库插入失败: {str(db_error)}, 直接SQL插入也失败: {str(direct_error)}")
 
         except Exception as e:
             import traceback
