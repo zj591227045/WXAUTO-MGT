@@ -97,11 +97,24 @@ class MessageSender:
 
         logger.info(f"使用消息发送模式: {message_send_mode}")
 
+        # 导入消息监听器，用于暂停/恢复监听
+        from wxauto_mgt.core.message_listener import message_listener
+
         # 尝试发送消息
         for attempt in range(self._retry_count):
             try:
-                # 直接调用API发送消息
-                result = await self._send_via_direct_api(instance, chat_name, content, message_send_mode, at_list)
+                # 暂停消息监听服务，确保发送消息时不受干扰
+                await message_listener.pause_listening()
+                logger.info(f"发送消息前暂停监听服务: 实例 {instance_id}, 聊天对象 {chat_name}")
+
+                try:
+                    # 直接调用API发送消息
+                    result = await self._send_via_direct_api(instance, chat_name, content, message_send_mode, at_list)
+                finally:
+                    # 恢复消息监听服务
+                    await message_listener.resume_listening()
+                    logger.info(f"发送消息后恢复监听服务: 实例 {instance_id}, 聊天对象 {chat_name}")
+
                 if result[0]:
                     return True, "发送成功"
 

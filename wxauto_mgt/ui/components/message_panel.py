@@ -692,6 +692,9 @@ class MessageListenerPanel(QWidget):
         settings_group = QGroupBox("设置")
         settings_layout = QHBoxLayout(settings_group)
 
+        # 监听服务状态标志
+        self._is_listening_paused = False
+
         # 轮询间隔设置
         settings_layout.addWidget(QLabel("轮询间隔(秒):"))
         self.poll_interval_edit = QLineEdit()
@@ -731,6 +734,13 @@ class MessageListenerPanel(QWidget):
         self.auto_refresh_check.setChecked(True)
         self.auto_refresh_check.stateChanged.connect(self._toggle_auto_refresh)
         settings_layout.addWidget(self.auto_refresh_check)
+
+        # 暂停/继续监听按钮
+        self.pause_resume_btn = QPushButton("暂停监听")
+        self.pause_resume_btn.setToolTip("暂停/继续消息监听服务，用于测试")
+        self.pause_resume_btn.clicked.connect(self._toggle_listening_service)
+        self.pause_resume_btn.setStyleSheet("QPushButton { background-color: #FFA500; }")  # 橙色背景
+        settings_layout.addWidget(self.pause_resume_btn)
 
         settings_layout.addStretch()
 
@@ -990,22 +1000,34 @@ class MessageListenerPanel(QWidget):
             silent: 是否静默操作，不输出非关键日志
         """
         try:
-            # 如果强制刷新，先清空内存中的数据
-            if force_reload:
-                # 重新从消息监听器加载数据
-                from wxauto_mgt.core.message_listener import message_listener
-                # 强制刷新消息监听器中的监听对象
-                try:
-                    # 清空并强制从数据库重新加载
-                    message_listener.listeners = {}
-                    await message_listener._load_listeners_from_db()
-                    if not silent:
-                        logger.debug("已强制重新加载监听对象数据")
-                except Exception as e:
-                    logger.error(f"强制刷新监听对象失败: {e}")
+            # 导入消息监听器，用于暂停/恢复监听
+            from wxauto_mgt.core.message_listener import message_listener
+
+            # 暂停消息监听服务，确保刷新监听对象时不受干扰
+            await message_listener.pause_listening()
+            if not silent:
+                logger.debug("刷新监听对象前暂停监听服务")
+
+            try:
+                # 如果强制刷新，先清空内存中的数据
+                if force_reload:
+                    # 强制刷新消息监听器中的监听对象
+                    try:
+                        # 清空并强制从数据库重新加载
+                        message_listener.listeners = {}
+                        await message_listener._load_listeners_from_db()
+                        if not silent:
+                            logger.debug("已强制重新加载监听对象数据")
+                    except Exception as e:
+                        logger.error(f"强制刷新监听对象失败: {e}")
+            finally:
+                # 恢复消息监听服务
+                await message_listener.resume_listening()
+                if not silent:
+                    logger.debug("刷新监听对象后恢复监听服务")
 
             # 获取超时设置
-            from wxauto_mgt.core.message_listener import message_listener  # 这里访问listener实例
+            # 这里不需要再次导入message_listener，因为上面已经导入了
 
             # 获取所有实例
             instances = instance_manager.get_all_instances()
@@ -1183,12 +1205,21 @@ class MessageListenerPanel(QWidget):
             formatted_msg = f"{timestamp} - INFO - 添加监听对象: 实例={instance_id}, 聊天={chat_name}"
             self.appendLogMessage(formatted_msg, "orange")
 
-            # 调用消息监听器添加监听对象
-            success = await message_listener.add_listener(
-                instance_id=instance_id,
-                who=chat_name,
-                **kwargs
-            )
+            # 暂停消息监听服务，确保添加监听对象时不受干扰
+            await message_listener.pause_listening()
+            logger.debug(f"添加监听对象前暂停监听服务: 实例={instance_id}, 聊天={chat_name}")
+
+            try:
+                # 调用消息监听器添加监听对象
+                success = await message_listener.add_listener(
+                    instance_id=instance_id,
+                    who=chat_name,
+                    **kwargs
+                )
+            finally:
+                # 恢复消息监听服务
+                await message_listener.resume_listening()
+                logger.debug(f"添加监听对象后恢复监听服务: 实例={instance_id}, 聊天={chat_name}")
 
             if success:
                 # 不再记录成功日志，避免重复
@@ -1264,8 +1295,17 @@ class MessageListenerPanel(QWidget):
             # 确保message_listener已经初始化
             from wxauto_mgt.core.message_listener import message_listener
 
-            # 移除监听对象
-            success = await message_listener.remove_listener(instance_id, who)
+            # 暂停消息监听服务，确保移除监听对象时不受干扰
+            await message_listener.pause_listening()
+            logger.debug(f"移除监听对象前暂停监听服务: 实例={instance_id}, 聊天={who}")
+
+            try:
+                # 移除监听对象
+                success = await message_listener.remove_listener(instance_id, who)
+            finally:
+                # 恢复消息监听服务
+                await message_listener.resume_listening()
+                logger.debug(f"移除监听对象后恢复监听服务: 实例={instance_id}, 聊天={who}")
 
             if success:
                 # 不再记录成功日志，避免重复
@@ -1417,6 +1457,17 @@ class MessageListenerPanel(QWidget):
         """自动刷新监听对象和消息"""
         # 检查是否启用了自动刷新
         if not self.auto_refresh_check.isChecked():
+            return
+
+        # 检查监听服务是否暂停
+        if hasattr(self, "_is_listening_paused") and self._is_listening_paused:
+            logger.debug("监听服务已暂停，跳过自动刷新")
+            return
+
+        # 检查全局监听服务是否暂停
+        from wxauto_mgt.core.message_listener import message_listener
+        if hasattr(message_listener, '_paused') and message_listener._paused:
+            logger.debug("全局监听服务已暂停，跳过自动刷新")
             return
 
         # 检查是否有正在进行的刷新操作
@@ -1694,18 +1745,30 @@ class MessageListenerPanel(QWidget):
         try:
             logger.debug(f"获取消息: 实例={instance_id}, 聊天={wxid}")
 
-            # 从数据库获取消息
-            from wxauto_mgt.data.db_manager import db_manager
+            # 导入消息监听器，用于暂停/恢复监听
+            from wxauto_mgt.core.message_listener import message_listener
 
-            # 构建SQL查询
-            query = """
-                SELECT * FROM messages
-                WHERE instance_id = ? AND chat_name = ?
-                ORDER BY create_time DESC LIMIT 100
-            """
+            # 暂停消息监听服务，确保获取消息时不受干扰
+            await message_listener.pause_listening()
+            logger.debug(f"获取消息前暂停监听服务: 实例={instance_id}, 聊天={wxid}")
 
-            # 执行查询
-            messages = await db_manager.fetchall(query, (instance_id, wxid))
+            try:
+                # 从数据库获取消息
+                from wxauto_mgt.data.db_manager import db_manager
+
+                # 构建SQL查询
+                query = """
+                    SELECT * FROM messages
+                    WHERE instance_id = ? AND chat_name = ?
+                    ORDER BY create_time DESC LIMIT 100
+                """
+
+                # 执行查询
+                messages = await db_manager.fetchall(query, (instance_id, wxid))
+            finally:
+                # 恢复消息监听服务
+                await message_listener.resume_listening()
+                logger.debug(f"获取消息后恢复监听服务: 实例={instance_id}, 聊天={wxid}")
 
             # 记录获取到的消息数量 - 使用匹配关键词的格式
             if messages and len(messages) > 0:
@@ -1931,9 +1994,71 @@ class MessageListenerPanel(QWidget):
     def _toggle_auto_refresh(self, state):
         """切换自动刷新状态"""
         if state == Qt.Checked:
+            # 检查监听服务是否暂停
+            if hasattr(self, "_is_listening_paused") and self._is_listening_paused:
+                logger.info("监听服务已暂停，不启动自动刷新定时器")
+                return
+
+            # 检查全局监听服务是否暂停
+            from wxauto_mgt.core.message_listener import message_listener
+            if hasattr(message_listener, '_paused') and message_listener._paused:
+                logger.info("全局监听服务已暂停，不启动自动刷新定时器")
+                return
+
             self.refresh_timer.start(self.poll_interval * 1000)  # 转换为毫秒
+            logger.info("已启动自动刷新定时器")
         else:
             self.refresh_timer.stop()
+            logger.info("已停止自动刷新定时器")
+
+    @asyncSlot()
+    async def _toggle_listening_service(self):
+        """暂停/继续消息监听服务"""
+        try:
+            # 导入消息监听器
+            from wxauto_mgt.core.message_listener import message_listener
+
+            if self._is_listening_paused:
+                # 如果当前是暂停状态，则恢复监听
+                await message_listener.resume_listening()
+                self._is_listening_paused = False
+                self.pause_resume_btn.setText("暂停监听")
+                self.pause_resume_btn.setStyleSheet("QPushButton { background-color: #FFA500; }")  # 橙色背景
+                logger.info("已恢复消息监听服务")
+
+                # 如果自动刷新被选中，重新启动刷新定时器
+                if self.auto_refresh_check.isChecked() and hasattr(self, 'refresh_timer'):
+                    self.refresh_timer.start(self.poll_interval * 1000)  # 转换为毫秒
+                    logger.info("已重新启动自动刷新定时器")
+
+                # 在日志窗口显示状态变化
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                self.appendLogMessage(f"{timestamp} - INFO - 已恢复消息监听服务", "green")
+
+                # 立即刷新一次状态
+                await self._refresh_system_status()
+            else:
+                # 如果当前是运行状态，则暂停监听
+                await message_listener.pause_listening()
+                self._is_listening_paused = True
+                self.pause_resume_btn.setText("继续监听")
+                self.pause_resume_btn.setStyleSheet("QPushButton { background-color: #FF4500; }")  # 红橙色背景
+                logger.info("已暂停消息监听服务")
+
+                # 暂停自动刷新定时器
+                if hasattr(self, 'refresh_timer'):
+                    self.refresh_timer.stop()
+                    logger.info("已暂停自动刷新定时器")
+
+                # 在日志窗口显示状态变化
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                self.appendLogMessage(f"{timestamp} - INFO - 已暂停消息监听服务", "red")
+
+                # 立即刷新一次状态
+                await self._refresh_system_status()
+        except Exception as e:
+            logger.error(f"切换监听服务状态时出错: {e}")
+            QMessageBox.critical(self, "操作失败", f"切换监听服务状态时出错: {str(e)}")
 
     def _on_listener_selected(self, row, column):
         """
@@ -2424,6 +2549,30 @@ class MessageListenerPanel(QWidget):
     def _clear_log(self):
         """清空日志窗口"""
         self.log_text.clear()
+
+    def appendLogMessage(self, message, color="black"):
+        """
+        在日志窗口添加消息
+
+        Args:
+            message: 消息内容
+            color: 消息颜色
+        """
+        # 在UI线程中安全地添加消息
+        QMetaObject.invokeMethod(
+            self.log_text,
+            "append",
+            Qt.QueuedConnection,
+            Q_ARG(str, f"<font color='{color}'>{message}</font>")
+        )
+
+        # 确保滚动到底部
+        QMetaObject.invokeMethod(
+            self.log_text.verticalScrollBar(),
+            "setValue",
+            Qt.QueuedConnection,
+            Q_ARG(int, self.log_text.verticalScrollBar().maximum())
+        )
         if hasattr(self, 'log_handler'):
             self.log_handler.log_cache.clear()
         # 清空刷新日志计数字典
@@ -2493,6 +2642,16 @@ class MessageListenerPanel(QWidget):
         try:
             # 获取消息监听器引用
             from wxauto_mgt.core.message_listener import message_listener
+
+            # 检查监听服务是否暂停
+            if hasattr(self, "_is_listening_paused") and self._is_listening_paused:
+                logger.debug("监听服务已暂停，跳过更新倒计时")
+                return
+
+            # 检查全局监听服务是否暂停
+            if hasattr(message_listener, '_paused') and message_listener._paused:
+                logger.debug("全局监听服务已暂停，跳过更新倒计时")
+                return
 
             # 如果消息监听器正在启动过程中处理超时对象，则暂时跳过UI触发的处理
             if hasattr(message_listener, '_starting_up') and message_listener._starting_up:
@@ -2592,7 +2751,7 @@ class MessageListenerPanel(QWidget):
             if "Connection refused" not in str(e) and "Not connected" not in str(e):
                 logger.exception(e)
 
-    def _refresh_system_status(self):
+    async def _refresh_system_status(self):
         """刷新并显示系统状态信息到日志窗口"""
         try:
             # 添加分隔线，而不是清空日志窗口
@@ -2606,6 +2765,14 @@ class MessageListenerPanel(QWidget):
             from wxauto_mgt.core.message_listener import message_listener
             listener_count = sum(len(listeners) for listeners in message_listener.get_active_listeners().values())
             running_status = "运行中" if message_listener.running else "已停止"
+
+            # 检查暂停状态
+            paused_status = ""
+            if hasattr(message_listener, '_paused') and message_listener._paused:
+                paused_status = " (已暂停)"
+                running_status = f"<font color='red'>{running_status}{paused_status}</font>"
+            else:
+                running_status = f"<font color='green'>{running_status}</font>"
 
             self.log_text.append(f"<font color='black'>消息监听服务: {running_status}</font>")
             self.log_text.append(f"<font color='black'>当前监听对象数量: {listener_count}</font>")
