@@ -474,6 +474,8 @@ class MessageDeliveryService:
 
             # 标记为已投递
             file_logger.info(f"消息 {message_id} 投递成功，标记为已投递")
+            # 使用特殊格式的日志，确保能被UI识别
+            logger.info(f"【转发消息到{platform.name}平台成功】: ID={message_id}, 实例={message.get('instance_id')}, 聊天={message.get('chat_name')}")
             await self._update_message_delivery_status(
                 message_id, 1, rule['platform_id']
             )

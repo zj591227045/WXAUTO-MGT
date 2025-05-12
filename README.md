@@ -111,7 +111,7 @@ wxauto_mgt/
 │   ├── components/    # UI组件
 │   └── windows/       # 窗口定义
 ├── utils/             # 工具类
-├── web/               # Web管理界面
+├── web/               # Web管理界面(开发中)
 ├── docs/              # 文档
 └── main.py            # 程序入口点
 ```

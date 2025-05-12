@@ -148,6 +148,35 @@ class QTextEditLogger(logging.Handler):
         # 获取日志消息
         msg = self.format(record)
 
+        # 特殊处理：直接显示包含"转发消息到"和"平台成功"的日志，用于调试
+        if "【转发消息到" in msg and "平台成功】" in msg:
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            formatted_msg = f"{timestamp} - INFO - {msg}"
+            color = "green"
+
+            # 更新UI
+            QMetaObject.invokeMethod(
+                self.text_widget,
+                "append",
+                Qt.QueuedConnection,
+                Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+            )
+            return
+        # 特殊处理：直接显示包含"转发消息到"和"平台成功"的旧格式日志，用于调试
+        elif "转发消息到" in msg and "平台成功" in msg:
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            formatted_msg = f"{timestamp} - INFO - {msg}"
+            color = "green"
+
+            # 更新UI
+            QMetaObject.invokeMethod(
+                self.text_widget,
+                "append",
+                Qt.QueuedConnection,
+                Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+            )
+            return
+
         # 只允许显示三类关键信息，过滤掉所有其他日志
         # 1. 监控到新消息（特定格式）
         # 2. 投递消息到平台
@@ -160,6 +189,16 @@ class QTextEditLogger(logging.Handler):
             pass  # 允许显示
         # 检查是否是投递消息日志
         elif "投递消息" in msg and "到平台" in msg:
+            pass  # 允许显示
+        # 检查是否是转发消息日志 - 使用新的特殊格式
+        elif "【转发消息到" in msg and "平台成功】" in msg:
+            # 添加调试日志，帮助我们确认日志格式
+            print(f"[DEBUG] 匹配到转发消息日志(新格式): {msg}")
+            pass  # 允许显示
+        # 检查是否是转发消息日志 - 旧格式
+        elif "转发消息到" in msg and "平台成功" in msg:
+            # 添加调试日志，帮助我们确认日志格式
+            print(f"[DEBUG] 匹配到转发消息日志(旧格式): {msg}")
             pass  # 允许显示
         # 检查是否是发送回复消息日志
         elif "直接调用API发送微信消息到" in msg and "成功" in msg:
@@ -417,6 +456,160 @@ class QTextEditLogger(logging.Handler):
             except Exception:
                 # 如果解析失败，使用原始消息
                 pass
+
+        # 2.1 转发消息到平台 - 新格式
+        elif "【转发消息到" in msg and "平台成功】" in msg:
+            try:
+                # 提取平台名称和消息ID
+                import re
+                # 使用更宽松的正则表达式匹配新格式
+                match = re.search(r'【转发消息到(.+?)平台成功】: ID=([^,]+)', msg)
+                if match:
+                    platform_name = match.group(1)
+                    msg_id = match.group(2)
+
+                    # 提取实例和聊天对象信息（如果有）
+                    instance_info = ""
+                    chat_info = ""
+                    instance_match = re.search(r'实例=([^,]+)', msg)
+                    chat_match = re.search(r'聊天=([^,]+)', msg)
+
+                    if instance_match:
+                        instance_info = f", 实例={instance_match.group(1)}"
+                    if chat_match:
+                        chat_info = f", 聊天={chat_match.group(1)}"
+
+                    formatted_msg = f"{timestamp} - INFO - 【转发消息到{platform_name}平台成功】: ID={msg_id}{instance_info}{chat_info}"
+                    color = "green"
+
+                    # 更新UI
+                    QMetaObject.invokeMethod(
+                        self.text_widget,
+                        "append",
+                        Qt.QueuedConnection,
+                        Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                    )
+                    return
+                else:
+                    # 如果正则匹配失败，使用简化的格式
+                    try:
+                        platform_name = msg.split("【转发消息到")[1].split("平台成功】")[0].strip()
+                        formatted_msg = f"{timestamp} - INFO - 【转发消息到{platform_name}平台成功】"
+                        color = "green"
+
+                        # 更新UI
+                        QMetaObject.invokeMethod(
+                            self.text_widget,
+                            "append",
+                            Qt.QueuedConnection,
+                            Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                        )
+                        return
+                    except Exception:
+                        # 如果简化格式也失败，直接显示原始消息
+                        formatted_msg = f"{timestamp} - INFO - {msg}"
+                        color = "green"
+
+                        # 更新UI
+                        QMetaObject.invokeMethod(
+                            self.text_widget,
+                            "append",
+                            Qt.QueuedConnection,
+                            Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                        )
+                        return
+            except Exception as e:
+                # 如果解析失败，使用原始消息
+                logger.debug(f"解析转发消息日志失败: {e}, 原始消息: {msg}")
+                # 直接显示原始消息
+                formatted_msg = f"{timestamp} - INFO - {msg}"
+                color = "green"
+
+                # 更新UI
+                QMetaObject.invokeMethod(
+                    self.text_widget,
+                    "append",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                )
+                return
+
+        # 2.2 转发消息到平台 - 旧格式
+        elif "转发消息到" in msg and "平台成功" in msg:
+            try:
+                # 提取平台名称和消息ID
+                import re
+                # 使用更宽松的正则表达式匹配旧格式
+                match = re.search(r'转发消息到(.+?)平台成功: ID=([^,]+)', msg)
+                if match:
+                    platform_name = match.group(1)
+                    msg_id = match.group(2)
+
+                    # 提取实例和聊天对象信息（如果有）
+                    instance_info = ""
+                    chat_info = ""
+                    instance_match = re.search(r'实例=([^,]+)', msg)
+                    chat_match = re.search(r'聊天=([^,]+)', msg)
+
+                    if instance_match:
+                        instance_info = f", 实例={instance_match.group(1)}"
+                    if chat_match:
+                        chat_info = f", 聊天={chat_match.group(1)}"
+
+                    formatted_msg = f"{timestamp} - INFO - 转发消息到{platform_name}平台成功: ID={msg_id}{instance_info}{chat_info}"
+                    color = "green"
+
+                    # 更新UI
+                    QMetaObject.invokeMethod(
+                        self.text_widget,
+                        "append",
+                        Qt.QueuedConnection,
+                        Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                    )
+                    return
+                else:
+                    # 如果正则匹配失败，使用简化的格式
+                    try:
+                        platform_name = msg.split("转发消息到")[1].split("平台成功")[0].strip()
+                        formatted_msg = f"{timestamp} - INFO - 转发消息到{platform_name}平台成功"
+                        color = "green"
+
+                        # 更新UI
+                        QMetaObject.invokeMethod(
+                            self.text_widget,
+                            "append",
+                            Qt.QueuedConnection,
+                            Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                        )
+                        return
+                    except Exception:
+                        # 如果简化格式也失败，直接显示原始消息
+                        formatted_msg = f"{timestamp} - INFO - {msg}"
+                        color = "green"
+
+                        # 更新UI
+                        QMetaObject.invokeMethod(
+                            self.text_widget,
+                            "append",
+                            Qt.QueuedConnection,
+                            Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                        )
+                        return
+            except Exception as e:
+                # 如果解析失败，使用原始消息
+                logger.debug(f"解析转发消息日志失败: {e}, 原始消息: {msg}")
+                # 直接显示原始消息
+                formatted_msg = f"{timestamp} - INFO - {msg}"
+                color = "green"
+
+                # 更新UI
+                QMetaObject.invokeMethod(
+                    self.text_widget,
+                    "append",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, f"<font color='{color}'>{formatted_msg}</font>")
+                )
+                return
 
         # 3. 发送回复消息
         elif "直接调用API发送消息成功" in msg:
