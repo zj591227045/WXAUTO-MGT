@@ -1,120 +1,79 @@
 """
-Web服务器模块
+Web服务器实现
 
-实现FastAPI应用创建和配置，包括路由注册、中间件设置和异常处理。
+提供Flask应用创建和服务器运行功能。
 """
 
-import logging
 import os
-from typing import Dict, Any, Optional
+import signal
+import threading
+from flask import Flask, render_template
+from wxauto_mgt.utils.logging import logger
 
-logger = logging.getLogger(__name__)
+# 全局变量
+_shutdown_requested = False
+_server = None
 
-def create_app(config: Optional[Dict[str, Any]] = None) -> "FastAPI":
+def create_app():
     """
-    创建FastAPI应用
-
-    Args:
-        config: 应用配置
-
+    创建Flask应用
+    
     Returns:
-        FastAPI: FastAPI应用实例
+        Flask: Flask应用实例
     """
+    app = Flask(
+        __name__,
+        template_folder=os.path.join(os.path.dirname(__file__), 'templates'),
+        static_folder=os.path.join(os.path.dirname(__file__), 'static')
+    )
+    
+    # 配置
+    app.config['SECRET_KEY'] = os.urandom(24)
+    app.config['TEMPLATES_AUTO_RELOAD'] = True
+    
+    # 注册路由
+    from .routes import register_routes
+    register_routes(app)
+    
+    # 错误处理
+    @app.errorhandler(404)
+    def page_not_found(e):
+        return render_template('error.html', error="页面未找到"), 404
+    
+    @app.errorhandler(500)
+    def internal_server_error(e):
+        return render_template('error.html', error="服务器内部错误"), 500
+    
+    return app
+
+def run_server(app, host, port):
+    """
+    在线程中运行Flask服务器
+    
+    Args:
+        app: Flask应用实例
+        host: 主机地址
+        port: 端口号
+    """
+    global _server
+    
     try:
-        from fastapi import FastAPI, HTTPException
-        from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.staticfiles import StaticFiles
-        from fastapi.responses import JSONResponse
-
-        # 创建FastAPI应用
-        app = FastAPI(
-            title="wxauto_Mgt Web管理界面",
-            description="wxauto_Mgt系统的Web管理界面",
-            version="1.0.0",
-            docs_url="/api/docs",
-            redoc_url="/api/redoc",
-            openapi_url="/api/openapi.json"
-        )
-
-        # 配置CORS
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],  # 在生产环境中应该限制为特定域名
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-
-        # 注册API路由
-        try:
-            from .api import router as api_router
-            app.include_router(api_router, prefix="/api")
-
-            # 注册WebSocket路由
-            try:
-                from .websockets import router as ws_router
-                app.include_router(ws_router)
-            except Exception as e:
-                logger.error(f"注册WebSocket路由失败: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-        except Exception as e:
-            logger.error(f"注册路由失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-
-            # 创建一个简单的路由，确保应用可以启动
-            @app.get("/api/status")
-            async def get_status():
-                return {"status": "ok", "message": "Web服务已启动，但API路由加载失败"}
-
-        # 异常处理
-        @app.exception_handler(HTTPException)
-        async def http_exception_handler(request, exc):
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": exc.detail},
-            )
-
-        @app.exception_handler(Exception)
-        async def general_exception_handler(request, exc):
-            logger.error(f"未处理的异常: {exc}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return JSONResponse(
-                status_code=500,
-                content={"detail": "服务器内部错误"},
-            )
-
-        # 挂载前端静态文件
-        try:
-            frontend_path = os.path.join(os.path.dirname(__file__), "frontend", "dist")
-            # 确保路径存在
-            if os.path.exists(frontend_path):
-                logger.info(f"挂载前端静态文件: {frontend_path}")
-                app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
-            else:
-                logger.warning(f"前端静态文件路径不存在: {frontend_path}")
-        except Exception as e:
-            logger.error(f"挂载前端静态文件失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-
-        # 启动和关闭事件
-        @app.on_event("startup")
-        async def startup_event():
-            logger.info("Web服务启动中...")
-            # 初始化数据库连接池等资源
-
-        @app.on_event("shutdown")
-        async def shutdown_event():
-            logger.info("Web服务关闭中...")
-            # 释放资源
-
-        return app
-
+        # 使用werkzeug的服务器，支持在线程中运行
+        from werkzeug.serving import make_server
+        
+        _server = make_server(host, port, app)
+        logger.info(f"Web服务器启动中，地址: {host}:{port}")
+        _server.serve_forever()
     except Exception as e:
-        logger.error(f"创建FastAPI应用失败: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise
+        logger.error(f"Web服务器运行失败: {e}")
+    finally:
+        logger.info("Web服务器已停止")
+
+def stop_server():
+    """停止服务器"""
+    global _server
+    
+    if _server:
+        logger.info("正在停止Web服务器...")
+        _server.shutdown()
+        _server = None
