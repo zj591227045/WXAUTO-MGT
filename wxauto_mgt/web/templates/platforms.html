@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+
+{% block head %}
+<style>
+    .table-container {
+        background-color: #fff;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin-bottom: 20px;
+        overflow: hidden;
+    }
+    .table-header {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-bottom: 1px solid #dee2e6;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .table-title {
+        font-size: 1.2rem;
+        font-weight: bold;
+        margin: 0;
+    }
+    .table-actions {
+        display: flex;
+        gap: 10px;
+    }
+    .table-footer {
+        background-color: #f8f9fa;
+        padding: 10px 15px;
+        border-top: 1px solid #dee2e6;
+        font-size: 0.9rem;
+        color: #6c757d;
+    }
+    .table-responsive {
+        overflow-x: auto;
+    }
+    .table {
+        margin-bottom: 0;
+    }
+    .table th {
+        background-color: #f8f9fa;
+        font-weight: 500;
+    }
+    .action-buttons {
+        white-space: nowrap;
+    }
+    .action-buttons .btn {
+        margin-right: 5px;
+    }
+    .status-badge {
+        padding: 5px 10px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: bold;
+    }
+    .status-enabled {
+        background-color: #d4edda;
+        color: #155724;
+    }
+    .status-disabled {
+        background-color: #f8d7da;
+        color: #721c24;
+    }
+    .filter-container {
+        margin-bottom: 15px;
+        padding: 10px 15px;
+        background-color: #f8f9fa;
+        border-radius: 5px;
+        display: flex;
+        align-items: center;
+    }
+    .filter-label {
+        margin-right: 10px;
+        font-weight: 500;
+    }
+    .filter-select {
+        min-width: 200px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2>服务平台和消息转发规则</h2>
+            <p class="text-muted">管理服务平台和消息转发规则</p>
+        </div>
+    </div>
+
+    <!-- 服务平台管理 -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="table-container">
+                <div class="table-header">
+                    <h5 class="table-title">服务平台配置</h5>
+                    <div class="table-actions">
+                        <button id="refresh-platforms" class="btn btn-outline-primary">
+                            <i class="fas fa-sync-alt"></i> 刷新
+                        </button>
+                        <button id="add-platform" class="btn btn-primary">
+                            <i class="fas fa-plus"></i> 添加平台
+                        </button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>名称</th>
+                                <th>类型</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="platforms-table-body">
+                            <tr>
+                                <td colspan="5" class="text-center py-3">
+                                    <div class="spinner-border text-primary" role="status">
+                                        <span class="visually-hidden">加载中...</span>
+                                    </div>
+                                    <p class="mt-2">加载服务平台列表...</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="table-footer" id="platforms-count">
+                    共 0 个服务平台
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 消息转发规则管理 -->
+    <div class="row">
+        <div class="col-12">
+            <div class="table-container">
+                <div class="table-header">
+                    <h5 class="table-title">消息转发规则配置</h5>
+                    <div class="table-actions">
+                        <button id="refresh-rules" class="btn btn-outline-primary">
+                            <i class="fas fa-sync-alt"></i> 刷新
+                        </button>
+                        <button id="add-rule" class="btn btn-primary">
+                            <i class="fas fa-plus"></i> 添加规则
+                        </button>
+                    </div>
+                </div>
+                <div class="filter-container">
+                    <span class="filter-label">当前过滤:</span>
+                    <select id="instance-filter" class="form-select filter-select">
+                        <option value="">全部实例</option>
+                    </select>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>名称</th>
+                                <th>实例</th>
+                                <th>聊天对象</th>
+                                <th>平台</th>
+                                <th>优先级</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rules-table-body">
+                            <tr>
+                                <td colspan="7" class="text-center py-3">
+                                    <div class="spinner-border text-primary" role="status">
+                                        <span class="visually-hidden">加载中...</span>
+                                    </div>
+                                    <p class="mt-2">加载消息转发规则列表...</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="table-footer" id="rules-count">
+                    共 0 个规则
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 添加/编辑服务平台模态框 -->
+<div class="modal fade" id="platformModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="platformModalTitle">添加服务平台</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="platformForm">
+                    <input type="hidden" id="platform-id">
+                    <div class="mb-3">
+                        <label for="platform-name" class="form-label">平台名称</label>
+                        <input type="text" class="form-control" id="platform-name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="platform-type" class="form-label">平台类型</label>
+                        <select class="form-select" id="platform-type" required>
+                            <option value="">请选择平台类型</option>
+                            <option value="dify">Dify</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="keyword">关键词匹配</option>
+                        </select>
+                    </div>
+                    <div id="platform-config-container">
+                        <!-- 平台配置字段将根据选择的平台类型动态加载 -->
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="platform-enabled" checked>
+                        <label class="form-check-label" for="platform-enabled">
+                            启用平台
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="save-platform">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 添加/编辑消息转发规则模态框 -->
+<div class="modal fade" id="ruleModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="ruleModalTitle">添加消息转发规则</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="ruleForm">
+                    <input type="hidden" id="rule-id">
+                    <div class="mb-3">
+                        <label for="rule-name" class="form-label">规则名称</label>
+                        <input type="text" class="form-control" id="rule-name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="rule-instance" class="form-label">实例</label>
+                        <select class="form-select" id="rule-instance" required>
+                            <option value="">请选择实例</option>
+                            <option value="*">所有实例</option>
+                            <!-- 实例选项将动态加载 -->
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="rule-chat" class="form-label">聊天对象</label>
+                        <input type="text" class="form-control" id="rule-chat" required>
+                        <div class="form-text">可以使用通配符 * 匹配多个聊天对象，例如 "测试*" 将匹配所有以"测试"开头的聊天对象</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="rule-platform" class="form-label">服务平台</label>
+                        <select class="form-select" id="rule-platform" required>
+                            <option value="">请选择服务平台</option>
+                            <!-- 平台选项将动态加载 -->
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="rule-priority" class="form-label">优先级</label>
+                        <input type="number" class="form-control" id="rule-priority" min="0" max="100" value="5" required>
+                        <div class="form-text">数字越大优先级越高，范围0-100</div>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="rule-enabled" checked>
+                        <label class="form-check-label" for="rule-enabled">
+                            启用规则
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="save-rule">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 确认删除模态框 -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteModalTitle">确认删除</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p id="delete-confirm-message">确定要删除吗？</p>
+                <p class="text-danger">此操作不可逆，删除后将无法恢复。</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-danger" id="confirm-delete">删除</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='/js/pages/platforms.js') }}"></script>
+{% endblock %}

@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from wxauto_mgt.core.api_client import instance_manager
 from wxauto_mgt.data.config_store import config_store
 from wxauto_mgt.utils.logging import logger
-from wxauto_mgt.web import start_web_service, stop_web_service, is_web_service_running, get_web_service_config, set_web_service_config
+from wxauto_mgt.web import is_web_service_running
 from wxauto_mgt.core.service_platform_manager import platform_manager, rule_manager
 
 # 延迟导入UI组件，避免循环导入
@@ -163,6 +163,7 @@ class MainWindow(QMainWindow):
         # 导入组件
         from wxauto_mgt.ui.components.instance_manager_panel import InstanceManagerPanel
         from wxauto_mgt.ui.components.message_panel import MessageListenerPanel
+        from wxauto_mgt.ui.components.web_service_panel import WebServicePanel
         # 状态监控标签页已隐藏
         # from wxauto_mgt.ui.components.status_panel import StatusMonitorPanel
 
@@ -173,6 +174,10 @@ class MainWindow(QMainWindow):
         # 消息监听选项卡
         self.message_panel = MessageListenerPanel(self)
         self.tab_widget.addTab(self.message_panel, "消息监听")
+
+        # Web服务管理选项卡
+        self.web_service_panel = WebServicePanel(self)
+        self.tab_widget.addTab(self.web_service_panel, "Web管理")
 
         # 状态监控选项卡已隐藏
         # self.status_panel = StatusMonitorPanel(self)
@@ -321,16 +326,18 @@ class MainWindow(QMainWindow):
             if web_config:
                 logger.info(f"加载Web服务配置: {web_config}")
 
-                # 更新Web服务配置
-                config = get_web_service_config()
+                # 检查是否需要自动启动Web服务
+                if 'auto_start' in web_config and web_config['auto_start']:
+                    logger.info("检测到Web服务自动启动配置")
 
-                # 设置端口号
-                if 'port' in web_config:
-                    config['port'] = web_config['port']
-                    self.port_spinbox.setValue(web_config['port'])
+                    # 如果Web服务面板已初始化，使用其方法启动Web服务
+                    if hasattr(self, 'web_service_panel'):
+                        # 获取配置
+                        host = web_config.get('host', '127.0.0.1')
+                        port = web_config.get('port', 8443)
 
-                # 更新Web服务配置
-                set_web_service_config(config)
+                        # 启动Web服务
+                        await self.web_service_panel._start_web_service(host, port)
         except Exception as e:
             logger.error(f"启动时保存配置失败: {str(e)}")
 
@@ -362,35 +369,10 @@ class MainWindow(QMainWindow):
         group_layout.setContentsMargins(10, 5, 10, 5)
         group_layout.setSpacing(10)
 
-        # 端口号标签和输入框
-        port_label = QLabel("端口:")
-        group_layout.addWidget(port_label)
-
-        self.port_spinbox = QSpinBox()
-        self.port_spinbox.setRange(1024, 65535)
-        self.port_spinbox.setValue(8443)  # 默认端口
-        self.port_spinbox.setFixedWidth(80)
-        self.port_spinbox.setToolTip("Web服务端口号 (1024-65535)")
-        group_layout.addWidget(self.port_spinbox)
-
-        # 启动/停止按钮
-        self.web_service_btn = QPushButton("启动服务")
-        self.web_service_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1890ff;
-                color: white;
-                border: none;
-                padding: 6px 12px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #40a9ff;
-            }
-        """)
-        self.web_service_btn.clicked.connect(self._toggle_web_service)
-        group_layout.addWidget(self.web_service_btn)
-
         # 状态标签
+        status_label = QLabel("状态:")
+        group_layout.addWidget(status_label)
+
         self.web_service_status = QLabel("未运行")
         self.web_service_status.setStyleSheet("color: #f5222d;")  # 红色表示未运行
         group_layout.addWidget(self.web_service_status)
@@ -416,6 +398,23 @@ class MainWindow(QMainWindow):
         self.open_web_btn.clicked.connect(self._open_web_interface)
         self.open_web_btn.setEnabled(False)  # 初始状态禁用
         group_layout.addWidget(self.open_web_btn)
+
+        # 管理按钮 - 打开Web管理选项卡
+        manage_web_btn = QPushButton("管理Web服务")
+        manage_web_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1890ff;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #40a9ff;
+            }
+        """)
+        manage_web_btn.clicked.connect(self._open_web_service_tab)
+        group_layout.addWidget(manage_web_btn)
 
         # 添加到主布局
         web_service_layout.addWidget(web_service_group)
@@ -443,9 +442,6 @@ class MainWindow(QMainWindow):
         # 初始化Web服务状态
         self._update_web_service_status()
 
-        # 从配置中加载端口号
-        self._load_web_service_config()
-
     def _update_web_service_status(self):
         """更新Web服务状态显示"""
         running = is_web_service_running()
@@ -453,39 +449,27 @@ class MainWindow(QMainWindow):
         if running:
             self.web_service_status.setText("运行中")
             self.web_service_status.setStyleSheet("color: #52c41a;")  # 绿色表示运行中
-            self.web_service_btn.setText("停止服务")
-            self.web_service_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #f5222d;
-                    color: white;
-                    border: none;
-                    padding: 6px 12px;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #ff4d4f;
-                }
-            """)
-            self.port_spinbox.setEnabled(False)
             self.open_web_btn.setEnabled(True)  # 启用打开Web界面按钮
+
+            # 如果Web服务面板已初始化，也更新其状态
+            if hasattr(self, 'web_service_panel'):
+                self.web_service_panel._update_web_service_status()
         else:
             self.web_service_status.setText("未运行")
             self.web_service_status.setStyleSheet("color: #f5222d;")  # 红色表示未运行
-            self.web_service_btn.setText("启动服务")
-            self.web_service_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #1890ff;
-                    color: white;
-                    border: none;
-                    padding: 6px 12px;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #40a9ff;
-                }
-            """)
-            self.port_spinbox.setEnabled(True)
             self.open_web_btn.setEnabled(False)  # 禁用打开Web界面按钮
+
+            # 如果Web服务面板已初始化，也更新其状态
+            if hasattr(self, 'web_service_panel'):
+                self.web_service_panel._update_web_service_status()
+
+    def _open_web_service_tab(self):
+        """打开Web服务管理选项卡"""
+        # 查找Web服务选项卡的索引
+        for i in range(self.tab_widget.count()):
+            if self.tab_widget.tabText(i) == "Web管理":
+                self.tab_widget.setCurrentIndex(i)
+                return
 
     def _open_web_interface(self):
         """打开Web管理界面"""
@@ -494,154 +478,41 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            # 获取当前配置
-            config = get_web_service_config()
-            port = config.get('port', 8443)
+            # 使用Web服务面板中的方法打开Web界面
+            if hasattr(self, 'web_service_panel'):
+                self.web_service_panel._open_web_interface()
+            else:
+                # 使用默认配置
+                host = '127.0.0.1'
+                port = 8443
 
-            # 构建URL
-            url = f"http://localhost:{port}"
+                # 构建URL
+                url = f"http://{host}:{port}"
 
-            # 使用系统默认浏览器打开URL
-            import webbrowser
-            webbrowser.open(url)
+                # 使用系统默认浏览器打开URL
+                import webbrowser
+                webbrowser.open(url)
 
-            self.status_changed.emit(f"已在浏览器中打开Web管理界面: {url}", 3000)
+                self.status_changed.emit(f"已在浏览器中打开Web管理界面: {url}", 3000)
         except Exception as e:
             self.status_changed.emit(f"打开Web界面失败: {str(e)}", 3000)
             logger.error(f"打开Web界面失败: {e}")
 
     def _load_web_service_config(self):
         """从配置中加载Web服务配置"""
-        try:
-            # 从配置存储中获取Web服务配置
-            web_config = config_store.get_config_sync('system', 'web_service', {})
-
-            # 如果配置存在，更新Web服务配置
-            if web_config:
-                # 更新Web服务配置
-                config = get_web_service_config()
-
-                # 设置端口号
-                if 'port' in web_config:
-                    config['port'] = web_config['port']
-                    self.port_spinbox.setValue(web_config['port'])
-
-                # 更新Web服务配置
-                set_web_service_config(config)
-            else:
-                # 使用默认配置
-                config = get_web_service_config()
-                self.port_spinbox.setValue(config['port'])
-        except Exception as e:
-            logger.error(f"加载Web服务配置失败: {e}")
+        # 这个方法现在由Web服务面板处理，这里只是为了兼容性保留
+        pass
 
     def _toggle_web_service(self):
         """切换Web服务状态"""
-        running = is_web_service_running()
+        # 打开Web服务选项卡
+        self._open_web_service_tab()
 
-        if running:
-            # 停止Web服务
-            asyncio.create_task(self._stop_web_service())
-        else:
-            # 启动Web服务
-            port = self.port_spinbox.value()
-            asyncio.create_task(self._start_web_service(port))
+        # 使用Web服务面板中的方法切换Web服务状态
+        if hasattr(self, 'web_service_panel'):
+            self.web_service_panel._toggle_web_service()
 
-    async def _start_web_service(self, port):
-        """
-        启动Web服务
-
-        Args:
-            port: 端口号
-        """
-        try:
-            # 确保端口是整数
-            if isinstance(port, str):
-                try:
-                    port = int(port)
-                except ValueError:
-                    self.status_changed.emit(f"无效的端口号: {port}", 3000)
-                    logger.error(f"无效的端口号: {port}")
-                    return
-
-            # 更新配置
-            config = get_web_service_config()
-            config['port'] = port
-            set_web_service_config(config)
-
-            # 保存配置到配置存储
-            await config_store.set_config('system', 'web_service', {'port': port})
-
-            # 启动Web服务
-            try:
-                # 确保配置中不包含debug参数
-                if 'debug' in config:
-                    del config['debug']
-
-                # 检查依赖项
-                try:
-                    import fastapi
-                    import uvicorn
-                    import jose
-                    import passlib
-                except ImportError as e:
-                    error_msg = f"缺少必要的依赖项: {e}\n请安装: pip install fastapi uvicorn python-jose[cryptography] passlib[bcrypt]"
-                    self.status_changed.emit(f"启动Web服务失败: 缺少依赖项", 3000)
-                    logger.error(error_msg)
-                    return
-
-                # 检查端口是否被占用
-                import socket
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                try:
-                    sock.bind(('127.0.0.1', port))
-                    sock.close()
-                except socket.error:
-                    error_msg = f"端口 {port} 已被占用，请尝试其他端口"
-                    self.status_changed.emit(error_msg, 3000)
-                    logger.error(error_msg)
-                    return
-
-                success = await start_web_service(config)
-
-                if success:
-                    self.status_changed.emit(f"Web服务已启动，端口: {port}", 3000)
-                    logger.info(f"Web服务已启动，端口: {port}")
-                else:
-                    self.status_changed.emit("启动Web服务失败", 3000)
-                    logger.error("启动Web服务失败")
-            except Exception as e:
-                import traceback
-                error_msg = f"启动Web服务时出错: {str(e)}\n{traceback.format_exc()}"
-                self.status_changed.emit(f"启动Web服务失败: {str(e)}", 3000)
-                logger.error(error_msg)
-
-            # 更新状态显示
-            self._update_web_service_status()
-        except Exception as e:
-            import traceback
-            error_msg = f"启动Web服务时出错: {str(e)}\n{traceback.format_exc()}"
-            self.status_changed.emit(f"启动Web服务时出错: {str(e)}", 3000)
-            logger.error(error_msg)
-
-    async def _stop_web_service(self):
-        """停止Web服务"""
-        try:
-            # 停止Web服务
-            success = await stop_web_service()
-
-            if success:
-                self.status_changed.emit("Web服务已停止", 3000)
-                logger.info("Web服务已停止")
-            else:
-                self.status_changed.emit("停止Web服务失败", 3000)
-                logger.error("停止Web服务失败")
-
-            # 更新状态显示
-            self._update_web_service_status()
-        except Exception as e:
-            self.status_changed.emit(f"停止Web服务时出错: {str(e)}", 3000)
-            logger.error(f"停止Web服务时出错: {e}")
+    # 这些方法已移至Web服务面板，这里删除
 
     def _reload_config(self):
         """重载配置"""

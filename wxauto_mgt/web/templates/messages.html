@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+
+{% block head %}
+<style>
+    .messages-container {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 200px);
+    }
+    .split-view {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+        margin-bottom: 20px;
+    }
+    .listeners-panel {
+        width: 300px;
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin-right: 20px;
+        display: flex;
+        flex-direction: column;
+    }
+    .listeners-header {
+        padding: 15px;
+        border-bottom: 1px solid #dee2e6;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .listeners-title {
+        font-size: 1.1rem;
+        font-weight: bold;
+        margin: 0;
+    }
+    .listeners-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px;
+    }
+    .listener-item {
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 5px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+    .listener-item:hover {
+        background-color: #e9ecef;
+    }
+    .listener-item.active {
+        background-color: #007bff;
+        color: white;
+    }
+    .listener-actions {
+        padding: 15px;
+        border-top: 1px solid #dee2e6;
+    }
+    .messages-panel {
+        flex: 1;
+        background-color: #fff;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        display: flex;
+        flex-direction: column;
+    }
+    .messages-header {
+        padding: 15px;
+        border-bottom: 1px solid #dee2e6;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .messages-title {
+        font-size: 1.1rem;
+        font-weight: bold;
+        margin: 0;
+    }
+    .messages-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 15px;
+    }
+    .message-item {
+        margin-bottom: 15px;
+        display: flex;
+    }
+    .message-sender {
+        font-weight: bold;
+        margin-right: 10px;
+        min-width: 60px;
+    }
+    .message-content {
+        flex: 1;
+        background-color: #f8f9fa;
+        padding: 10px;
+        border-radius: 5px;
+    }
+    .message-time {
+        font-size: 0.8rem;
+        color: #6c757d;
+        margin-top: 5px;
+        text-align: right;
+    }
+    .logs-panel {
+        background-color: #fff;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        height: 300px;
+        display: flex;
+        flex-direction: column;
+    }
+    .logs-header {
+        padding: 15px;
+        border-bottom: 1px solid #dee2e6;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .logs-title {
+        font-size: 1.1rem;
+        font-weight: bold;
+        margin: 0;
+    }
+    .logs-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 15px;
+        font-family: monospace;
+        font-size: 0.9rem;
+        background-color: #f8f9fa;
+    }
+    .log-item {
+        margin-bottom: 5px;
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+    .log-info {
+        color: #0d6efd;
+    }
+    .log-warning {
+        color: #ffc107;
+    }
+    .log-error {
+        color: #dc3545;
+    }
+    .refresh-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 10;
+    }
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        height: 100%;
+        color: #6c757d;
+    }
+    .empty-state i {
+        font-size: 3rem;
+        margin-bottom: 15px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2>消息监控</h2>
+            <p class="text-muted">监控微信消息和系统日志</p>
+        </div>
+    </div>
+
+    <div class="messages-container">
+        <!-- 分栏视图：左侧监听对象列表，右侧消息记录 -->
+        <div class="split-view">
+            <!-- 监听对象列表 -->
+            <div class="listeners-panel">
+                <div class="listeners-header">
+                    <h5 class="listeners-title">监听对象列表</h5>
+                    <button id="refresh-listeners" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <div class="listeners-list" id="listeners-list">
+                    <div class="text-center py-5">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">加载中...</span>
+                        </div>
+                        <p class="mt-2">加载监听对象列表...</p>
+                    </div>
+                </div>
+                <div class="listener-actions">
+                    <button id="add-listener" class="btn btn-sm btn-primary w-100 mb-2">
+                        <i class="fas fa-plus"></i> 添加监听对象
+                    </button>
+                    <button id="delete-listener" class="btn btn-sm btn-outline-danger w-100" disabled>
+                        <i class="fas fa-trash-alt"></i> 删除监听对象
+                    </button>
+                </div>
+            </div>
+
+            <!-- 消息记录 -->
+            <div class="messages-panel">
+                <div class="messages-header">
+                    <h5 class="messages-title">消息记录</h5>
+                    <button id="refresh-messages" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <div class="messages-list" id="messages-list">
+                    <div class="empty-state">
+                        <i class="fas fa-comments"></i>
+                        <p>请选择一个监听对象查看消息</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 消息监听日志 -->
+        <div class="logs-panel">
+            <div class="logs-header">
+                <h5 class="logs-title">消息监听日志</h5>
+                <button id="refresh-logs" class="btn btn-sm btn-outline-primary">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
+            <div class="logs-list" id="logs-list">
+                <div class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                    <p class="mt-2">加载日志...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 添加监听对象模态框 -->
+<div class="modal fade" id="listenerModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">添加监听对象</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="listenerForm">
+                    <div class="mb-3">
+                        <label for="listener-instance" class="form-label">实例</label>
+                        <select class="form-select" id="listener-instance" required>
+                            <option value="">请选择实例</option>
+                            <!-- 实例选项将动态加载 -->
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="listener-chat" class="form-label">聊天对象</label>
+                        <input type="text" class="form-control" id="listener-chat" required>
+                        <div class="form-text">输入聊天对象的名称，例如：群聊名称、好友昵称等</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="save-listener">添加</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='/js/pages/messages.js') }}"></script>
+{% endblock %}

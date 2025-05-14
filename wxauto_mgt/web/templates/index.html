@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+
+{% block head %}
+<style>
+    .status-card {
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin-bottom: 20px;
+        transition: transform 0.3s;
+    }
+    .status-card:hover {
+        transform: translateY(-5px);
+    }
+    .status-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+    }
+    .status-label {
+        font-size: 0.9rem;
+        color: #6c757d;
+    }
+    .status-running {
+        color: #28a745;
+    }
+    .status-error {
+        color: #dc3545;
+    }
+    .log-container {
+        height: 300px;
+        overflow-y: auto;
+    }
+    .log-entry {
+        padding: 5px;
+        border-bottom: 1px solid #eee;
+    }
+    .log-info {
+        color: #0d6efd;
+    }
+    .log-warning {
+        color: #ffc107;
+    }
+    .log-error {
+        color: #dc3545;
+    }
+    .refresh-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 10;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2>仪表盘</h2>
+            <p class="text-muted">系统状态概览</p>
+        </div>
+    </div>
+
+    <!-- 状态卡片 -->
+    <div class="row">
+        <!-- 系统状态 -->
+        <div class="col-md-3">
+            <div class="card status-card">
+                <div class="card-body">
+                    <h5 class="card-title">系统状态</h5>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="status-label">状态:</span>
+                        <span class="status-value status-running" id="system-status">加载中...</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="status-label">运行时间:</span>
+                        <span class="status-value" id="system-uptime">加载中...</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="status-label">版本:</span>
+                        <span class="status-value" id="system-version">加载中...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 实例状态 -->
+        <div class="col-md-3">
+            <div class="card status-card">
+                <div class="card-body">
+                    <h5 class="card-title">实例状态</h5>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="status-label">在线:</span>
+                        <span class="status-value" id="instance-online">加载中...</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="status-label">离线:</span>
+                        <span class="status-value" id="instance-offline">加载中...</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="status-label">错误:</span>
+                        <span class="status-value" id="instance-error">加载中...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 消息处理 -->
+        <div class="col-md-3">
+            <div class="card status-card">
+                <div class="card-body">
+                    <h5 class="card-title">消息处理</h5>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="status-label">今日消息:</span>
+                        <span class="status-value" id="message-today">加载中...</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="status-label">成功率:</span>
+                        <span class="status-value" id="message-success-rate">加载中...</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="status-label">待处理:</span>
+                        <span class="status-value" id="message-pending">加载中...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 系统资源 -->
+        <div class="col-md-3">
+            <div class="card status-card">
+                <div class="card-body">
+                    <h5 class="card-title">系统资源</h5>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="status-label">CPU:</span>
+                        <span class="status-value" id="resource-cpu">加载中...</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="status-label">内存:</span>
+                        <span class="status-value" id="resource-memory">加载中...</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="status-label">磁盘:</span>
+                        <span class="status-value" id="resource-disk">加载中...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 最近消息活动和系统日志 -->
+    <div class="row">
+        <!-- 最近消息活动 -->
+        <div class="col-md-6">
+            <div class="card status-card">
+                <div class="card-body position-relative">
+                    <button class="btn btn-sm btn-outline-primary refresh-btn" id="refresh-messages">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                    <h5 class="card-title">最近消息活动</h5>
+                    <div class="log-container" id="recent-messages">
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">加载中...</span>
+                            </div>
+                            <p class="mt-2">加载中...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 系统日志 -->
+        <div class="col-md-6">
+            <div class="card status-card">
+                <div class="card-body position-relative">
+                    <button class="btn btn-sm btn-outline-primary refresh-btn" id="refresh-logs">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                    <h5 class="card-title">系统日志</h5>
+                    <div class="log-container" id="system-logs">
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">加载中...</span>
+                            </div>
+                            <p class="mt-2">加载中...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='/js/pages/index.js') }}"></script>
+{% endblock %}

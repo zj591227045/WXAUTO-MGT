@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+
+{% block head %}
+<style>
+    .instance-card {
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin-bottom: 20px;
+        transition: transform 0.3s;
+    }
+    .instance-card:hover {
+        transform: translateY(-5px);
+    }
+    .instance-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px;
+        border-bottom: 1px solid #eee;
+    }
+    .instance-title {
+        font-size: 1.2rem;
+        font-weight: bold;
+        margin: 0;
+    }
+    .instance-status {
+        padding: 5px 10px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: bold;
+    }
+    .status-online {
+        background-color: #d4edda;
+        color: #155724;
+    }
+    .status-offline {
+        background-color: #f8f9fa;
+        color: #6c757d;
+    }
+    .status-error {
+        background-color: #f8d7da;
+        color: #721c24;
+    }
+    .status-disabled {
+        background-color: #e2e3e5;
+        color: #383d41;
+    }
+    .metric-container {
+        display: flex;
+        flex-wrap: wrap;
+        padding: 15px;
+    }
+    .metric-box {
+        flex: 1 0 30%;
+        margin: 5px;
+        padding: 10px;
+        background-color: #f8f9fa;
+        border-radius: 5px;
+        text-align: center;
+    }
+    .metric-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #007bff;
+    }
+    .metric-label {
+        font-size: 0.8rem;
+        color: #6c757d;
+    }
+    .instance-actions {
+        padding: 15px;
+        border-top: 1px solid #eee;
+        display: flex;
+        justify-content: flex-end;
+    }
+    .instance-actions .btn {
+        margin-left: 10px;
+    }
+    .refresh-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 10;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12 d-flex justify-content-between align-items-center">
+            <div>
+                <h2>实例管理</h2>
+                <p class="text-muted">管理wxauto实例</p>
+            </div>
+            <div>
+                <button id="refresh-instances" class="btn btn-outline-primary me-2">
+                    <i class="fas fa-sync-alt"></i> 刷新
+                </button>
+                <button id="add-instance" class="btn btn-primary">
+                    <i class="fas fa-plus"></i> 添加实例
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 实例列表 -->
+    <div class="row" id="instances-container">
+        <div class="col-12 text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">加载中...</span>
+            </div>
+            <p class="mt-2">加载实例列表...</p>
+        </div>
+    </div>
+</div>
+
+<!-- 添加/编辑实例模态框 -->
+<div class="modal fade" id="instanceModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="instanceModalTitle">添加实例</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="instanceForm">
+                    <input type="hidden" id="instance-id">
+                    <div class="mb-3">
+                        <label for="instance-name" class="form-label">实例名称</label>
+                        <input type="text" class="form-control" id="instance-name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="instance-base-url" class="form-label">API地址</label>
+                        <input type="text" class="form-control" id="instance-base-url" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="instance-api-key" class="form-label">API密钥</label>
+                        <input type="text" class="form-control" id="instance-api-key">
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="instance-enabled" checked>
+                        <label class="form-check-label" for="instance-enabled">
+                            启用实例
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="save-instance">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 确认删除模态框 -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">确认删除</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>确定要删除实例 <span id="delete-instance-name" class="fw-bold"></span> 吗？</p>
+                <p class="text-danger">此操作不可逆，删除后将无法恢复。</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-danger" id="confirm-delete">删除</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='/js/pages/instances.js') }}"></script>
+{% endblock %}

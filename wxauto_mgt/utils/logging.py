@@ -155,3 +155,33 @@ def log_performance(operation: str, elapsed: float, context: dict = None) -> Non
     if context:
         msg += f" | 上下文: {context}"
     logger.debug(msg)
+
+def get_log_file_path(instance_id: Optional[str] = None) -> str:
+    """
+    获取当前日志文件路径
+
+    Args:
+        instance_id: 实例ID，用于区分不同实例的日志
+
+    Returns:
+        str: 日志文件路径
+    """
+    # 获取应用程序的基础路径
+    if getattr(sys, 'frozen', False):
+        # 打包环境 - 使用可执行文件所在目录
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        # 开发环境 - 使用项目根目录
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+    # 构建日志目录路径
+    log_dir = os.path.join(base_dir, 'data', 'logs')
+
+    # 构建日志文件名
+    instance_suffix = f"_{instance_id}" if instance_id else ""
+    log_file = os.path.join(
+        log_dir,
+        f"wxauto_mgt{instance_suffix}_{time.strftime('%Y%m%d')}.log"
+    )
+
+    return log_file
