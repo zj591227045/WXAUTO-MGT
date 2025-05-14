@@ -14,7 +14,7 @@ from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFormLayout, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QTabWidget, QTextEdit, QDialogButtonBox, QWidget,
+    QCheckBox, QTextEdit, QDialogButtonBox, QWidget, QStackedWidget,
     QMessageBox, QGroupBox, QRadioButton, QTableWidget, QTableWidgetItem,
     QHeaderView
 )
@@ -97,8 +97,8 @@ class AddEditPlatformDialog(QDialog):
 
         main_layout.addLayout(form_layout)
 
-        # 配置选项卡
-        self.config_tabs = QTabWidget()
+        # 配置选项卡 - 使用堆叠小部件而不是标签页
+        self.config_stack = QStackedWidget()
 
         # Dify配置选项卡
         self.dify_tab = QWidget()
@@ -131,7 +131,7 @@ class AddEditPlatformDialog(QDialog):
         self.dify_user_id.setMinimumWidth(300)  # 设置最小宽度
         dify_layout.addRow("用户ID (可选):", self.dify_user_id)
 
-        self.config_tabs.addTab(self.dify_tab, "Dify配置")
+        self.config_stack.addWidget(self.dify_tab)
 
         # OpenAI配置选项卡
         self.openai_tab = QWidget()
@@ -179,7 +179,7 @@ class AddEditPlatformDialog(QDialog):
         self.openai_max_tokens.setValue(1000)
         openai_layout.addRow("最大令牌数:", self.openai_max_tokens)
 
-        self.config_tabs.addTab(self.openai_tab, "OpenAI配置")
+        self.config_stack.addWidget(self.openai_tab)
 
         # 关键词匹配配置选项卡
         self.keyword_match_tab = QWidget()
@@ -323,7 +323,7 @@ class AddEditPlatformDialog(QDialog):
         keyword_match_layout.addLayout(delete_rule_layout)
 
         # 添加关键词匹配选项卡
-        self.config_tabs.addTab(self.keyword_match_tab, "关键词匹配配置")
+        self.config_stack.addWidget(self.keyword_match_tab)
 
         # 初始化规则列表和回复列表
         self.rules = []
@@ -333,7 +333,7 @@ class AddEditPlatformDialog(QDialog):
         # 连接规则列表选择事件
         self.rules_list.itemSelectionChanged.connect(self._on_rule_selected)
 
-        main_layout.addWidget(self.config_tabs)
+        main_layout.addWidget(self.config_stack)
 
         # 测试连接按钮
         self.test_btn = QPushButton("测试连接")
@@ -374,8 +374,8 @@ class AddEditPlatformDialog(QDialog):
         Args:
             index: 选项索引
         """
-        # 切换到相应的选项卡
-        self.config_tabs.setCurrentIndex(index)
+        # 切换到相应的配置页面
+        self.config_stack.setCurrentIndex(index)
 
     def _add_reply(self):
         """添加回复内容"""
@@ -440,7 +440,6 @@ class AddEditPlatformDialog(QDialog):
 
         # 获取匹配类型
         match_type = self.match_type_combo.currentData()
-        match_type_text = self.match_type_combo.currentText()
 
         # 是否随机回复
         is_random_reply = self.random_reply_check.isChecked()
@@ -790,28 +789,28 @@ class AddEditPlatformDialog(QDialog):
             # 验证API基础URL
             if not self.dify_api_base.text().strip():
                 QMessageBox.warning(self, "错误", "请输入Dify API基础URL")
-                self.config_tabs.setCurrentIndex(0)
+                self.config_stack.setCurrentIndex(0)
                 self.dify_api_base.setFocus()
                 return False
 
             # 验证API密钥
             if not self.dify_api_key.text().strip():
                 QMessageBox.warning(self, "错误", "请输入Dify API密钥")
-                self.config_tabs.setCurrentIndex(0)
+                self.config_stack.setCurrentIndex(0)
                 self.dify_api_key.setFocus()
                 return False
         elif platform_type == "openai":
             # 验证API密钥
             if not self.openai_api_key.text().strip():
                 QMessageBox.warning(self, "错误", "请输入OpenAI API密钥")
-                self.config_tabs.setCurrentIndex(1)
+                self.config_stack.setCurrentIndex(1)
                 self.openai_api_key.setFocus()
                 return False
 
             # 验证模型
             if not self.openai_model.text().strip():
                 QMessageBox.warning(self, "错误", "请输入OpenAI模型")
-                self.config_tabs.setCurrentIndex(1)
+                self.config_stack.setCurrentIndex(1)
                 self.openai_model.setFocus()
                 return False
         elif platform_type == "keyword":
@@ -821,26 +820,26 @@ class AddEditPlatformDialog(QDialog):
 
             if min_time <= 0:
                 QMessageBox.warning(self, "错误", "最小回复时间必须大于0")
-                self.config_tabs.setCurrentIndex(2)
+                self.config_stack.setCurrentIndex(2)
                 self.min_reply_time.setFocus()
                 return False
 
             if max_time <= 0:
                 QMessageBox.warning(self, "错误", "最大回复时间必须大于0")
-                self.config_tabs.setCurrentIndex(2)
+                self.config_stack.setCurrentIndex(2)
                 self.max_reply_time.setFocus()
                 return False
 
             if min_time > max_time:
                 QMessageBox.warning(self, "错误", "最小回复时间不能大于最大回复时间")
-                self.config_tabs.setCurrentIndex(2)
+                self.config_stack.setCurrentIndex(2)
                 self.min_reply_time.setFocus()
                 return False
 
             # 验证规则列表
             if not self.rules:
                 QMessageBox.warning(self, "错误", "请添加至少一条关键词规则")
-                self.config_tabs.setCurrentIndex(2)
+                self.config_stack.setCurrentIndex(2)
                 self.keywords_edit.setFocus()
                 return False
 

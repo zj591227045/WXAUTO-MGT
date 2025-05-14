@@ -1660,7 +1660,7 @@ class MessageListenerPanel(QWidget):
         # 检查全局监听服务是否暂停
         from wxauto_mgt.core.message_listener import message_listener
         if hasattr(message_listener, '_paused') and message_listener._paused:
-            logger.debug("全局监听服务已暂停，跳过自动刷新")
+            #logger.debug("全局监听服务已暂停，跳过自动刷新")
             return
 
         # 检查是否有正在进行的刷新操作
@@ -2195,7 +2195,7 @@ class MessageListenerPanel(QWidget):
             # 检查全局监听服务是否暂停
             from wxauto_mgt.core.message_listener import message_listener
             if hasattr(message_listener, '_paused') and message_listener._paused:
-                logger.info("全局监听服务已暂停，不启动自动刷新定时器")
+                #logger.info("全局监听服务已暂停，不启动自动刷新定时器")
                 return
 
             self.refresh_timer.start(self.poll_interval * 1000)  # 转换为毫秒
@@ -2843,7 +2843,7 @@ class MessageListenerPanel(QWidget):
 
             # 检查全局监听服务是否暂停
             if hasattr(message_listener, '_paused') and message_listener._paused:
-                logger.debug("全局监听服务已暂停，跳过更新倒计时")
+                #logger.debug("全局监听服务已暂停，跳过更新倒计时")
                 return
 
             # 如果消息监听器正在启动过程中处理超时对象，则暂时跳过UI触发的处理

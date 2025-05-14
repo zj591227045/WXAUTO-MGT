@@ -645,11 +645,460 @@ class MainWindow(QMainWindow):
 
     def _reload_config(self):
         """重载配置"""
-        # 创建异步任务重载配置
-        asyncio.create_task(self._reload_config_async())
+        # 创建确认对话框
+        reply = QMessageBox.question(
+            self,
+            '确认彻底重启',
+            "重载配置需要彻底关闭并重启程序，所有服务将被重新初始化。\n\n确定要继续吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            # 创建异步任务重载配置并重启程序
+            asyncio.create_task(self._restart_application())
+        else:
+            self.status_changed.emit("已取消重载配置", 3000)
+
+    async def _restart_application(self):
+        """重启应用程序"""
+        try:
+            self.status_changed.emit("正在准备重启程序...", 0)
+            logger.info("开始准备重启程序")
+
+            # 保存所有配置
+            await self._save_all_configs()
+
+            # 获取当前程序路径和参数
+            import sys
+            import os
+            import time
+
+            # 显示重启消息
+            self.status_changed.emit("正在重启程序...", 0)
+            logger.info("正在重启程序...")
+
+            # 使用批处理文件方式重启程序
+            try:
+                # 获取当前可执行文件的完整路径
+                if getattr(sys, 'frozen', False):
+                    # 打包环境 - 使用可执行文件路径
+                    exe_path = sys.executable
+                    work_dir = os.path.dirname(exe_path)
+                    exe_name = os.path.basename(exe_path)
+                    start_cmd = f'"{exe_path}"'
+                else:
+                    # 开发环境 - 使用Python解释器和脚本路径
+                    python_exe = sys.executable
+                    script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'main.py')
+                    work_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                    start_cmd = f'"{python_exe}" "{script_path}"'
+
+                # 创建临时目录用于存放批处理文件
+                temp_dir = os.environ.get('TEMP', os.path.dirname(os.path.abspath(__file__)))
+                batch_file = os.path.join(temp_dir, 'restart_wxauto.bat')
+
+                # 创建调试日志目录 - 使用data/logs路径
+                log_dir = os.path.join(work_dir, 'data', 'logs')
+                os.makedirs(log_dir, exist_ok=True)
+                restart_log_path = os.path.join(log_dir, 'restart_debug.log')
+
+                # 创建批处理文件 - 针对打包环境进行特殊处理
+                with open(batch_file, 'w', encoding='gbk') as f:
+                    f.write('@echo off\n')
+                    f.write('title WxAuto重启程序\n')  # 设置窗口标题
+
+                    # 添加日志记录功能
+                    f.write('echo ===== 批处理重启脚本开始执行 ===== > "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                    f.write('echo 时间: %date% %time% >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                    f.write('echo 工作目录: ' + work_dir + ' >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                    f.write('echo 正在重启 WxAuto管理工具...\n')
+                    f.write('echo 正在重启 WxAuto管理工具... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                    f.write('cd /d "' + work_dir + '"\n')  # 切换到工作目录
+                    f.write('echo 已切换到工作目录: %cd% >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                    f.write('echo 等待2秒... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                    f.write('timeout /t 2 /nobreak > nul\n')  # 等待2秒
+
+                    f.write('echo 启动新进程...\n')
+                    f.write('echo 启动新进程... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                    if getattr(sys, 'frozen', False):
+                        # 打包环境下使用更可靠的方式启动exe - 使用完整路径
+                        start_command = f'start "" "{exe_path}"'
+                        f.write(f'echo 执行命令: {start_command} >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'{start_command}\n')
+                        f.write(f'if %errorlevel% neq 0 echo 启动失败，错误码: %errorlevel% >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'if %errorlevel% equ 0 echo 启动成功 >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'echo 进程已启动 >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                        # 添加备用启动命令
+                        f.write(f'echo 添加备用启动命令... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'timeout /t 1 /nobreak > nul\n')
+                        f.write(f'cd /d "{work_dir}"\n')
+                        f.write(f'echo 当前目录: %cd% >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'echo 尝试使用explorer启动... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'explorer "{exe_path}"\n')
+
+                        # 添加进程检查 - 增加等待时间
+                        f.write(f'echo 检查进程是否启动... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'echo 等待5秒... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'timeout /t 5 /nobreak > nul\n')  # 等待5秒
+
+                        # 使用更可靠的方式检查进程
+                        f.write(f'echo 使用wmic检查进程... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'wmic process where name="{exe_name}" list brief > "' + os.path.join(log_dir, 'process_check.txt') + '"\n')
+                        f.write(f'type "' + os.path.join(log_dir, 'process_check.txt') + '" >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                        # 使用findstr检查进程
+                        f.write(f'tasklist | findstr "{exe_name}" > "' + os.path.join(log_dir, 'tasklist_check.txt') + '"\n')
+                        f.write(f'type "' + os.path.join(log_dir, 'tasklist_check.txt') + '" >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                        # 检查进程是否存在
+                        f.write(f'tasklist | findstr "{exe_name}" > nul\n')
+                        f.write(f'if %errorlevel% neq 0 (\n')
+                        f.write(f'  echo 进程未找到，尝试再次启动... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'  cd /d "{work_dir}"\n')
+                        f.write(f'  echo 使用完整路径启动... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'  start "" "{exe_path}"\n')
+                        f.write(f') else (\n')
+                        f.write(f'  echo 进程已成功启动 >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f')\n')
+                    else:
+                        # 开发环境
+                        start_command = 'start "" ' + start_cmd
+                        f.write(f'echo 执行命令: {start_command} >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'{start_command}\n')
+                        f.write(f'if %errorlevel% neq 0 echo 启动失败，错误码: %errorlevel% >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                        f.write(f'if %errorlevel% eq 0 echo 启动成功 >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                    f.write('echo 启动完成，窗口将在3秒后自动关闭\n')
+                    f.write('echo 启动完成，窗口将在3秒后自动关闭 >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                    f.write('echo 等待3秒进行最终检查... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                    f.write('timeout /t 3 /nobreak > nul\n')  # 等待10秒
+                    f.write('echo 批处理脚本执行完毕 >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                    # 最后再次检查进程 - 使用多种方式
+                    f.write(f'echo 最终检查进程... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                    # 使用wmic检查进程
+                    f.write(f'wmic process where name="{exe_name}" list brief > "' + os.path.join(log_dir, 'final_check.txt') + '"\n')
+                    f.write(f'type "' + os.path.join(log_dir, 'final_check.txt') + '" >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                    # 使用tasklist检查进程
+                    f.write(f'tasklist | findstr "{exe_name}" >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+
+                    # 检查进程是否存在
+                    f.write(f'tasklist | findstr "{exe_name}" > nul\n')
+                    f.write(f'if %errorlevel% neq 0 (\n')
+                    f.write(f'  echo 最终检查：进程未找到，最后一次尝试启动... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                    f.write(f'  cd /d "{work_dir}"\n')
+                    f.write(f'  echo 使用ShellExecute方式启动... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                    f.write(f'  explorer "{exe_path}"\n')
+                    f.write(f'  echo 使用cmd /c start方式启动... >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                    f.write(f'  cmd /c start "" "{exe_path}"\n')
+                    f.write(f') else (\n')
+                    f.write(f'  echo 最终检查：进程已成功运行 >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                    f.write(f')\n')
+
+                    # 使用更可靠的方式关闭批处理窗口和当前命令行窗口
+                    f.write('echo 批处理窗口即将关闭 >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                    f.write('echo 重启过程完成 >> "' + os.path.join(log_dir, 'restart_batch.log') + '"\n')
+                    f.write('timeout /t 1 /nobreak > nul\n')
+                    # 使用多种方式确保批处理窗口关闭
+                    f.write('exit\n')
+
+                logger.info(f"创建重启批处理文件: {batch_file}")
+
+                # 记录批处理文件内容到日志
+                with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                    log_file.write(f"批处理文件路径: {batch_file}\n")
+                    log_file.write("批处理文件内容:\n")
+                    with open(batch_file, 'r', encoding='gbk') as bat_file:
+                        log_file.write(bat_file.read())
+                    log_file.write("\n")
+
+                # 使用更可靠的方式启动批处理文件
+                if getattr(sys, 'frozen', False):
+                    # 打包环境下使用更可靠的方式启动批处理
+                    # 不使用/min参数，让批处理窗口可见，便于调试
+                    start_cmd = f'cmd /c start "" "{batch_file}"'
+                    with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                        log_file.write(f"启动命令: {start_cmd}\n")
+
+                    # 使用subprocess模块启动进程，更可靠
+                    try:
+                        import subprocess
+                        with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(f"使用subprocess启动批处理文件\n")
+
+                        # 使用subprocess.Popen启动进程
+                        subprocess.Popen(start_cmd, shell=True)
+
+                        with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(f"subprocess.Popen启动成功\n")
+                    except Exception as sub_e:
+                        # 如果subprocess失败，回退到os.system
+                        with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(f"subprocess启动失败: {sub_e}，回退到os.system\n")
+                        os.system(start_cmd)
+                else:
+                    # 开发环境
+                    start_cmd = f'start "" "{batch_file}"'
+                    with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                        log_file.write(f"启动命令: {start_cmd}\n")
+                    os.system(start_cmd)
+
+                logger.info("批处理文件已启动，程序将在2秒后重启")
+                with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                    log_file.write("批处理文件已启动，程序将在2秒后重启\n")
+
+            except Exception as e:
+                error_msg = f"创建或启动批处理文件失败: {e}"
+                logger.error(error_msg)
+
+                # 记录错误到日志文件
+                try:
+                    with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                        log_file.write(f"错误: {error_msg}\n")
+                        log_file.write(f"异常类型: {type(e).__name__}\n")
+                        import traceback
+                        log_file.write(f"异常堆栈:\n{traceback.format_exc()}\n")
+                        log_file.write("尝试备用启动方案...\n")
+                except Exception as log_e:
+                    logger.error(f"写入日志文件失败: {log_e}")
+
+                # 尝试直接启动
+                try:
+                    logger.info("尝试直接启动新进程...")
+                    if getattr(sys, 'frozen', False):
+                        # 打包环境 - 使用更可靠的方式启动exe
+                        exe_dir = os.path.dirname(sys.executable)
+                        exe_name = os.path.basename(sys.executable)
+
+                        # 创建一个简单的启动器批处理文件
+                        launcher_bat = os.path.join(temp_dir, 'launch_wxauto.bat')
+
+                        # 记录到日志
+                        with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(f"创建备用启动器批处理文件: {launcher_bat}\n")
+
+                        with open(launcher_bat, 'w', encoding='gbk') as f:
+                            f.write('@echo off\n')
+                            f.write('title WxAuto备用启动器\n')
+                            f.write(f'echo ===== 备用启动器开始执行 ===== > "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f'echo 时间: %date% %time% >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f'cd /d "{exe_dir}"\n')
+                            f.write(f'echo 当前目录: %cd% >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+
+                            # 先检查进程是否已经在运行
+                            f.write(f'echo 检查进程是否已在运行... >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f'tasklist | findstr "{exe_name}" > nul\n')
+                            f.write(f'if %errorlevel% equ 0 (\n')
+                            f.write(f'  echo 进程已在运行，无需再次启动 >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f') else (\n')
+                            f.write(f'  echo 进程未运行，开始启动... >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f'  echo 启动命令: start "" "{exe_name}" >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f'  start "" "{exe_name}"\n')
+                            f.write(f'  if %errorlevel% neq 0 echo 启动失败，错误码: %errorlevel% >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f'  if %errorlevel% equ 0 echo 启动成功 >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f')\n')
+
+                            # 等待并再次检查
+                            f.write(f'echo 等待5秒... >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f'timeout /t 5 /nobreak > nul\n')
+                            f.write(f'echo 再次检查进程... >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f'tasklist | findstr "{exe_name}" > nul\n')
+                            f.write(f'if %errorlevel% neq 0 (\n')
+                            f.write(f'  echo 进程未找到，尝试使用完整路径启动... >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f'  start "" "{exe_path}"\n')
+                            f.write(f') else (\n')
+                            f.write(f'  echo 进程已成功运行 >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f')\n')
+
+                            f.write(f'echo 备用启动器执行完毕 >> "{os.path.join(log_dir, "backup_launcher.log")}"\n')
+                            f.write(f'echo 窗口将在3秒后关闭\n')
+                            f.write(f'timeout /t 1 /nobreak > nul\n')
+                            f.write('exit\n')
+
+                        # 记录批处理文件内容到日志
+                        with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write("备用启动器批处理文件内容:\n")
+                            with open(launcher_bat, 'r', encoding='gbk') as bat_file:
+                                log_file.write(bat_file.read())
+                            log_file.write("\n")
+
+                        # 使用cmd /c启动批处理文件
+                        start_cmd = f'cmd /c start /min "" "{launcher_bat}"'
+                        with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(f"启动命令: {start_cmd}\n")
+                        os.system(start_cmd)
+
+                        logger.info(f"已通过启动器批处理文件启动: {launcher_bat}")
+                    else:
+                        # 开发环境 - 使用os.system启动Python脚本
+                        start_cmd = f'start "" "{python_exe}" "{script_path}"'
+                        with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(f"开发环境启动命令: {start_cmd}\n")
+                        os.system(start_cmd)
+
+                    logger.info("已直接启动新进程")
+                    with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                        log_file.write("已直接启动新进程\n")
+                except Exception as direct_e:
+                    error_msg = f"直接启动新进程失败: {direct_e}"
+                    logger.error(error_msg)
+
+                    # 记录错误到日志文件
+                    try:
+                        with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(f"错误: {error_msg}\n")
+                            log_file.write(f"异常类型: {type(direct_e).__name__}\n")
+                            import traceback
+                            log_file.write(f"异常堆栈:\n{traceback.format_exc()}\n")
+                            log_file.write("尝试最后的备用启动方案...\n")
+                    except Exception as log_e:
+                        logger.error(f"写入日志文件失败: {log_e}")
+
+                    # 最后的尝试 - 使用explorer启动
+                    try:
+                        logger.info("尝试使用explorer启动...")
+                        if getattr(sys, 'frozen', False):
+                            # 记录到日志
+                            with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                                log_file.write(f"尝试使用explorer启动: explorer \"{exe_path}\"\n")
+
+                            os.system(f'explorer "{exe_path}"')
+                        else:
+                            # 创建一个临时批处理文件
+                            last_bat = os.path.join(temp_dir, 'last_resort.bat')
+
+                            # 记录到日志
+                            with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                                log_file.write(f"创建最终备用启动器批处理文件: {last_bat}\n")
+
+                            with open(last_bat, 'w', encoding='gbk') as f:
+                                f.write('@echo off\n')
+                                f.write(f'echo ===== 最终备用启动器开始执行 ===== > "{os.path.join(log_dir, "last_resort.log")}"\n')
+                                f.write(f'echo 时间: %date% %time% >> "{os.path.join(log_dir, "last_resort.log")}"\n')
+                                f.write(f'cd /d "{work_dir}"\n')
+                                f.write(f'echo 当前目录: %cd% >> "{os.path.join(log_dir, "last_resort.log")}"\n')
+                                f.write(f'echo 启动命令: "{python_exe}" "{script_path}" >> "{os.path.join(log_dir, "last_resort.log")}"\n')
+                                f.write(f'"{python_exe}" "{script_path}"\n')
+                                f.write(f'if %errorlevel% neq 0 echo 启动失败，错误码: %errorlevel% >> "{os.path.join(log_dir, "last_resort.log")}"\n')
+                                f.write(f'if %errorlevel% eq 0 echo 启动成功 >> "{os.path.join(log_dir, "last_resort.log")}"\n')
+                                f.write(f'echo 最终备用启动器执行完毕 >> "{os.path.join(log_dir, "last_resort.log")}"\n')
+                                f.write('del "%~f0"\n')
+
+                            # 记录批处理文件内容到日志
+                            with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                                log_file.write("最终备用启动器批处理文件内容:\n")
+                                with open(last_bat, 'r', encoding='gbk') as bat_file:
+                                    log_file.write(bat_file.read())
+                                log_file.write("\n")
+                                log_file.write(f"启动命令: explorer \"{last_bat}\"\n")
+
+                            os.system(f'explorer "{last_bat}"')
+
+                        logger.info("已使用explorer启动新进程")
+                        with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write("已使用explorer启动新进程\n")
+                    except Exception as last_e:
+                        error_msg = f"所有重启方法都失败: {last_e}"
+                        logger.error(error_msg)
+
+                        # 记录错误到日志文件
+                        try:
+                            with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                                log_file.write(f"错误: {error_msg}\n")
+                                log_file.write(f"异常类型: {type(last_e).__name__}\n")
+                                import traceback
+                                log_file.write(f"异常堆栈:\n{traceback.format_exc()}\n")
+                                log_file.write("所有重启方法都失败\n")
+                        except Exception as log_e:
+                            logger.error(f"写入日志文件失败: {log_e}")
+
+                        raise
+
+            # 等待一小段时间确保脚本已经启动
+            time.sleep(1)
+
+            # 关闭当前程序 - 直接退出，让批处理文件启动新进程
+            logger.info("正在彻底关闭当前程序...")
+
+            # 记录到日志文件
+            try:
+                with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                    log_file.write("正在彻底关闭当前程序...\n")
+                    log_file.write(f"退出时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    log_file.write("不尝试停止服务，直接退出，避免事件循环问题\n")
+                    log_file.write(f"打包环境: {getattr(sys, 'frozen', False)}\n")
+                    log_file.write("===== 重启操作结束 =====\n\n")
+            except Exception as log_e:
+                logger.error(f"写入日志文件失败: {log_e}")
+
+            # 不尝试停止服务，直接退出
+            # 这样可以避免事件循环问题，新进程会重新初始化所有服务
+
+            # 使用sys.exit退出，确保触发清理代码
+            logger.info("程序即将退出...")
+
+            # 在打包环境下，使用特殊方式退出
+            if getattr(sys, 'frozen', False):
+                # 使用os._exit强制退出，确保不会有任何阻塞
+                import os
+                os._exit(0)
+            else:
+                # 开发环境下使用sys.exit，这样可以触发清理代码
+                import sys
+                sys.exit(0)
+
+        except Exception as e:
+            error_msg = f"重启程序失败: {str(e)}"
+            self.status_changed.emit(error_msg, 3000)
+            logger.error(error_msg)
+            import traceback
+            logger.error(f"异常堆栈: {traceback.format_exc()}")
+
+            # 记录错误到日志文件
+            try:
+                # 确保日志目录存在 - 使用data/logs路径
+                log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'data', 'logs')
+                os.makedirs(log_dir, exist_ok=True)
+                restart_log_path = os.path.join(log_dir, 'restart_debug.log')
+
+                with open(restart_log_path, 'a', encoding='utf-8') as log_file:
+                    log_file.write(f"\n\n===== 重启操作失败: {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+                    log_file.write(f"错误: {error_msg}\n")
+                    log_file.write(f"异常类型: {type(e).__name__}\n")
+                    log_file.write(f"异常堆栈:\n{traceback.format_exc()}\n")
+                    log_file.write("===== 重启操作结束(失败) =====\n\n")
+            except Exception as log_e:
+                logger.error(f"写入日志文件失败: {log_e}")
+
+    async def _save_all_configs(self):
+        """保存所有配置"""
+        try:
+            logger.info("保存所有配置...")
+
+            # 保存Web服务配置
+            port = self.port_spinbox.value()
+            await config_store.set_config('system', 'web_service', {'port': port})
+
+            # 保存其他配置...
+            # 这里可以添加其他需要保存的配置
+
+            logger.info("所有配置已保存")
+            return True
+        except Exception as e:
+            logger.error(f"保存配置失败: {e}")
+            return False
 
     async def _reload_config_async(self):
-        """异步重载配置"""
+        """异步重载配置（不重启程序的版本，已不使用）"""
         try:
             self.status_changed.emit("正在重载配置...", 0)
             logger.info("开始重载配置")

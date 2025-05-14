@@ -282,8 +282,9 @@ class ServicePlatformPanel(QWidget):
                 # 刷新平台列表 - 直接调用方法而不是创建新任务
                 await self.refresh_platforms()
 
-                # 显示成功消息
-                QMessageBox.information(self, "成功", f"添加平台成功: {platform_data['name']}")
+                # 显示成功消息，并提示需要点击重载配置按钮
+                QMessageBox.information(self, "成功",
+                                       f"添加平台成功: {platform_data['name']}\n\n请点击工具栏上的\"重载配置\"按钮应用配置，否则将无法继续监听消息。")
             else:
                 logger.error(f"添加平台失败: {platform_data['name']}")
                 QMessageBox.warning(self, "错误", f"添加平台失败: {platform_data['name']}")
@@ -358,8 +359,9 @@ class ServicePlatformPanel(QWidget):
                     # 刷新平台列表
                     await self.refresh_platforms()
 
-                    # 显示成功消息
-                    QMessageBox.information(self, "成功", f"更新平台配置成功: {updated_data['name']}")
+                    # 显示成功消息，并提示需要点击重载配置按钮
+                    QMessageBox.information(self, "成功",
+                                          f"更新平台配置成功: {updated_data['name']}\n\n请点击工具栏上的\"重载配置\"按钮应用配置，否则将无法继续监听消息。")
                 else:
                     logger.error(f"更新平台配置失败: {updated_data['name']}")
                     QMessageBox.warning(self, "错误", f"更新平台配置失败: {updated_data['name']}")

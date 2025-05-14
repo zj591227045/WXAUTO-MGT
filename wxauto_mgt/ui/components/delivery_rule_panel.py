@@ -550,8 +550,9 @@ class DeliveryRulePanel(QWidget):
                 # 刷新规则列表
                 await self.refresh_rules()
 
-                # 显示成功消息
-                QMessageBox.information(self, "成功", f"添加规则成功: {rule_data['name']}")
+                # 显示成功消息，并提示需要点击重载配置按钮
+                QMessageBox.information(self, "成功",
+                                       f"添加规则成功: {rule_data['name']}\n\n请点击工具栏上的\"重载配置\"按钮应用配置，否则将无法继续监听消息。")
             else:
                 logger.error(f"添加规则失败: {rule_data['name']}")
                 QMessageBox.warning(self, "错误", f"添加规则失败: {rule_data['name']}")
@@ -645,8 +646,9 @@ class DeliveryRulePanel(QWidget):
                 # 刷新规则列表
                 await self.refresh_rules()
 
-                # 显示成功消息
-                QMessageBox.information(self, "成功", f"更新规则成功: {updated_data['name']}")
+                # 显示成功消息，并提示需要点击重载配置按钮
+                QMessageBox.information(self, "成功",
+                                       f"更新规则成功: {updated_data['name']}\n\n请点击工具栏上的\"重载配置\"按钮应用配置，否则将无法继续监听消息。")
             else:
                 logger.error(f"更新规则失败: {updated_data['name']}")
                 QMessageBox.warning(self, "错误", f"更新规则失败: {updated_data['name']}")
