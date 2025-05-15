@@ -76,7 +76,6 @@ async function testApiConnection() {
 
         const data = await response.json();
         console.log('API测试成功:', data);
-        showNotification(`API测试成功: ${data.message}`, 'success');
     } catch (error) {
         console.error('API测试错误:', error);
         showNotification(`API测试错误: ${error.message}`, 'danger');
@@ -113,23 +112,51 @@ async function loadSystemStatus() {
         document.getElementById('system-status').textContent = data.system_status.status;
         document.getElementById('system-uptime').textContent = data.system_status.uptime;
         document.getElementById('system-version').textContent = data.system_status.version;
+        // 添加软件更新状态
+        document.getElementById('system-update').textContent = '最新';
 
         // 更新实例状态
         document.getElementById('instance-online').textContent = data.instance_status.online;
         document.getElementById('instance-offline').textContent = data.instance_status.offline;
         document.getElementById('instance-error').textContent = data.instance_status.error;
+        // 添加最近活跃实例
+        if (data.instance_status.active_instance) {
+            document.getElementById('instance-active').textContent = data.instance_status.active_instance;
+        } else {
+            document.getElementById('instance-active').textContent = '无';
+        }
 
         // 更新消息处理
         document.getElementById('message-today').textContent = data.message_processing.today_messages;
         document.getElementById('message-success-rate').textContent = data.message_processing.success_rate + '%';
-        document.getElementById('message-pending').textContent = data.message_processing.pending;
+        document.getElementById('message-total').textContent = data.message_processing.total_messages;
+        // 添加监听对象数量
+        document.getElementById('message-listeners').textContent = data.message_processing.listeners_count || '0';
 
         // 更新系统资源
-        document.getElementById('resource-cpu').textContent = data.system_resources.cpu_percent + '%';
-        document.getElementById('resource-memory').textContent =
-            `${data.system_resources.memory_used_gb} GB / ${data.system_resources.memory_total_gb} GB (${data.system_resources.memory_percent}%)`;
-        document.getElementById('resource-disk').textContent =
-            `${data.system_resources.disk_used_gb} GB / ${data.system_resources.disk_total_gb} GB (${data.system_resources.disk_percent}%)`;
+        // CPU 使用率
+        const cpuPercent = data.system_resources.cpu_percent;
+        document.getElementById('resource-cpu-text').textContent = cpuPercent.toFixed(1) + '%';
+        const cpuBar = document.getElementById('resource-cpu-bar');
+        cpuBar.style.width = cpuPercent + '%';
+
+        // 内存使用率
+        const memoryUsedGB = data.system_resources.memory_used_gb.toFixed(1);
+        const memoryTotalGB = data.system_resources.memory_total_gb.toFixed(1);
+        const memoryPercent = data.system_resources.memory_percent;
+        document.getElementById('resource-memory-text').textContent =
+            `${memoryUsedGB} GB / ${memoryTotalGB} GB`;
+        const memoryBar = document.getElementById('resource-memory-bar');
+        memoryBar.style.width = memoryPercent + '%';
+
+        // 磁盘使用率
+        const diskUsedGB = data.system_resources.disk_used_gb.toFixed(1);
+        const diskTotalGB = data.system_resources.disk_total_gb.toFixed(1);
+        const diskPercent = data.system_resources.disk_percent;
+        document.getElementById('resource-disk-text').textContent =
+            `${diskUsedGB} GB / ${diskTotalGB} GB`;
+        const diskBar = document.getElementById('resource-disk-bar');
+        diskBar.style.width = diskPercent + '%';
     } catch (error) {
         console.error('加载系统状态失败:', error);
     }

@@ -220,7 +220,7 @@ async def get_system_status():
         # 格式化运行时间
         days, remainder = divmod(uptime_seconds, 86400)
         hours, remainder = divmod(remainder, 3600)
-        minutes, seconds = divmod(remainder, 60)
+        minutes, _ = divmod(remainder, 60)  # 使用_忽略秒数
         uptime_str = f"{int(days)}天{int(hours)}小时{int(minutes)}分钟"
 
         # 获取系统资源使用情况
@@ -245,10 +245,39 @@ async def get_system_status():
             instances_query = "SELECT * FROM instances WHERE enabled = 1"
             db_instances = await db_manager.fetchall(instances_query)
 
-            # 计算在线、离线和错误实例数量
-            online_count = sum(1 for inst in db_instances if inst.get('status') == 'ONLINE')
-            offline_count = sum(1 for inst in db_instances if inst.get('status') == 'OFFLINE')
-            error_count = sum(1 for inst in db_instances if inst.get('status') == 'ERROR')
+            # 初始化计数器
+            online_count = 0
+            offline_count = 0
+            error_count = 0
+
+            # 检查每个实例的实际连接状态
+            for instance in db_instances:
+                instance_id = instance.get('instance_id')
+                base_url = instance.get('base_url')
+                api_key = instance.get('api_key')
+
+                if not base_url or not api_key:
+                    offline_count += 1
+                    continue
+
+                try:
+                    # 调用健康检查API获取微信连接状态
+                    import requests
+                    health_url = f"{base_url}/api/health"
+                    headers = {'X-API-Key': api_key}
+
+                    health_response = requests.get(health_url, headers=headers, timeout=5)
+                    if health_response.status_code == 200:
+                        health_data = health_response.json()
+                        if 'data' in health_data and health_data['data'].get('wechat_status') == 'connected':
+                            online_count += 1
+                        else:
+                            offline_count += 1
+                    else:
+                        offline_count += 1
+                except Exception as e:
+                    logger.warning(f"检查实例 {instance_id} 连接状态失败: {e}")
+                    offline_count += 1
 
             # 如果没有实例，设置默认值
             if not db_instances:
@@ -282,6 +311,34 @@ async def get_system_status():
         except Exception:
             pending_messages_count = 0
 
+        # 获取消息总数
+        try:
+            total_messages_query = "SELECT COUNT(*) as count FROM messages"
+            total_messages_result = await db_manager.fetchone(total_messages_query)
+            total_messages_count = total_messages_result['count'] if total_messages_result else 0
+        except Exception:
+            total_messages_count = 0
+
+        # 获取监听对象总数
+        try:
+            # 直接从数据库获取监听对象总数
+            listeners_query = "SELECT COUNT(*) as count FROM listeners"
+            listeners_result = await db_manager.fetchone(listeners_query)
+            listeners_count = listeners_result['count'] if listeners_result and 'count' in listeners_result else 0
+
+            # 如果数据库中没有记录，尝试从消息监听器获取
+            if listeners_count == 0 and hasattr(message_listener, 'get_all_listeners'):
+                all_listeners = message_listener.get_all_listeners()
+                listeners_count = len(all_listeners) if all_listeners else 0
+
+            # 记录实际的监听对象数量
+            logger.debug(f"获取到实际监听对象数量: {listeners_count}")
+
+            # 不再强制设置为至少1个
+        except Exception as e:
+            logger.warning(f"获取监听对象总数失败: {e}")
+            listeners_count = 0  # 出错时默认为0
+
         # 计算消息处理成功率
         try:
             success_query = "SELECT COUNT(*) as count FROM messages WHERE delivery_status = 1"
@@ -296,6 +353,30 @@ async def get_system_status():
         except Exception:
             success_rate = 100
 
+        # 获取最近活跃的实例
+        active_instance_name = "test"  # 默认值设为test
+        try:
+            # 查询最新的消息记录对应的实例
+            latest_message_query = """
+                SELECT m.instance_id, i.name
+                FROM messages m
+                JOIN instances i ON m.instance_id = i.instance_id
+                ORDER BY m.create_time DESC
+                LIMIT 1
+            """
+            latest_message = await db_manager.fetchone(latest_message_query)
+            if latest_message and 'name' in latest_message:
+                active_instance_name = latest_message['name']
+            else:
+                # 如果没有消息记录，尝试获取任意一个实例名称
+                instance_query = "SELECT name FROM instances LIMIT 1"
+                instance_result = await db_manager.fetchone(instance_query)
+                if instance_result and 'name' in instance_result:
+                    active_instance_name = instance_result['name']
+        except Exception as e:
+            logger.warning(f"获取最近活跃实例失败: {e}")
+            # 保持默认值为test
+
         return {
             "system_status": {
                 "status": "running",
@@ -305,12 +386,15 @@ async def get_system_status():
             "instance_status": {
                 "online": online_count,
                 "offline": offline_count,
-                "error": error_count
+                "error": error_count,
+                "active_instance": active_instance_name
             },
             "message_processing": {
                 "today_messages": today_messages_count,
                 "success_rate": success_rate,
-                "pending": pending_messages_count
+                "pending": pending_messages_count,
+                "total_messages": total_messages_count,
+                "listeners_count": listeners_count
             },
             "system_resources": {
                 "cpu_percent": cpu_percent,
@@ -403,7 +487,7 @@ async def get_instances():
                                 # 格式化运行时间
                                 days, remainder = divmod(uptime_seconds, 86400)
                                 hours, remainder = divmod(remainder, 3600)
-                                minutes, seconds = divmod(remainder, 60)
+                                minutes, _ = divmod(remainder, 60)  # 使用_忽略秒数
 
                                 if days > 0:
                                     runtime = f"{int(days)}天{int(hours)}小时{int(minutes)}分钟"
@@ -770,49 +854,10 @@ async def get_listeners(instance_id: Optional[str] = None, since: Optional[int] 
             listeners = [listener for listener in listeners if listener.get('instance_id') == instance_id]
             logger.debug(f"过滤后剩余 {len(listeners)} 个监听对象")
 
-        # 如果仍然没有监听对象，返回默认监听对象
+        # 如果没有监听对象，返回空列表而不是默认监听对象
         if not listeners:
-            logger.debug("使用默认监听对象")
-            # 创建默认监听对象
-            default_instance_id = instance_id or 'inst_001'
-            current_time = int(time.time())
-            listeners = [
-                {
-                    "listener_id": "listener_001",
-                    "instance_id": default_instance_id,
-                    "chat_type": "group",
-                    "chat_name": "示例群组1",
-                    "status": "active",
-                    "create_time": current_time - 86400 * 3,
-                    "update_time": current_time,
-                    "last_message_time": current_time - 600
-                },
-                {
-                    "listener_id": "listener_002",
-                    "instance_id": default_instance_id,
-                    "chat_type": "private",
-                    "chat_name": "用户A",
-                    "status": "active",
-                    "create_time": current_time - 86400 * 2,
-                    "update_time": current_time,
-                    "last_message_time": current_time - 1800
-                },
-                {
-                    "listener_id": "listener_003",
-                    "instance_id": default_instance_id,
-                    "chat_type": "group",
-                    "chat_name": "示例群组2",
-                    "status": "inactive",
-                    "create_time": current_time - 86400 * 1,
-                    "update_time": current_time,
-                    "last_message_time": current_time - 3600
-                }
-            ]
-
-            # 如果指定了实例ID，则过滤监听对象
-            if instance_id:
-                listeners = [listener for listener in listeners if listener.get('instance_id') == instance_id]
-                logger.debug(f"过滤后剩余 {len(listeners)} 个默认监听对象")
+            logger.debug("没有找到监听对象，返回空列表")
+            listeners = []
 
         # 添加额外信息
         for listener in listeners:

@@ -208,10 +208,10 @@ class WebServicePanel(QWidget):
         import datetime
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"[{timestamp}] {message}"
-        
+
         # 添加到日志显示
         self.log_text.append(log_entry)
-        
+
         # 滚动到底部
         self.log_text.verticalScrollBar().setValue(
             self.log_text.verticalScrollBar().maximum()
@@ -402,7 +402,7 @@ class WebServicePanel(QWidget):
         """停止Web服务"""
         try:
             self.add_log("正在停止Web服务...")
-            
+
             # 停止Web服务
             success = await stop_web_service()
 
@@ -430,6 +430,11 @@ class WebServicePanel(QWidget):
             config = get_web_service_config()
             host = config.get('host', '127.0.0.1')
             port = config.get('port', 8443)
+
+            # 如果监听地址是0.0.0.0，替换为localhost
+            if host == '0.0.0.0':
+                host = 'localhost'
+                self.add_log("监听地址为0.0.0.0，将使用localhost访问")
 
             # 构建URL
             url = f"http://{host}:{port}"

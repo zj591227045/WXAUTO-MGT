@@ -2,22 +2,82 @@
 
 {% block head %}
 <style>
+    /* 仪表盘背景 */
+    .dashboard-container {
+        position: relative;
+        padding-top: 1rem;
+        padding-bottom: 2rem;
+        background: linear-gradient(135deg, #f5f7fa 0%, #e4e8f0 100%);
+    }
+
+    .dashboard-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background:
+            radial-gradient(circle at 10% 20%, rgba(0, 123, 255, 0.03) 0%, transparent 20%),
+            radial-gradient(circle at 90% 80%, rgba(0, 123, 255, 0.03) 0%, transparent 20%),
+            radial-gradient(circle at 50% 50%, rgba(0, 123, 255, 0.05) 0%, transparent 50%);
+        z-index: 0;
+    }
+
+    .dashboard-container .row {
+        position: relative;
+        z-index: 1;
+    }
+
+    /* 卡片样式 */
     .status-card {
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        border-radius: 15px;
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
         margin-bottom: 20px;
-        transition: transform 0.3s;
+        transition: all 0.3s ease;
+        backdrop-filter: blur(10px);
+        background-color: rgba(255, 255, 255, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        height: 100%;
     }
     .status-card:hover {
         transform: translateY(-5px);
+        box-shadow: 0 12px 20px rgba(0, 0, 0, 0.12);
+    }
+    .status-card .card-body {
+        padding: 1.5rem;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    .status-card .card-title {
+        font-weight: 600;
+        margin-bottom: 1.2rem;
+        color: #333;
+        font-size: 1.2rem;
+    }
+    /* 卡片底色 */
+    .card-system-status {
+        background-color: rgba(255, 248, 230, 0.8);
+    }
+    .card-instance-status {
+        background-color: rgba(230, 248, 255, 0.8);
+    }
+    .card-message-processing {
+        background-color: rgba(255, 240, 245, 0.8);
+    }
+    .card-system-resources {
+        background-color: rgba(255, 255, 255, 0.8);
     }
     .status-value {
         font-size: 1.5rem;
-        font-weight: bold;
+        font-weight: 600;
+        color: #333;
     }
     .status-label {
         font-size: 0.9rem;
         color: #6c757d;
+        font-weight: 500;
     }
     .status-running {
         color: #28a745;
@@ -25,13 +85,22 @@
     .status-error {
         color: #dc3545;
     }
+    .status-update {
+        color: #28a745;
+        font-weight: 600;
+    }
     .log-container {
         height: 300px;
         overflow-y: auto;
+        border-radius: 10px;
+        background-color: rgba(245, 245, 245, 0.7);
+        padding: 0.5rem;
     }
     .log-entry {
-        padding: 5px;
-        border-bottom: 1px solid #eee;
+        padding: 8px;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        font-family: 'Consolas', monospace;
+        font-size: 0.85rem;
     }
     .log-info {
         color: #0d6efd;
@@ -44,15 +113,120 @@
     }
     .refresh-btn {
         position: absolute;
-        top: 10px;
-        right: 10px;
+        top: 15px;
+        right: 15px;
         z-index: 10;
+        border-radius: 50%;
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: rgba(13, 110, 253, 0.1);
+        color: #0d6efd;
+        border: none;
+        transition: all 0.2s ease;
+    }
+    .refresh-btn:hover {
+        background-color: rgba(13, 110, 253, 0.2);
+    }
+
+    /* 进度条样式 */
+    .resource-metrics {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        flex-grow: 1;
+    }
+    .progress-container {
+        margin-top: 0.3rem;
+        margin-bottom: 0.5rem;
+        position: relative;
+    }
+    .progress {
+        height: 8px;
+        border-radius: 4px;
+        background-color: rgba(0, 0, 0, 0.05);
+        overflow: hidden;
+        box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    .progress-bar {
+        height: 100%;
+        border-radius: 5px;
+        transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-size: 30px 30px;
+        background-image: linear-gradient(
+            45deg,
+            rgba(255, 255, 255, 0.15) 25%,
+            transparent 25%,
+            transparent 50%,
+            rgba(255, 255, 255, 0.15) 50%,
+            rgba(255, 255, 255, 0.15) 75%,
+            transparent 75%,
+            transparent
+        );
+        animation: progress-bar-stripes 2s linear infinite;
+    }
+    @keyframes progress-bar-stripes {
+        from { background-position: 30px 0; }
+        to { background-position: 0 0; }
+    }
+    .progress-value {
+        position: absolute;
+        right: 10px;
+        top: -20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #333;
+    }
+    .progress-cpu .progress-bar {
+        background-color: #4facfe;
+        background-image: linear-gradient(
+            45deg,
+            rgba(255, 255, 255, 0.15) 25%,
+            transparent 25%,
+            transparent 50%,
+            rgba(255, 255, 255, 0.15) 50%,
+            rgba(255, 255, 255, 0.15) 75%,
+            transparent 75%,
+            transparent
+        ), linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+    }
+    .progress-memory .progress-bar {
+        background-color: #667eea;
+        background-image: linear-gradient(
+            45deg,
+            rgba(255, 255, 255, 0.15) 25%,
+            transparent 25%,
+            transparent 50%,
+            rgba(255, 255, 255, 0.15) 50%,
+            rgba(255, 255, 255, 0.15) 75%,
+            transparent 75%,
+            transparent
+        ), linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    }
+    .progress-disk .progress-bar {
+        background-color: #ff9a9e;
+        background-image: linear-gradient(
+            45deg,
+            rgba(255, 255, 255, 0.15) 25%,
+            transparent 25%,
+            transparent 50%,
+            rgba(255, 255, 255, 0.15) 50%,
+            rgba(255, 255, 255, 0.15) 75%,
+            transparent 75%,
+            transparent
+        ), linear-gradient(90deg, #ff9a9e 0%, #fad0c4 100%);
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
+<div class="container-fluid dashboard-container">
     <div class="row mb-4">
         <div class="col-12">
             <h2>仪表盘</h2>
@@ -61,86 +235,150 @@
     </div>
 
     <!-- 状态卡片 -->
-    <div class="row">
+    <div class="row row-cols-1 row-cols-md-4 g-4 mb-4">
         <!-- 系统状态 -->
-        <div class="col-md-3">
-            <div class="card status-card">
+        <div class="col">
+            <div class="card status-card card-system-status">
                 <div class="card-body">
                     <h5 class="card-title">系统状态</h5>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="status-label">状态:</span>
-                        <span class="status-value status-running" id="system-status">加载中...</span>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">状态:</span>
+                            <span class="status-value status-running" id="system-status">加载中...</span>
+                        </div>
                     </div>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="status-label">运行时间:</span>
-                        <span class="status-value" id="system-uptime">加载中...</span>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">运行时间:</span>
+                            <span class="status-value" id="system-uptime">加载中...</span>
+                        </div>
                     </div>
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span class="status-label">版本:</span>
-                        <span class="status-value" id="system-version">加载中...</span>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">版本:</span>
+                            <span class="status-value" id="system-version">加载中...</span>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">软件更新:</span>
+                            <span class="status-value status-update" id="system-update">最新</span>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- 实例状态 -->
-        <div class="col-md-3">
-            <div class="card status-card">
+        <div class="col">
+            <div class="card status-card card-instance-status">
                 <div class="card-body">
                     <h5 class="card-title">实例状态</h5>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="status-label">在线:</span>
-                        <span class="status-value" id="instance-online">加载中...</span>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">在线:</span>
+                            <span class="status-value" id="instance-online">加载中...</span>
+                        </div>
                     </div>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="status-label">离线:</span>
-                        <span class="status-value" id="instance-offline">加载中...</span>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">离线:</span>
+                            <span class="status-value" id="instance-offline">加载中...</span>
+                        </div>
                     </div>
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span class="status-label">错误:</span>
-                        <span class="status-value" id="instance-error">加载中...</span>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">错误:</span>
+                            <span class="status-value" id="instance-error">加载中...</span>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">最近活跃:</span>
+                            <span class="status-value" id="instance-active">加载中...</span>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- 消息处理 -->
-        <div class="col-md-3">
-            <div class="card status-card">
+        <div class="col">
+            <div class="card status-card card-message-processing">
                 <div class="card-body">
                     <h5 class="card-title">消息处理</h5>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="status-label">今日消息:</span>
-                        <span class="status-value" id="message-today">加载中...</span>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">今日消息:</span>
+                            <span class="status-value" id="message-today">加载中...</span>
+                        </div>
                     </div>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="status-label">成功率:</span>
-                        <span class="status-value" id="message-success-rate">加载中...</span>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">成功率:</span>
+                            <span class="status-value" id="message-success-rate">加载中...</span>
+                        </div>
                     </div>
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span class="status-label">待处理:</span>
-                        <span class="status-value" id="message-pending">加载中...</span>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">消息总数:</span>
+                            <span class="status-value" id="message-total">加载中...</span>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="status-label">监听对象:</span>
+                            <span class="status-value" id="message-listeners">加载中...</span>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- 系统资源 -->
-        <div class="col-md-3">
-            <div class="card status-card">
+        <div class="col">
+            <div class="card status-card card-system-resources">
                 <div class="card-body">
                     <h5 class="card-title">系统资源</h5>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="status-label">CPU:</span>
-                        <span class="status-value" id="resource-cpu">加载中...</span>
-                    </div>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="status-label">内存:</span>
-                        <span class="status-value" id="resource-memory">加载中...</span>
-                    </div>
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span class="status-label">磁盘:</span>
-                        <span class="status-value" id="resource-disk">加载中...</span>
+                    <div class="resource-metrics">
+                        <!-- CPU 使用率 -->
+                        <div class="mb-2">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="status-label">CPU:</span>
+                                <span class="status-value" id="resource-cpu-text">加载中...</span>
+                            </div>
+                            <div class="progress-container progress-cpu">
+                                <div class="progress">
+                                    <div class="progress-bar" id="resource-cpu-bar" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 内存使用率 -->
+                        <div class="mb-2">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="status-label">内存:</span>
+                                <span class="status-value" id="resource-memory-text">加载中...</span>
+                            </div>
+                            <div class="progress-container progress-memory">
+                                <div class="progress">
+                                    <div class="progress-bar" id="resource-memory-bar" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 磁盘使用率 -->
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="status-label">磁盘:</span>
+                                <span class="status-value" id="resource-disk-text">加载中...</span>
+                            </div>
+                            <div class="progress-container progress-disk">
+                                <div class="progress">
+                                    <div class="progress-bar" id="resource-disk-bar" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -153,7 +391,7 @@
         <div class="col-md-6">
             <div class="card status-card">
                 <div class="card-body position-relative">
-                    <button class="btn btn-sm btn-outline-primary refresh-btn" id="refresh-messages">
+                    <button class="refresh-btn" id="refresh-messages">
                         <i class="fas fa-sync-alt"></i>
                     </button>
                     <h5 class="card-title">最近消息活动</h5>
@@ -173,7 +411,7 @@
         <div class="col-md-6">
             <div class="card status-card">
                 <div class="card-body position-relative">
-                    <button class="btn btn-sm btn-outline-primary refresh-btn" id="refresh-logs">
+                    <button class="refresh-btn" id="refresh-logs">
                         <i class="fas fa-sync-alt"></i>
                     </button>
                     <h5 class="card-title">系统日志</h5>

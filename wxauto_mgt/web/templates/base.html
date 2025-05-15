@@ -10,36 +10,126 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <!-- 自定义CSS -->
     <link href="{{ url_for('static', path='/css/style.css') }}" rel="stylesheet">
+
+    <!-- 内联导航栏样式（确保样式生效） -->
+    <style>
+        /* 导航栏美化样式 */
+        .navbar.navbar-dark.bg-dark {
+            padding: 0;
+            height: 56px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .navbar .navbar-brand {
+            font-size: 1.4rem;
+            font-weight: 600;
+            padding: 0 20px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+        }
+
+        .navbar .navbar-nav {
+            height: 56px;
+        }
+
+        .navbar .nav-item {
+            height: 100%;
+            display: flex;
+            align-items: center;
+        }
+
+        .navbar .nav-link {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            font-size: 1.1rem;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .navbar .nav-link i {
+            font-size: 1.2rem;
+            margin-right: 8px;
+        }
+
+        /* 悬停效果 */
+        .navbar .nav-link:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+
+        /* 点击效果 */
+        .navbar .nav-link:active {
+            background-color: rgba(255, 255, 255, 0.2);
+            transform: scale(0.98);
+        }
+
+        /* 选中效果 */
+        .navbar .nav-link.active {
+            background-color: rgba(255, 255, 255, 0.15);
+            color: #fff;
+            font-weight: 500;
+        }
+
+        .navbar .nav-link.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background-color: #1890ff;
+        }
+    </style>
+
     {% block head %}{% endblock %}
 </head>
 <body>
     <!-- 导航栏 -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark" style="padding: 0; height: 56px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);">
         <div class="container-fluid">
-            <a class="navbar-brand" href="/">wxauto_Mgt</a>
+            <a class="navbar-brand" href="/" style="font-size: 1.4rem; font-weight: 600; padding: 0 20px; height: 56px; display: flex; align-items: center;">wxauto_Mgt</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav">
-                    <li class="nav-item">
-                        <a class="nav-link {% if request.url.path == '/' %}active{% endif %}" href="/">
-                            <i class="fas fa-tachometer-alt"></i> 首页
+                <ul class="navbar-nav" style="height: 56px;">
+                    <li class="nav-item" style="height: 100%; display: flex; align-items: center;">
+                        <a class="nav-link {% if request.url.path == '/' %}active{% endif %}" href="/"
+                           style="height: 100%; display: flex; align-items: center; padding: 0 20px; font-size: 1.1rem; transition: all 0.3s ease; position: relative;">
+                            <i class="fas fa-tachometer-alt" style="font-size: 1.2rem; margin-right: 8px;"></i> 首页
+                            {% if request.url.path == '/' %}
+                            <span style="position: absolute; bottom: 0; left: 0; width: 100%; height: 3px; background-color: #1890ff;"></span>
+                            {% endif %}
                         </a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link {% if request.url.path == '/instances' %}active{% endif %}" href="/instances">
-                            <i class="fas fa-server"></i> 实例管理
+                    <li class="nav-item" style="height: 100%; display: flex; align-items: center;">
+                        <a class="nav-link {% if request.url.path == '/instances' %}active{% endif %}" href="/instances"
+                           style="height: 100%; display: flex; align-items: center; padding: 0 20px; font-size: 1.1rem; transition: all 0.3s ease; position: relative;">
+                            <i class="fas fa-server" style="font-size: 1.2rem; margin-right: 8px;"></i> 实例管理
+                            {% if request.url.path == '/instances' %}
+                            <span style="position: absolute; bottom: 0; left: 0; width: 100%; height: 3px; background-color: #1890ff;"></span>
+                            {% endif %}
                         </a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link {% if request.url.path == '/platforms' %}active{% endif %}" href="/platforms">
-                            <i class="fas fa-cogs"></i> 服务平台和规则
+                    <li class="nav-item" style="height: 100%; display: flex; align-items: center;">
+                        <a class="nav-link {% if request.url.path == '/platforms' %}active{% endif %}" href="/platforms"
+                           style="height: 100%; display: flex; align-items: center; padding: 0 20px; font-size: 1.1rem; transition: all 0.3s ease; position: relative;">
+                            <i class="fas fa-cogs" style="font-size: 1.2rem; margin-right: 8px;"></i> 服务平台和规则
+                            {% if request.url.path == '/platforms' %}
+                            <span style="position: absolute; bottom: 0; left: 0; width: 100%; height: 3px; background-color: #1890ff;"></span>
+                            {% endif %}
                         </a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link {% if request.url.path == '/messages' %}active{% endif %}" href="/messages">
-                            <i class="fas fa-comments"></i> 消息监控
+                    <li class="nav-item" style="height: 100%; display: flex; align-items: center;">
+                        <a class="nav-link {% if request.url.path == '/messages' %}active{% endif %}" href="/messages"
+                           style="height: 100%; display: flex; align-items: center; padding: 0 20px; font-size: 1.1rem; transition: all 0.3s ease; position: relative;">
+                            <i class="fas fa-comments" style="font-size: 1.2rem; margin-right: 8px;"></i> 消息监控
+                            {% if request.url.path == '/messages' %}
+                            <span style="position: absolute; bottom: 0; left: 0; width: 100%; height: 3px; background-color: #1890ff;"></span>
+                            {% endif %}
                         </a>
                     </li>
                 </ul>
@@ -69,6 +159,77 @@
     <script src="{{ url_for('static', path='/js/common.js') }}"></script>
     <!-- 轮询刷新 -->
     <script src="{{ url_for('static', path='/js/polling.js') }}"></script>
+
+    <!-- 导航栏交互效果 -->
+    <script>
+        // 立即执行，不等待DOMContentLoaded
+        (function() {
+            // 确保在页面加载后执行
+            function initNavbarEffects() {
+                console.log('初始化导航栏效果');
+
+                // 为所有导航链接添加点击波纹效果（使用更通用的选择器）
+                const navLinks = document.querySelectorAll('.navbar .nav-link');
+                console.log('找到导航链接数量:', navLinks.length);
+
+                navLinks.forEach(link => {
+                    // 添加悬停效果
+                    link.addEventListener('mouseenter', function() {
+                        this.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+                        this.style.color = '#fff';
+                    });
+
+                    link.addEventListener('mouseleave', function() {
+                        if (!this.classList.contains('active')) {
+                            this.style.backgroundColor = '';
+                        }
+                    });
+
+                    // 鼠标按下效果
+                    link.addEventListener('mousedown', function() {
+                        this.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+                        this.style.transform = 'scale(0.97)';
+                    });
+
+                    // 鼠标释放效果
+                    link.addEventListener('mouseup', function() {
+                        this.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+                        this.style.transform = 'scale(1)';
+                    });
+
+                    // 鼠标离开效果（防止鼠标在元素外释放导致效果残留）
+                    link.addEventListener('mouseleave', function() {
+                        this.style.transform = 'scale(1)';
+                        if (!this.classList.contains('active')) {
+                            this.style.backgroundColor = '';
+                        } else {
+                            this.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
+                        }
+                    });
+
+                    // 如果是活动链接，设置背景色
+                    if (link.classList.contains('active')) {
+                        link.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
+                        link.style.fontWeight = '500';
+                    }
+                });
+            }
+
+            // 如果DOM已经加载完成，立即执行
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', initNavbarEffects);
+            } else {
+                initNavbarEffects();
+            }
+
+            // 为确保效果生效，在窗口加载完成后再次尝试初始化
+            window.addEventListener('load', initNavbarEffects);
+
+            // 在5秒后再次尝试初始化（以防之前的尝试失败）
+            setTimeout(initNavbarEffects, 5000);
+        })();
+    </script>
+
     {% block scripts %}{% endblock %}
 </body>
 </html>

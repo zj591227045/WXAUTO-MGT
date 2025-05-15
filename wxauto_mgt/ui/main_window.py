@@ -291,10 +291,15 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             logger.info("用户请求关闭应用程序")
 
+            # 停止Web状态更新定时器
+            if hasattr(self, 'web_status_timer'):
+                self.web_status_timer.stop()
+
             # 如果Web服务正在运行，停止它
             if is_web_service_running():
                 try:
                     # 创建一个事件循环来运行异步函数
+                    from wxauto_mgt.web import stop_web_service
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     loop.run_until_complete(stop_web_service())
@@ -374,8 +379,13 @@ class MainWindow(QMainWindow):
         group_layout.addWidget(status_label)
 
         self.web_service_status = QLabel("未运行")
-        self.web_service_status.setStyleSheet("color: #f5222d;")  # 红色表示未运行
+        self.web_service_status.setStyleSheet("color: #f5222d; font-weight: bold;")  # 红色表示未运行
         group_layout.addWidget(self.web_service_status)
+
+        # 创建定时器，定期更新Web服务状态
+        self.web_status_timer = QTimer(self)
+        self.web_status_timer.timeout.connect(self._update_web_service_status)
+        self.web_status_timer.start(2000)  # 每2秒更新一次状态
 
         # 打开Web界面按钮
         self.open_web_btn = QPushButton("打开界面")
@@ -448,7 +458,7 @@ class MainWindow(QMainWindow):
 
         if running:
             self.web_service_status.setText("运行中")
-            self.web_service_status.setStyleSheet("color: #52c41a;")  # 绿色表示运行中
+            self.web_service_status.setStyleSheet("color: #52c41a; font-weight: bold;")  # 绿色表示运行中
             self.open_web_btn.setEnabled(True)  # 启用打开Web界面按钮
 
             # 如果Web服务面板已初始化，也更新其状态
@@ -456,12 +466,15 @@ class MainWindow(QMainWindow):
                 self.web_service_panel._update_web_service_status()
         else:
             self.web_service_status.setText("未运行")
-            self.web_service_status.setStyleSheet("color: #f5222d;")  # 红色表示未运行
+            self.web_service_status.setStyleSheet("color: #f5222d; font-weight: bold;")  # 红色表示未运行
             self.open_web_btn.setEnabled(False)  # 禁用打开Web界面按钮
 
             # 如果Web服务面板已初始化，也更新其状态
             if hasattr(self, 'web_service_panel'):
                 self.web_service_panel._update_web_service_status()
+
+        # 确保状态显示正确
+        QApplication.processEvents()
 
     def _open_web_service_tab(self):
         """打开Web服务管理选项卡"""
