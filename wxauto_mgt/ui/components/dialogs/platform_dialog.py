@@ -872,9 +872,9 @@ class AddEditPlatformDialog(QDialog):
 
             # 初始化平台
             if not await platform.initialize():
+                logger.debug(f"初始化平台失败")
                 QMessageBox.warning(self, "错误", "初始化平台失败")
                 return
-
             # 测试连接
             result = await platform.test_connection()
 

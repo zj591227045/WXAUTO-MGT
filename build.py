@@ -29,8 +29,6 @@ OUTPUT_DIR = "dist"
 
 # 需要排除的模块
 EXCLUDED_MODULES = [
-    "ssl",
-    "_ssl",
     "pytest",
     "pytest-asyncio",
     "pytest-qt"
@@ -128,7 +126,7 @@ HIDDEN_IMPORTS = [
 # 需要包含的数据文件
 DATAS = [
     (str(ROOT_DIR / "wxauto_mgt" / "config"), os.path.join("wxauto_mgt", "config")),
-    (str(ROOT_DIR / "wxauto_mgt" / "web" / "requirements.txt"), os.path.join("wxauto_mgt", "web"))
+    (str(ROOT_DIR / "wxauto_mgt"  / "requirements.txt"), os.path.join("wxauto_mgt", "web"))
 ]
 
 # 创建必要的数据目录结构

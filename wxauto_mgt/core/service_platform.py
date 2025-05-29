@@ -1198,7 +1198,9 @@ class OpenAIPlatform(ServicePlatform):
         """
         try:
             # 验证API密钥
+            print("验证API密钥");
             result = await self.test_connection()
+            print(result);
             self._initialized = not result.get('error')
             return self._initialized
         except Exception as e:
@@ -1299,13 +1301,15 @@ class OpenAIPlatform(ServicePlatform):
         Returns:
             Dict[str, Any]: 测试结果
         """
+
         try:
+            # print(f"test_connection")
             if not self.api_key:
                 return {"error": "API密钥未设置"}
 
             # 使用模型列表API测试连接，避免创建聊天完成
             logger.info(f"测试OpenAI API连接: URL={self.api_base}/models")
-
+            # print(f"测试OpenAI API连接: URL={self.api_base}/models")
             # 记录请求头（隐藏API密钥）
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -1315,7 +1319,7 @@ class OpenAIPlatform(ServicePlatform):
             if 'Authorization' in safe_headers:
                 safe_headers['Authorization'] = 'Bearer ******'
             logger.debug(f"OpenAI API测试请求头: {safe_headers}")
-
+            # print(f"OpenAI API测试请求头: {safe_headers}")
             # 记录请求开始时间
             start_time = time.time()
 
@@ -1325,16 +1329,18 @@ class OpenAIPlatform(ServicePlatform):
                     headers=headers
                 ) as response:
                     # 记录响应时间和状态
+                    # print(response)
                     response_time = time.time() - start_time
                     logger.info(f"收到OpenAI API测试响应: 状态码={response.status}, 耗时={response_time:.2f}秒")
 
                     if response.status != 200:
                         error_text = await response.text()
+                        # print(error_text)
                         logger.error(f"OpenAI API测试错误: 状态码={response.status}, 错误信息={error_text}")
                         return {"error": f"API错误: {response.status}, {error_text[:200]}"}
 
                     result = await response.json()
-
+                    # print(result)
                     # 记录响应摘要
                     model_count = len(result.get("data", []))
                     logger.info(f"OpenAI API测试成功: 获取到 {model_count} 个模型")
@@ -1351,6 +1357,7 @@ class OpenAIPlatform(ServicePlatform):
                     }
         except Exception as e:
             logger.error(f"测试连接时出错: {e}")
+            print(f"测试连接时出错: {e}")
             return {"error": str(e)}
 
     def get_type(self) -> str:

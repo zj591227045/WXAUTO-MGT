@@ -1360,7 +1360,7 @@ class MessageListenerPanel(QWidget):
     def _add_listener(self):
         """添加监听对象"""
         try:
-            from wxauto_mgt.ui.components.dialogs import AddListenerDialog
+            from wxauto_mgt.ui.components.dialog_widgets import AddListenerDialog
 
             dialog = AddListenerDialog(self)
             if dialog.exec():

@@ -8,7 +8,6 @@
 import os
 import asyncio
 from typing import Dict, List, Optional
-
 from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer
 from PySide6.QtGui import QIcon, QAction, QPixmap
 from PySide6.QtWidgets import (
@@ -39,7 +38,10 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
 
         self.setWindowTitle("WxAuto管理工具")
-        self.resize(1200, 800)
+        self.resize(1200, 750) # 将高度从800修改为700
+
+        # 居中显示窗口
+        self._center_window()
 
         # 初始化UI
         self._init_ui()
@@ -52,6 +54,17 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(2000, start_delayed_save)
 
         logger.info("主窗口已初始化")
+
+    def _center_window(self):
+        """将窗口移动到屏幕中央"""
+        # 获取窗口的frame几何信息
+        frame_geometry = self.frameGeometry()
+        # 获取屏幕中心点
+        center_point = self.screen().availableGeometry().center()
+        # 将窗口frame的中心点移动到屏幕中心点
+        frame_geometry.moveCenter(center_point)
+        # 移动窗口到新的位置
+        self.move(frame_geometry.topLeft())
 
     def _init_ui(self):
         """初始化UI组件"""
@@ -260,8 +273,7 @@ class MainWindow(QMainWindow):
     def _open_settings(self):
         """打开设置对话框"""
         # 导入设置对话框
-        from wxauto_mgt.ui.components.dialogs import SettingsDialog
-
+        from wxauto_mgt.ui.components.dialog_widgets import SettingsDialog
         dialog = SettingsDialog(self)
         if dialog.exec():
             # 应用设置...
