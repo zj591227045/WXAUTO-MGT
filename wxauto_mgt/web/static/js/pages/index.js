@@ -192,13 +192,43 @@ async function loadRecentMessages() {
                 content = content.substring(0, 50) + '...';
             }
 
+            // 构建处理状态标签
+            let statusBadges = '';
+
+            // 处理状态
+            if (message.processed === 1) {
+                statusBadges += '<span class="badge bg-success me-1">已处理</span>';
+            } else {
+                statusBadges += '<span class="badge bg-secondary me-1">未处理</span>';
+            }
+
+            // 投递状态
+            if (message.delivery_status === 1) {
+                statusBadges += '<span class="badge bg-info me-1">投递成功</span>';
+            } else if (message.delivery_status === 2) {
+                statusBadges += '<span class="badge bg-warning me-1">投递失败</span>';
+            }
+
+            // 回复状态
+            if (message.reply_status === 1) {
+                statusBadges += '<span class="badge bg-primary me-1">已回复</span>';
+            }
+
+            // 使用统一的简洁列表样式，在消息后面添加状态图例
             const messageElement = document.createElement('div');
             messageElement.className = 'log-entry';
             messageElement.innerHTML = `
-                <span class="text-muted">${messageTime}</span>
-                <span class="badge bg-primary">${chatName}</span>
-                <span class="fw-bold">${sender}:</span>
-                <span>${content || '(无内容)'}</span>
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <span class="text-muted">${messageTime}</span>
+                        <span class="badge bg-primary me-1">${chatName}</span>
+                        <span class="fw-bold">${sender}:</span>
+                        <span>${content || '(无内容)'}</span>
+                    </div>
+                    <div class="message-status-badges ms-2">
+                        ${statusBadges}
+                    </div>
+                </div>
             `;
 
             messagesContainer.appendChild(messageElement);

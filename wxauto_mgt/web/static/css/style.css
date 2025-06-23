@@ -164,6 +164,64 @@ body {
     height: 200px;
 }
 
+/* 仪表盘消息状态样式 */
+.message-status-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    align-items: center;
+}
+
+.message-status-badges .badge {
+    font-size: 0.65rem;
+    padding: 0.2rem 0.4rem;
+    white-space: nowrap;
+}
+
+/* 首页消息项样式 */
+#recent-messages .message-item {
+    margin-bottom: 1rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+#recent-messages .message-item:last-child {
+    border-bottom: none;
+}
+
+/* 首页用户消息气泡样式 - 简化版 */
+#recent-messages .user-bubble {
+    background: linear-gradient(135deg, #007bff, #0056b3);
+    color: white;
+    border-radius: 12px;
+    padding: 0.5rem 0.75rem;
+    max-width: 100%;
+    box-shadow: 0 1px 4px rgba(0, 123, 255, 0.2);
+    font-size: 0.875rem;
+}
+
+#recent-messages .message-status-row {
+    margin-top: 0.25rem;
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+#recent-messages .message-status-row .badge {
+    font-size: 0.65rem;
+    padding: 0.15rem 0.3rem;
+}
+
+.log-entry {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.log-entry:last-child {
+    border-bottom: none;
+}
+
 /* 响应式调整 */
 @media (max-width: 768px) {
     .card-title {
@@ -179,6 +237,16 @@ body {
         max-width: 90%;
         left: 5%;
         right: 5%;
+    }
+
+    .message-status-badges {
+        margin-top: 0.25rem;
+        justify-content: flex-start;
+    }
+
+    .message-status-badges .badge {
+        font-size: 0.6rem;
+        padding: 0.15rem 0.3rem;
     }
 }
 
