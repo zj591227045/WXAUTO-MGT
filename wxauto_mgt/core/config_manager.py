@@ -777,13 +777,28 @@ class ConfigManager:
         """
         try:
             instances = self.get("instances", {})
+            from ..data.db_manager import db_manager
 
-            if instance_id not in instances:
+            # 检查实例是否存在（在内存配置或数据库中）
+            instance_exists_in_memory = instance_id in instances
+            instance_exists_in_db = False
+
+            if not instance_exists_in_memory:
+                # 如果内存中不存在，检查数据库
+                try:
+                    db_instance = await db_manager.fetchone(
+                        "SELECT instance_id FROM instances WHERE instance_id = ?",
+                        (instance_id,)
+                    )
+                    instance_exists_in_db = db_instance is not None
+                except Exception as e:
+                    logger.error(f"检查数据库中的实例时出错: {e}")
+
+            if not instance_exists_in_memory and not instance_exists_in_db:
                 logger.error(f"实例 {instance_id} 不存在")
                 return False
 
-            # 从数据库中删除实例记录
-            from ..data.db_manager import db_manager
+            logger.info(f"开始删除实例 {instance_id} (内存中存在: {instance_exists_in_memory}, 数据库中存在: {instance_exists_in_db})")
 
             # 1. 首先删除与该实例相关的监听对象
             try:
@@ -822,9 +837,13 @@ class ConfigManager:
                 # 如果删除实例记录失败，返回失败
                 return False
 
-            # 4. 从内存中移除实例配置
-            del instances[instance_id]
-            self.set("instances", instances, save=True)
+            # 4. 从内存中移除实例配置（如果存在）
+            if instance_exists_in_memory:
+                del instances[instance_id]
+                self.set("instances", instances, save=True)
+                logger.info(f"已从内存配置中移除实例: {instance_id}")
+            else:
+                logger.info(f"实例 {instance_id} 不在内存配置中，跳过内存清理")
 
             # 5. 从API客户端管理器中移除实例
             from ..core.api_client import instance_manager

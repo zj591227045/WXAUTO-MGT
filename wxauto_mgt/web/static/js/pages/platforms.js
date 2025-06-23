@@ -17,8 +17,11 @@ const platformTypeConfigs = {
     ],
     openai: [
         { id: 'api_key', label: 'API密钥', type: 'text', required: true },
+        { id: 'api_base', label: 'API基础URL', type: 'text', required: false, default: 'https://api.openai.com/v1' },
         { id: 'model', label: '模型', type: 'text', required: true, default: 'gpt-3.5-turbo' },
-        { id: 'temperature', label: '温度', type: 'number', required: true, default: 0.7, min: 0, max: 2, step: 0.1 }
+        { id: 'temperature', label: '温度', type: 'number', required: true, default: 0.7, min: 0, max: 2, step: 0.1 },
+        { id: 'system_prompt', label: '系统提示', type: 'textarea', required: false, default: '你是一个有用的助手。' },
+        { id: 'max_tokens', label: '最大令牌数', type: 'number', required: false, default: 1000, min: 1, max: 4096 }
     ],
     keyword: [
         { id: 'keywords', label: '关键词（多个关键词用逗号分隔）', type: 'textarea', required: true },
@@ -63,6 +66,17 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('instance-filter').addEventListener('change', function() {
         const instanceId = this.value;
         loadRules(instanceId);
+    });
+
+    // 绑定@消息复选框事件
+    document.getElementById('rule-only-at-messages').addEventListener('change', function() {
+        const atNameContainer = document.getElementById('at-name-container');
+        if (this.checked) {
+            atNameContainer.style.display = 'block';
+        } else {
+            atNameContainer.style.display = 'none';
+            document.getElementById('rule-at-name').value = '';
+        }
     });
 });
 
@@ -864,8 +878,16 @@ async function testPlatform(platformId) {
         });
 
         // 显示测试结果
-        if (response.success) {
-            showNotification(`平台测试成功: ${response.message}`, 'success');
+        // API返回格式: {"code": 0, "message": "测试完成", "data": result}
+        if (response.code === 0) {
+            // 检查测试结果
+            const testResult = response.data;
+            if (testResult && !testResult.error) {
+                showNotification(`平台测试成功: ${testResult.message || '连接正常'}`, 'success');
+            } else {
+                const errorMsg = testResult ? testResult.error : '测试失败';
+                showNotification(`平台测试失败: ${errorMsg}`, 'warning');
+            }
         } else {
             showNotification(`平台测试失败: ${response.message}`, 'warning');
         }

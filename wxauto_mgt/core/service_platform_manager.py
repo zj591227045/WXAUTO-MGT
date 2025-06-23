@@ -117,7 +117,7 @@ class ServicePlatformManager:
             logger.error(f"加载平台配置失败: {e}")
             raise
 
-    async def register_platform(self, platform_type: str, name: str, config: Dict[str, Any]) -> Optional[str]:
+    async def register_platform(self, platform_type: str, name: str, config: Dict[str, Any], enabled: bool = True) -> Optional[str]:
         """
         注册新的服务平台
 
@@ -125,6 +125,7 @@ class ServicePlatformManager:
             platform_type: 平台类型
             name: 平台名称
             config: 平台配置
+            enabled: 是否启用平台
 
         Returns:
             Optional[str]: 平台ID，如果注册失败则返回None
@@ -145,14 +146,15 @@ class ServicePlatformManager:
                     logger.error(f"创建平台实例失败: {name}")
                     return None
 
-                # 初始化平台
-                try:
-                    if not await platform.initialize():
-                        logger.error(f"初始化平台失败: {name}")
+                # 只有在启用时才初始化平台
+                if enabled:
+                    try:
+                        if not await platform.initialize():
+                            logger.error(f"初始化平台失败: {name}")
+                            return None
+                    except Exception as init_error:
+                        logger.error(f"初始化平台时出错: {init_error}")
                         return None
-                except Exception as init_error:
-                    logger.error(f"初始化平台时出错: {init_error}")
-                    return None
 
                 # 保存到数据库
                 try:
@@ -162,7 +164,7 @@ class ServicePlatformManager:
                         'name': name,
                         'type': platform_type,
                         'config': json.dumps(config),
-                        'enabled': 1,
+                        'enabled': 1 if enabled else 0,
                         'create_time': now,
                         'update_time': now
                     })
@@ -170,10 +172,11 @@ class ServicePlatformManager:
                     logger.error(f"保存平台到数据库时出错: {db_error}")
                     return None
 
-                # 添加到管理器
+                # 只有在启用时才添加到管理器
                 try:
-                    self._platforms[platform_id] = platform
-                    logger.info(f"注册平台成功: {name} ({platform_id})")
+                    if enabled:
+                        self._platforms[platform_id] = platform
+                    logger.info(f"注册平台成功: {name} ({platform_id}) - {'启用' if enabled else '禁用'}")
                     return platform_id
                 except Exception as add_error:
                     logger.error(f"添加平台到管理器时出错: {add_error}")
@@ -201,7 +204,7 @@ class ServicePlatformManager:
 
     async def get_all_platforms(self) -> List[Dict[str, Any]]:
         """
-        获取所有服务平台
+        获取所有服务平台（包括禁用的）
 
         Returns:
             List[Dict[str, Any]]: 服务平台列表
@@ -209,7 +212,64 @@ class ServicePlatformManager:
         if not self._initialized:
             await self.initialize()
 
-        return [platform.to_dict() for platform in self._platforms.values()]
+        try:
+            # 从数据库获取所有平台（包括禁用的）
+            platforms = await db_manager.fetchall(
+                "SELECT * FROM service_platforms ORDER BY create_time DESC"
+            )
+
+            result = []
+            for platform in platforms:
+                try:
+                    # 解析配置
+                    config = json.loads(platform['config'])
+
+                    # 检查平台是否在内存中已初始化
+                    platform_id = platform['platform_id']
+                    platform_instance = self._platforms.get(platform_id)
+                    initialized = False
+
+                    if platform_instance:
+                        initialized = platform_instance._initialized
+                    elif platform['enabled'] == 1:
+                        # 如果平台启用但不在内存中，尝试加载并初始化
+                        try:
+                            platform_instance = create_platform(
+                                platform['type'],
+                                platform_id,
+                                platform['name'],
+                                config
+                            )
+                            if platform_instance:
+                                initialized = await platform_instance.initialize()
+                                if initialized:
+                                    self._platforms[platform_id] = platform_instance
+                                    logger.info(f"延迟加载平台成功: {platform['name']} ({platform_id})")
+                        except Exception as init_error:
+                            logger.warning(f"延迟初始化平台失败: {platform['name']} ({platform_id}) - {init_error}")
+
+                    # 构建平台数据
+                    platform_data = {
+                        'platform_id': platform_id,
+                        'name': platform['name'],
+                        'type': platform['type'],
+                        'config': config,
+                        'enabled': platform['enabled'] == 1,
+                        'initialized': initialized,
+                        'create_time': platform['create_time'],
+                        'update_time': platform['update_time']
+                    }
+
+                    result.append(platform_data)
+                except Exception as e:
+                    logger.error(f"解析平台数据失败: {platform.get('platform_id', 'unknown')} - {e}")
+                    continue
+
+            return result
+        except Exception as e:
+            logger.error(f"获取所有平台失败: {e}")
+            # 如果数据库查询失败，返回内存中的平台
+            return [platform.to_dict() for platform in self._platforms.values()]
 
     async def update_platform(self, platform_id: str, name: str, config: Dict[str, Any]) -> bool:
         """

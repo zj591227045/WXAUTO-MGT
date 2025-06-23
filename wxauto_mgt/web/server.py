@@ -65,12 +65,20 @@ def create_app():
     # 错误处理
     @app.exception_handler(404)
     async def not_found_exception_handler(request: Request, exc: HTTPException):
-        # 如果是API请求，返回JSON错误
+        # 如果是API请求，检查是否是路由函数内部抛出的HTTPException
         if request.url.path.startswith("/api/"):
-            return JSONResponse(
-                status_code=404,
-                content={"detail": "API端点未找到"}
-            )
+            # 如果异常有自定义的detail信息，保留原始信息
+            if hasattr(exc, 'detail') and exc.detail and exc.detail != "Not Found":
+                return JSONResponse(
+                    status_code=404,
+                    content={"detail": exc.detail}
+                )
+            else:
+                # 只有在真正的路由未找到时才返回通用消息
+                return JSONResponse(
+                    status_code=404,
+                    content={"detail": "API端点未找到"}
+                )
         # 否则返回HTML错误页面
         return templates.TemplateResponse(
             "error.html",

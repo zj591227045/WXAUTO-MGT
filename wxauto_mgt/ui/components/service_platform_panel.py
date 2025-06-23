@@ -170,9 +170,21 @@ class ServicePlatformPanel(QWidget):
         self.platform_table.setItem(row, 2, type_item)
 
         # 状态
-        status = "启用" if platform.get("initialized", False) else "未初始化"
+        enabled = platform.get("enabled", False)
+        initialized = platform.get("initialized", False)
+
+        if not enabled:
+            status = "已禁用"
+            color = "#d9d9d9"  # 灰色
+        elif initialized:
+            status = "已初始化"
+            color = "#52c41a"  # 绿色
+        else:
+            status = "未初始化"
+            color = "#ff4d4f"  # 红色
+
         status_item = QTableWidgetItem(status)
-        status_item.setForeground(QColor("#52c41a" if status == "启用" else "#ff4d4f"))
+        status_item.setForeground(QColor(color))
         self.platform_table.setItem(row, 3, status_item)
 
         # 操作按钮
@@ -321,22 +333,41 @@ class ServicePlatformPanel(QWidget):
             # 导入对话框
             from wxauto_mgt.ui.components.dialogs.platform_dialog import AddEditPlatformDialog
 
-            # 直接获取平台数据，不创建额外任务
+            # 首先尝试从内存中获取平台
             platform = await platform_manager.get_platform(platform_id)
 
-            if not platform:
-                logger.error(f"找不到平台: {platform_id}")
-                QMessageBox.warning(self, "错误", f"找不到平台: {platform_id}")
-                return
+            if platform:
+                # 从内存中的平台实例获取数据
+                platform_data = {
+                    'platform_id': platform.platform_id,
+                    'name': platform.name,
+                    'type': platform.get_type(),
+                    'config': platform.config.copy(),  # 使用原始配置，不是安全配置
+                    'initialized': platform._initialized
+                }
+            else:
+                # 如果内存中没有，从数据库获取平台数据
+                from wxauto_mgt.data.db_manager import db_manager
+                import json
 
-            # 获取平台数据，但不使用to_dict()方法，因为它会掩盖API密钥
-            platform_data = {
-                'platform_id': platform.platform_id,
-                'name': platform.name,
-                'type': platform.get_type(),
-                'config': platform.config.copy(),  # 使用原始配置，不是安全配置
-                'initialized': platform._initialized
-            }
+                platform_db_data = await db_manager.fetchone(
+                    "SELECT * FROM service_platforms WHERE platform_id = ?",
+                    (platform_id,)
+                )
+
+                if not platform_db_data:
+                    logger.error(f"找不到平台: {platform_id}")
+                    QMessageBox.warning(self, "错误", f"找不到平台: {platform_id}")
+                    return
+
+                # 从数据库数据构建平台数据
+                platform_data = {
+                    'platform_id': platform_db_data['platform_id'],
+                    'name': platform_db_data['name'],
+                    'type': platform_db_data['type'],
+                    'config': json.loads(platform_db_data['config']),
+                    'initialized': False  # 数据库中的平台默认未初始化
+                }
 
             # 创建对话框
             dialog = AddEditPlatformDialog(self, platform_data)
@@ -466,9 +497,34 @@ class ServicePlatformPanel(QWidget):
             platform = await platform_manager.get_platform(platform_id)
 
             if not platform:
-                logger.error(f"找不到平台: {platform_id}")
-                QMessageBox.warning(self, "错误", f"找不到平台: {platform_id}")
-                return
+                # 如果内存中没有，尝试从数据库获取并创建临时平台实例进行测试
+                from wxauto_mgt.data.db_manager import db_manager
+                from wxauto_mgt.core.service_platform import create_platform
+                import json
+
+                platform_db_data = await db_manager.fetchone(
+                    "SELECT * FROM service_platforms WHERE platform_id = ?",
+                    (platform_id,)
+                )
+
+                if not platform_db_data:
+                    logger.error(f"找不到平台: {platform_id}")
+                    QMessageBox.warning(self, "错误", f"找不到平台: {platform_id}")
+                    return
+
+                # 创建临时平台实例进行测试
+                config = json.loads(platform_db_data['config'])
+                platform = create_platform(
+                    platform_db_data['type'],
+                    platform_id,
+                    platform_db_data['name'],
+                    config
+                )
+
+                if not platform:
+                    logger.error(f"创建平台实例失败: {platform_id}")
+                    QMessageBox.warning(self, "错误", f"创建平台实例失败: {platform_id}")
+                    return
 
             # 测试连接
             result = await platform.test_connection()

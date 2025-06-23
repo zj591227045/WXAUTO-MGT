@@ -685,9 +685,26 @@ class AddEditPlatformDialog(QDialog):
             # 保存原始API密钥，用于后续处理
             self.original_api_key = config.get("api_key", "")
             self.openai_model.setText(config.get("model", "gpt-3.5-turbo"))
-            self.openai_temperature.setValue(config.get("temperature", 0.7))
+
+            # 处理temperature字段，可能是字符串或数字
+            temperature = config.get("temperature", 0.7)
+            if isinstance(temperature, str):
+                try:
+                    temperature = float(temperature)
+                except (ValueError, TypeError):
+                    temperature = 0.7
+            self.openai_temperature.setValue(temperature)
+
             self.openai_system_prompt.setPlainText(config.get("system_prompt", ""))
-            self.openai_max_tokens.setValue(config.get("max_tokens", 1000))
+
+            # 处理max_tokens字段，可能是字符串或数字
+            max_tokens = config.get("max_tokens", 1000)
+            if isinstance(max_tokens, str):
+                try:
+                    max_tokens = int(max_tokens)
+                except (ValueError, TypeError):
+                    max_tokens = 1000
+            self.openai_max_tokens.setValue(max_tokens)
         elif platform_type == "keyword" or platform_type == "keyword_match":
             # 加载关键词匹配配置
             self.min_reply_time.setValue(config.get("min_reply_time", 1.0))

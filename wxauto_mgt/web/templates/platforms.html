@@ -272,6 +272,33 @@
                         <input type="number" class="form-control" id="rule-priority" min="0" max="100" value="5" required>
                         <div class="form-text">数字越大优先级越高，范围0-100</div>
                     </div>
+
+                    <!-- @ 消息设置 -->
+                    <div class="mb-3">
+                        <h6 class="form-label">群消息@设置</h6>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="rule-only-at-messages">
+                            <label class="form-check-label" for="rule-only-at-messages">
+                                仅响应@的消息
+                            </label>
+                        </div>
+                        <div class="mb-2" id="at-name-container" style="display: none;">
+                            <label for="rule-at-name" class="form-label">@名称</label>
+                            <input type="text" class="form-control" id="rule-at-name" placeholder="输入被@的名称，多个名称用逗号分隔">
+                            <div class="form-text">勾选"仅响应@的消息"后，只有当消息中包含@指定名称时才会处理</div>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="rule-reply-at-sender">
+                            <label class="form-check-label" for="rule-reply-at-sender">
+                                回复时@发送者
+                            </label>
+                        </div>
+                        <div class="form-text text-muted">
+                            注意: 勾选"仅响应@的消息"后，聊天对象必须为群聊，且消息内容中必须包含"@名称"才会处理。
+                            支持多个@名称，用逗号分隔，消息中包含任意一个名称即可触发。
+                        </div>
+                    </div>
+
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" id="rule-enabled" checked>
                         <label class="form-check-label" for="rule-enabled">

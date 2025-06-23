@@ -27,10 +27,56 @@ from wxauto_mgt.config import get_version
 # 创建API路由器
 api_router = APIRouter()
 
+# 初始化标志
+_initialized = False
+
+async def initialize_managers():
+    """初始化管理器"""
+    global _initialized
+    if _initialized:
+        return
+
+    try:
+        # 初始化数据库
+        if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+            # 获取数据库路径
+            import os
+            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data')
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir)
+            db_path = os.path.join(data_dir, 'wxauto_mgt.db')
+            await db_manager.initialize(db_path)
+            logger.info("数据库管理器初始化完成")
+
+        # 初始化服务平台管理器
+        if not hasattr(platform_manager, '_initialized') or not platform_manager._initialized:
+            await platform_manager.initialize()
+            logger.info("服务平台管理器初始化完成")
+
+        # 初始化规则管理器
+        if not hasattr(rule_manager, '_initialized') or not rule_manager._initialized:
+            await rule_manager.initialize()
+            logger.info("规则管理器初始化完成")
+
+        # 初始化消息监听器
+        if hasattr(message_listener, 'initialize') and not getattr(message_listener, '_initialized', False):
+            await message_listener.initialize()
+            logger.info("消息监听器初始化完成")
+
+        _initialized = True
+        logger.info("所有管理器初始化完成")
+    except Exception as e:
+        logger.error(f"初始化管理器失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise
+
 # 添加测试API路由
 @api_router.get("/test")
 async def test_api():
     """API测试接口"""
+    # 确保管理器已初始化
+    await initialize_managers()
     return {"status": "ok", "message": "API测试成功"}
 
 # 系统资源API
@@ -212,6 +258,9 @@ async def get_system_resources(instance_id: Optional[str] = None):
 async def get_system_status():
     """获取系统状态"""
     try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
         # 获取系统启动时间
         boot_time = psutil.boot_time()
         boot_time_str = datetime.datetime.fromtimestamp(boot_time).strftime("%Y-%m-%d %H:%M:%S")
@@ -279,15 +328,10 @@ async def get_system_status():
                     logger.warning(f"检查实例 {instance_id} 连接状态失败: {e}")
                     offline_count += 1
 
-            # 如果没有实例，设置默认值
-            if not db_instances:
-                online_count = 1
-                offline_count = 0
-                error_count = 0
         except Exception as e:
             logger.warning(f"获取实例状态失败: {e}")
             logger.warning(traceback.format_exc())
-            online_count = 1
+            online_count = 0
             offline_count = 0
             error_count = 0
 
@@ -354,7 +398,7 @@ async def get_system_status():
             success_rate = 100
 
         # 获取最近活跃的实例
-        active_instance_name = "test"  # 默认值设为test
+        active_instance_name = ""  # 默认为空
         try:
             # 查询最新的消息记录对应的实例
             latest_message_query = """
@@ -375,7 +419,7 @@ async def get_system_status():
                     active_instance_name = instance_result['name']
         except Exception as e:
             logger.warning(f"获取最近活跃实例失败: {e}")
-            # 保持默认值为test
+            # 保持默认值为空
 
         return {
             "system_status": {
@@ -411,11 +455,116 @@ async def get_system_status():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取系统状态失败: {str(e)}")
 
+# 实例状态缓存（避免频繁请求）
+_instance_cache = {}
+_cache_timeout = 30  # 缓存30秒
+
+async def get_instance_status_cached(instance_id: str, base_url: str, api_key: str):
+    """获取实例状态（带缓存）"""
+    import time
+    current_time = time.time()
+
+    # 检查缓存
+    if instance_id in _instance_cache:
+        cache_data = _instance_cache[instance_id]
+        if current_time - cache_data['timestamp'] < _cache_timeout:
+            logger.debug(f"使用缓存的实例 {instance_id} 状态")
+            return cache_data['data']
+
+    # 缓存过期或不存在，重新获取
+    import requests
+    import asyncio
+
+    result = {
+        'status': 'OFFLINE',
+        'runtime': '未知',
+        'cpu_percent': 0,
+        'memory_used': 0,
+        'memory_total': 0,
+        'memory_percent': 0
+    }
+
+    try:
+        headers = {'X-API-Key': api_key}
+
+        # 并发发送健康检查和资源请求
+        async def fetch_health():
+            try:
+                health_url = f"{base_url}/api/health"
+                health_response = requests.get(health_url, headers=headers, timeout=2)
+                return health_response.json() if health_response.status_code == 200 else None
+            except:
+                return None
+
+        async def fetch_resources():
+            try:
+                resources_url = f"{base_url}/api/system/resources"
+                resources_response = requests.get(resources_url, headers=headers, timeout=2)
+                return resources_response.json() if resources_response.status_code == 200 else None
+            except:
+                return None
+
+        # 并发执行请求
+        health_data, resources_data = await asyncio.gather(
+            asyncio.to_thread(fetch_health),
+            asyncio.to_thread(fetch_resources),
+            return_exceptions=True
+        )
+
+        # 处理健康检查结果
+        if health_data and 'data' in health_data:
+            data = health_data['data']
+
+            # 更新状态
+            if data.get('wechat_status') == 'connected':
+                result['status'] = 'ONLINE'
+
+            # 格式化运行时间
+            if 'uptime' in data:
+                uptime_seconds = data['uptime']
+                days, remainder = divmod(uptime_seconds, 86400)
+                hours, remainder = divmod(remainder, 3600)
+                minutes, _ = divmod(remainder, 60)
+
+                if days > 0:
+                    result['runtime'] = f"{int(days)}天{int(hours)}小时{int(minutes)}分钟"
+                elif hours > 0:
+                    result['runtime'] = f"{int(hours)}小时{int(minutes)}分钟"
+                else:
+                    result['runtime'] = f"{int(minutes)}分钟"
+
+        # 处理资源信息结果
+        if resources_data and 'data' in resources_data:
+            data = resources_data['data']
+
+            if 'cpu' in data and 'usage_percent' in data['cpu']:
+                result['cpu_percent'] = data['cpu']['usage_percent']
+
+            if 'memory' in data:
+                memory_data = data['memory']
+                result['memory_used'] = round(memory_data.get('used', 0) / 1024, 1)
+                result['memory_total'] = round(memory_data.get('total', 0) / 1024, 1)
+                result['memory_percent'] = memory_data.get('usage_percent', 0)
+
+    except Exception as e:
+        logger.warning(f"获取实例 {instance_id} 状态失败: {e}")
+
+    # 更新缓存
+    _instance_cache[instance_id] = {
+        'timestamp': current_time,
+        'data': result
+    }
+
+    return result
+
 # 实例列表API
 @api_router.get("/instances")
 async def get_instances():
     """获取所有实例"""
     try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
         # 尝试从数据库获取实例列表
         result = []
         try:
@@ -466,82 +615,17 @@ async def get_instances():
                         memory_used = 0
                         memory_total = 0
                         memory_percent = 0
+                        instance['status'] = 'OFFLINE'
                     else:
-                        # 1. 首先调用 /api/health 接口获取 uptime
-                        import requests
-                        health_url = f"{base_url}/api/health"
-                        headers = {'X-API-Key': api_key}
+                        # 使用缓存的状态获取函数
+                        status_data = await get_instance_status_cached(instance_id, base_url, api_key)
 
-                        # 发送请求
-                        logger.debug(f"向实例 {instance_id} 发送健康检查请求: {health_url}")
-                        health_response = requests.get(health_url, headers=headers, timeout=5)
-
-                        # 检查响应状态
-                        if health_response.status_code == 200:
-                            health_data = health_response.json()
-                            logger.debug(f"实例 {instance_id} 健康检查响应: {health_data}")
-
-                            # 获取 uptime 值并格式化
-                            if 'data' in health_data and 'uptime' in health_data['data']:
-                                uptime_seconds = health_data['data']['uptime']
-                                # 格式化运行时间
-                                days, remainder = divmod(uptime_seconds, 86400)
-                                hours, remainder = divmod(remainder, 3600)
-                                minutes, _ = divmod(remainder, 60)  # 使用_忽略秒数
-
-                                if days > 0:
-                                    runtime = f"{int(days)}天{int(hours)}小时{int(minutes)}分钟"
-                                elif hours > 0:
-                                    runtime = f"{int(hours)}小时{int(minutes)}分钟"
-                                else:
-                                    runtime = f"{int(minutes)}分钟"
-                            else:
-                                runtime = '未知'
-
-                            # 根据 wechat_status 更新实例状态
-                            if 'data' in health_data and 'wechat_status' in health_data['data']:
-                                wechat_status = health_data['data']['wechat_status']
-                                if wechat_status == 'connected':
-                                    # 更新实例状态为已连接
-                                    instance['status'] = 'ONLINE'
-                                else:
-                                    # 更新实例状态为离线
-                                    instance['status'] = 'OFFLINE'
-                        else:
-                            logger.warning(f"实例 {instance_id} 健康检查请求失败，状态码: {health_response.status_code}")
-                            runtime = '未知'
-                            # 更新实例状态为离线
-                            instance['status'] = 'OFFLINE'
-
-                        # 2. 调用资源API获取最新资源信息
-                        resources_response = await get_system_resources(instance_id)
-
-                        if resources_response and 'data' in resources_response:
-                            data = resources_response['data']
-
-                            # 获取CPU使用率
-                            if 'cpu' in data and 'usage_percent' in data['cpu']:
-                                cpu_percent = data['cpu']['usage_percent']
-                            else:
-                                cpu_percent = 0
-
-                            # 获取内存使用情况
-                            if 'memory' in data:
-                                memory_data = data['memory']
-                                # 将 MB 转换为 GB，并保留一位小数
-                                memory_used = round(memory_data.get('used', 0) / 1024, 1)
-                                memory_total = round(memory_data.get('total', 0) / 1024, 1)
-                                memory_percent = memory_data.get('usage_percent', 0)
-                            else:
-                                memory_used = 0
-                                memory_total = 0
-                                memory_percent = 0
-                        else:
-                            # 如果API调用失败，使用默认值
-                            cpu_percent = 0
-                            memory_used = 0
-                            memory_total = 0
-                            memory_percent = 0
+                        runtime = status_data['runtime']
+                        cpu_percent = status_data['cpu_percent']
+                        memory_used = status_data['memory_used']
+                        memory_total = status_data['memory_total']
+                        memory_percent = status_data['memory_percent']
+                        instance['status'] = status_data['status']
                 except Exception as e:
                     logger.warning(f"获取实例 {instance_id} 资源信息失败: {e}")
                     logger.warning(traceback.format_exc())
@@ -567,96 +651,180 @@ async def get_instances():
         except Exception as e:
             logger.warning(f"从数据库获取实例列表失败: {e}")
 
-        # 如果没有实例，返回默认实例
-        if not result:
-            # 尝试从实例管理器获取实例
-            try:
-                if hasattr(instance_manager, 'get_all_instances'):
-                    instances = await instance_manager.get_all_instances()
-                    if instances and isinstance(instances, list):
-                        for instance in instances:
-                            instance_id = instance.get('instance_id')
-                            result.append({
-                                **instance,
-                                "messages_count": 0,
-                                "listeners_count": 0,
-                                "runtime": "00:00:00",
-                                "cpu_percent": 0,
-                                "memory_used": 0,
-                                "memory_total": 0,
-                                "memory_percent": 0
-                            })
-            except Exception as e:
-                logger.warning(f"从实例管理器获取实例列表失败: {e}")
-
-        # 如果仍然没有实例，返回一个默认实例
-        if not result:
-            result = [
-                {
-                    "instance_id": "inst_001",
-                    "name": "主实例",
-                    "status": "ONLINE",
-                    "type": "wxauto",
-                    "version": "1.0.0",
-                    "create_time": int(time.time()) - 86400 * 7,
-                    "update_time": int(time.time()) - 3600,
-                    "messages_count": 0,
-                    "listeners_count": 0,
-                    "runtime": "00:00:00",
-                    "cpu_percent": 0,
-                    "memory_used": 0,
-                    "memory_total": 0,
-                    "memory_percent": 0
-                }
-            ]
-
         return result
     except Exception as e:
         logger.error(f"获取实例列表失败: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取实例列表失败: {str(e)}")
 
+# 添加实例API
+@api_router.post("/instances")
+async def create_instance(request: Request):
+    """创建新的实例"""
+    try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
+        data = await request.json()
+        logger.debug(f"收到创建实例请求: {data}")
+
+        # 验证必需字段
+        required_fields = ['name', 'base_url', 'api_key']
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"缺少必需字段: {field}")
+
+        # 生成实例ID（如果没有提供）
+        if 'instance_id' not in data or not data['instance_id']:
+            import uuid
+            data['instance_id'] = f"wxauto_{uuid.uuid4().hex[:8]}"
+
+        # 调用 Python 端的配置管理器添加实例
+        from wxauto_mgt.core.config_manager import config_manager
+        from wxauto_mgt.core.api_client import instance_manager
+
+        # 准备配置参数
+        config_params = {}
+        if 'config' in data and isinstance(data['config'], dict):
+            config_params = data['config']
+
+        # 添加实例到配置管理器
+        result = await config_manager.add_instance(
+            instance_id=data['instance_id'],
+            name=data['name'],
+            base_url=data['base_url'],
+            api_key=data['api_key'],
+            enabled=bool(data.get('enabled', True)),
+            **config_params
+        )
+
+        if result:
+            # 添加实例到API客户端
+            instance_manager.add_instance(
+                data['instance_id'],
+                data['base_url'],
+                data['api_key'],
+                config_params.get('timeout', 30)
+            )
+
+            logger.info(f"成功创建实例: {data['instance_id']}")
+            return {"code": 0, "message": "实例创建成功", "data": {"instance_id": data['instance_id']}}
+        else:
+            raise HTTPException(status_code=500, detail="实例创建失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"创建实例失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"创建实例失败: {str(e)}")
+
+# 更新实例API
+@api_router.put("/instances/{instance_id}")
+async def update_instance(instance_id: str, request: Request):
+    """更新实例"""
+    try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
+        data = await request.json()
+        logger.debug(f"收到更新实例请求: {instance_id}, 数据: {data}")
+
+        # 验证必需字段
+        required_fields = ['name', 'base_url', 'api_key']
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"缺少必需字段: {field}")
+
+        # 调用 Python 端的配置管理器更新实例
+        from wxauto_mgt.core.config_manager import config_manager
+        from wxauto_mgt.core.api_client import instance_manager
+
+        # 准备更新数据
+        update_data = {
+            'name': data['name'],
+            'base_url': data['base_url'],
+            'api_key': data['api_key'],
+            'enabled': bool(data.get('enabled', True))
+        }
+
+        # 添加配置参数
+        if 'config' in data and isinstance(data['config'], dict):
+            update_data['config'] = data['config']
+
+        # 更新实例配置
+        success = await config_manager.update_instance(instance_id, update_data)
+
+        if success:
+            # 更新API客户端中的实例（先移除再添加）
+            timeout = 30
+            if 'config' in data and isinstance(data['config'], dict):
+                timeout = data['config'].get('timeout', 30)
+
+            # 移除旧的实例
+            instance_manager.remove_instance(instance_id)
+            # 添加新的实例
+            instance_manager.add_instance(
+                instance_id,
+                data['base_url'],
+                data['api_key'],
+                timeout
+            )
+
+            logger.info(f"成功更新实例: {instance_id}")
+            return {"code": 0, "message": "实例更新成功"}
+        else:
+            raise HTTPException(status_code=404, detail="实例不存在或更新失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新实例失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"更新实例失败: {str(e)}")
+
+# 删除实例API
+@api_router.delete("/instances/{instance_id}")
+async def delete_instance(instance_id: str):
+    """删除实例"""
+    try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
+        # 调用 Python 端的配置管理器删除实例
+        from wxauto_mgt.core.config_manager import config_manager
+        from wxauto_mgt.core.api_client import instance_manager
+
+        success = await config_manager.remove_instance(instance_id)
+
+        if success:
+            # 从API客户端中移除实例
+            instance_manager.remove_instance(instance_id)
+
+            logger.info(f"成功删除实例: {instance_id}")
+            return {"code": 0, "message": "实例删除成功"}
+        else:
+            # 不抛出HTTPException，直接返回错误响应
+            logger.warning(f"删除实例失败: {instance_id} 不存在")
+            return {"code": 1, "message": "实例不存在或删除失败"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除实例失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"删除实例失败: {str(e)}")
+
 # 服务平台列表API
 @api_router.get("/platforms")
 async def get_platforms():
     """获取所有服务平台"""
     try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
         # 从服务平台管理器获取所有平台
         platforms = await platform_manager.get_all_platforms()
-
-        # 如果没有平台，返回默认平台
-        if not platforms:
-            platforms = [
-                {
-                    "platform_id": "dify_001",
-                    "name": "Dify API",
-                    "type": "dify",
-                    "config": {
-                        "api_key": "dify_api_key_123456",
-                        "api_url": "https://api.dify.ai/v1",
-                        "model": "gpt-3.5-turbo"
-                    },
-                    "status": "active",
-                    "create_time": int(time.time()) - 86400 * 10,
-                    "update_time": int(time.time()) - 3600 * 2
-                },
-                {
-                    "platform_id": "keyword_001",
-                    "name": "关键词匹配",
-                    "type": "keyword",
-                    "config": {
-                        "keywords": ["你好", "hello", "hi"],
-                        "replies": ["你好！", "Hello!", "Hi there!"],
-                        "match_type": "contains",
-                        "random_reply": True,
-                        "min_delay": 1,
-                        "max_delay": 5
-                    },
-                    "status": "active",
-                    "create_time": int(time.time()) - 86400 * 3,
-                    "update_time": int(time.time()) - 3600 * 5
-                }
-            ]
 
         # 处理敏感信息
         for platform in platforms:
@@ -682,50 +850,11 @@ async def get_platforms():
 async def get_rules(instance_id: Optional[str] = None):
     """获取所有消息转发规则"""
     try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
         # 从规则管理器获取所有规则
         rules = await rule_manager.get_all_rules()
-
-        # 如果没有规则，返回默认规则
-        if not rules:
-            # 获取平台列表
-            platforms = await platform_manager.get_all_platforms()
-            platform_ids = [p.get('platform_id') for p in platforms] if platforms else ['dify_001', 'keyword_001']
-
-            # 创建默认规则
-            rules = [
-                {
-                    "rule_id": "rule_001",
-                    "name": "全局规则",
-                    "instance_id": "*",
-                    "chat_type": "group",
-                    "chat_name": "*",
-                    "sender": "*",
-                    "content_pattern": "*",
-                    "platform_id": platform_ids[0] if platform_ids else "dify_001",
-                    "priority": 10,
-                    "status": "active",
-                    "create_time": int(time.time()) - 86400 * 5,
-                    "update_time": int(time.time()) - 3600 * 10
-                }
-            ]
-
-            # 如果有关键词匹配平台，添加关键词匹配规则
-            keyword_platform = next((p for p in platforms if p.get('type') == 'keyword'), None)
-            if keyword_platform:
-                rules.append({
-                    "rule_id": "rule_002",
-                    "name": "关键词匹配规则",
-                    "instance_id": "*",
-                    "chat_type": "*",
-                    "chat_name": "*",
-                    "sender": "*",
-                    "content_pattern": "*",
-                    "platform_id": keyword_platform.get('platform_id'),
-                    "priority": 5,
-                    "status": "active",
-                    "create_time": int(time.time()) - 86400 * 2,
-                    "update_time": int(time.time()) - 3600 * 2
-                })
 
         # 如果指定了实例ID，则过滤规则
         if instance_id:
@@ -739,6 +868,288 @@ async def get_rules(instance_id: Optional[str] = None):
         logger.error(f"获取消息转发规则列表失败: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取消息转发规则列表失败: {str(e)}")
+
+# 添加服务平台API
+@api_router.post("/platforms")
+async def create_platform(request: Request):
+    """创建新的服务平台"""
+    try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
+        data = await request.json()
+
+        # 验证必需字段
+        required_fields = ['name', 'type', 'config']
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"缺少必需字段: {field}")
+
+        # 调用 Python 端的平台管理器
+        platform_id = await platform_manager.register_platform(
+            data['type'],
+            data['name'],
+            data['config'],
+            enabled=data.get('enabled', True)
+        )
+
+        if platform_id:
+            return {"code": 0, "message": "平台创建成功", "data": {"platform_id": platform_id}}
+        else:
+            raise HTTPException(status_code=500, detail="平台创建失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"创建服务平台失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"创建服务平台失败: {str(e)}")
+
+# 更新服务平台API
+@api_router.put("/platforms/{platform_id}")
+async def update_platform(platform_id: str, request: Request):
+    """更新服务平台"""
+    try:
+        data = await request.json()
+
+        # 验证必需字段
+        required_fields = ['name', 'config']
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"缺少必需字段: {field}")
+
+        # 处理启用状态
+        enabled = data.get('enabled', True)
+
+        # 调用 Python 端的平台管理器
+        success = await platform_manager.update_platform_simple(
+            platform_id,
+            data['name'],
+            data['config']
+        )
+
+        # 如果更新成功，再更新启用状态
+        if success and 'enabled' in data:
+            await platform_manager.set_platform_enabled(platform_id, enabled)
+
+        if success:
+            return {"code": 0, "message": "平台更新成功"}
+        else:
+            raise HTTPException(status_code=404, detail="平台不存在或更新失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新服务平台失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"更新服务平台失败: {str(e)}")
+
+# 删除服务平台API
+@api_router.delete("/platforms/{platform_id}")
+async def delete_platform(platform_id: str):
+    """删除服务平台"""
+    try:
+        # 调用 Python 端的平台管理器
+        success = await platform_manager.delete_platform(platform_id)
+
+        if success:
+            return {"code": 0, "message": "平台删除成功"}
+        else:
+            raise HTTPException(status_code=404, detail="平台不存在或删除失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除服务平台失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"删除服务平台失败: {str(e)}")
+
+# 测试服务平台连接API
+@api_router.post("/platforms/{platform_id}/test")
+async def test_platform_connection(platform_id: str):
+    """测试服务平台连接"""
+    try:
+        # 获取平台实例
+        platform = await platform_manager.get_platform(platform_id)
+        if not platform:
+            raise HTTPException(status_code=404, detail="平台不存在")
+
+        # 调用平台的测试连接方法
+        result = await platform.test_connection()
+
+        return {"code": 0, "message": "测试完成", "data": result}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"测试平台连接失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"测试平台连接失败: {str(e)}")
+
+# 添加消息转发规则API
+@api_router.post("/rules")
+async def create_rule(request: Request):
+    """创建新的消息转发规则"""
+    try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
+        data = await request.json()
+
+        # 验证必需字段
+        required_fields = ['name', 'instance_id', 'chat_pattern', 'platform_id']
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"缺少必需字段: {field}")
+
+        # 调用 Python 端的规则管理器
+        rule_id = await rule_manager.add_rule(
+            name=data['name'],
+            instance_id=data['instance_id'],
+            chat_pattern=data['chat_pattern'],
+            platform_id=data['platform_id'],
+            priority=data.get('priority', 0),
+            only_at_messages=data.get('only_at_messages', 0),
+            at_name=data.get('at_name', ''),
+            reply_at_sender=data.get('reply_at_sender', 0)
+        )
+
+        if rule_id:
+            return {"code": 0, "message": "规则创建成功", "data": {"rule_id": rule_id}}
+        else:
+            raise HTTPException(status_code=500, detail="规则创建失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"创建消息转发规则失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"创建消息转发规则失败: {str(e)}")
+
+# 更新消息转发规则API
+@api_router.put("/rules/{rule_id}")
+async def update_rule(rule_id: str, request: Request):
+    """更新消息转发规则"""
+    try:
+        data = await request.json()
+
+        # 验证必需字段
+        required_fields = ['name', 'instance_id', 'chat_pattern', 'platform_id']
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"缺少必需字段: {field}")
+
+        # 调用 Python 端的规则管理器
+        success = await rule_manager.update_rule(
+            rule_id=rule_id,
+            name=data['name'],
+            instance_id=data['instance_id'],
+            chat_pattern=data['chat_pattern'],
+            platform_id=data['platform_id'],
+            priority=data.get('priority', 0),
+            only_at_messages=data.get('only_at_messages', 0),
+            at_name=data.get('at_name', ''),
+            reply_at_sender=data.get('reply_at_sender', 0)
+        )
+
+        if success:
+            return {"code": 0, "message": "规则更新成功"}
+        else:
+            raise HTTPException(status_code=404, detail="规则不存在或更新失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新消息转发规则失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"更新消息转发规则失败: {str(e)}")
+
+# 删除消息转发规则API
+@api_router.delete("/rules/{rule_id}")
+async def delete_rule(rule_id: str):
+    """删除消息转发规则"""
+    try:
+        # 调用 Python 端的规则管理器
+        success = await rule_manager.delete_rule(rule_id)
+
+        if success:
+            return {"code": 0, "message": "规则删除成功"}
+        else:
+            raise HTTPException(status_code=404, detail="规则不存在或删除失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除消息转发规则失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"删除消息转发规则失败: {str(e)}")
+
+# 添加监听对象API
+@api_router.post("/listeners")
+async def add_listener(request: Request):
+    """添加监听对象"""
+    try:
+        data = await request.json()
+
+        # 验证必需字段
+        required_fields = ['instance_id', 'chat_name']
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"缺少必需字段: {field}")
+
+        # 调用 Python 端的消息监听器
+        success = await message_listener.add_listener(
+            instance_id=data['instance_id'],
+            who=data['chat_name'],
+            conversation_id="",  # 初始时会话ID为空
+            save_pic=True,
+            save_file=True,
+            save_voice=True,
+            parse_url=True
+        )
+
+        if success:
+            return {"code": 0, "message": "监听对象添加成功"}
+        else:
+            raise HTTPException(status_code=500, detail="监听对象添加失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"添加监听对象失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"添加监听对象失败: {str(e)}")
+
+# 删除监听对象API
+@api_router.delete("/listeners")
+async def remove_listener(request: Request):
+    """删除监听对象"""
+    try:
+        data = await request.json()
+
+        # 验证必需字段
+        required_fields = ['instance_id', 'chat_name']
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"缺少必需字段: {field}")
+
+        # 调用 Python 端的消息监听器
+        success = await message_listener.remove_listener(
+            instance_id=data['instance_id'],
+            who=data['chat_name']
+        )
+
+        if success:
+            return {"code": 0, "message": "监听对象删除成功"}
+        else:
+            raise HTTPException(status_code=404, detail="监听对象不存在或删除失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除监听对象失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"删除监听对象失败: {str(e)}")
 
 # 监听对象列表API
 @api_router.get("/listeners")
@@ -777,87 +1188,10 @@ async def get_listeners(instance_id: Optional[str] = None, since: Optional[int] 
         except Exception as e:
             logger.warning(f"从数据库获取监听对象失败: {e}")
 
-        # 如果没有监听对象，尝试从消息监听器获取
-        if not listeners:
-            try:
-                # 尝试获取所有监听对象
-                if hasattr(message_listener, 'get_all_listeners'):
-                    logger.debug("使用 message_listener.get_all_listeners() 获取监听对象")
-                    listeners = message_listener.get_all_listeners()
-                elif hasattr(message_listener, 'listeners'):
-                    # 如果有listeners属性，直接使用
-                    logger.debug("使用 message_listener.listeners 属性获取监听对象")
-                    listeners = [
-                        {
-                            "listener_id": f"listener_{i+1:03d}",
-                            "instance_id": listener.get('instance_id', instance_id or 'inst_001'),
-                            "chat_type": listener.get('chat_type', 'group'),
-                            "chat_name": listener.get('chat_name', f'聊天{i+1}'),
-                            "status": listener.get('status', 'active'),
-                            "create_time": listener.get('create_time', int(time.time()) - 86400),
-                            "update_time": int(time.time()),  # 使用当前时间作为更新时间
-                            "last_message_time": listener.get('last_message_time', 0)
-                        }
-                        for i, listener in enumerate(message_listener.listeners)
-                    ]
-                elif hasattr(message_listener, 'get_listeners_by_instance') and instance_id:
-                    # 如果有get_listeners_by_instance方法，使用它
-                    logger.debug(f"使用 message_listener.get_listeners_by_instance({instance_id}) 获取监听对象")
-                    instance_listeners = message_listener.get_listeners_by_instance(instance_id)
-                    listeners = [
-                        {
-                            "listener_id": f"listener_{i+1:03d}",
-                            "instance_id": instance_id,
-                            "chat_type": listener.get('chat_type', 'group'),
-                            "chat_name": listener.get('chat_name', f'聊天{i+1}'),
-                            "status": listener.get('status', 'active'),
-                            "create_time": listener.get('create_time', int(time.time()) - 86400),
-                            "update_time": int(time.time()),  # 使用当前时间作为更新时间
-                            "last_message_time": listener.get('last_message_time', 0)
-                        }
-                        for i, listener in enumerate(instance_listeners)
-                    ]
-
-                logger.debug(f"从消息监听器获取到 {len(listeners)} 个监听对象")
-            except Exception as e:
-                logger.warning(f"从消息监听器获取监听对象失败: {e}")
-
-        # 如果仍然没有监听对象，尝试从API获取
-        if not listeners and instance_id:
-            try:
-                logger.debug(f"尝试从API获取实例 {instance_id} 的聊天对象")
-                api_client = instance_manager.get_instance(instance_id)
-                if api_client and hasattr(api_client, 'get_chats'):
-                    chats = await api_client.get_chats()
-                    if chats:
-                        # 将API返回的聊天对象转换为监听对象
-                        listeners = []
-                        for i, chat in enumerate(chats):
-                            chat_type = chat.get('type', 'unknown')
-                            chat_name = chat.get('name', f'聊天{i+1}')
-                            listeners.append({
-                                "listener_id": f"listener_{i+1:03d}",
-                                "instance_id": instance_id,
-                                "chat_type": chat_type,
-                                "chat_name": chat_name,
-                                "status": "inactive",  # 默认为未激活
-                                "create_time": int(time.time()),
-                                "update_time": int(time.time()),
-                                "last_message_time": 0
-                            })
-                        logger.debug(f"从API获取到 {len(listeners)} 个聊天对象")
-            except Exception as e:
-                logger.warning(f"从API获取聊天对象失败: {e}")
-
         # 如果指定了实例ID，则过滤监听对象
         if instance_id and listeners:
             listeners = [listener for listener in listeners if listener.get('instance_id') == instance_id]
             logger.debug(f"过滤后剩余 {len(listeners)} 个监听对象")
-
-        # 如果没有监听对象，返回空列表而不是默认监听对象
-        if not listeners:
-            logger.debug("没有找到监听对象，返回空列表")
-            listeners = []
 
         # 添加额外信息
         for listener in listeners:
@@ -934,24 +1268,6 @@ async def get_messages(
         # 执行查询
         messages = await db_manager.fetchall(query, tuple(params))
         logger.debug(f"查询到 {len(messages)} 条消息")
-
-        # 如果没有消息，返回模拟数据
-        if not messages:
-            logger.debug("没有查询到消息，返回模拟数据")
-            # 创建模拟消息
-            current_time = int(time.time())
-            messages = []
-            for i in range(min(10, limit)):  # 最多10条模拟消息
-                messages.append({
-                    "message_id": f"msg_{i}",
-                    "instance_id": instance_id or "inst_001",
-                    "chat_name": chat_name or "示例群组",
-                    "sender": f"用户{chr(65 + i % 26)}",
-                    "content": f"这是一条示例消息 {i+1}",
-                    "create_time": current_time - i * 3600,
-                    "delivery_status": i % 3,
-                    "message_type": "text"
-                })
 
         return messages
     except Exception as e:
@@ -1044,43 +1360,6 @@ async def get_logs(limit: int = 50, since: Optional[int] = None):
                     logger.debug(f"成功解析了 {len(logs)} 条日志")
         except Exception as e:
             logger.warning(f"从日志文件读取日志失败: {e}")
-
-        # 如果没有从文件读取到日志，返回模拟数据
-        if not logs:
-            logger.debug("没有读取到日志，返回模拟数据")
-            # 模拟日志数据
-            log_levels = ["INFO", "WARNING", "ERROR"]
-            log_messages = [
-                "系统启动",
-                "连接到数据库",
-                "初始化服务平台",
-                "加载消息转发规则",
-                "启动消息监听",
-                "接收到新消息",
-                "处理消息",
-                "转发消息",
-                "消息处理完成",
-                "数据库查询执行",
-                "API请求处理",
-                "用户登录",
-                "用户操作",
-                "配置更新",
-                "系统状态检查"
-            ]
-
-            current_time = int(time.time())
-            logs = []
-            for i in range(limit):
-                log_time = current_time - i * 60
-                # 如果提供了since参数，则过滤早于since的日志
-                if since and log_time <= since:
-                    continue
-
-                logs.append({
-                    "timestamp": log_time,
-                    "level": log_levels[i % len(log_levels)],
-                    "message": f"{log_messages[i % len(log_messages)]} - {i}"
-                })
 
         # 按时间戳降序排序
         logs.sort(key=lambda x: x.get('timestamp', 0), reverse=True)

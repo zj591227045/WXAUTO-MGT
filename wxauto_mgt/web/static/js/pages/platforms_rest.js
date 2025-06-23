@@ -5,16 +5,24 @@ async function showAddRuleModal() {
     // 重置表单
     document.getElementById('ruleForm').reset();
     document.getElementById('rule-id').value = '';
-    
+
+    // 重置@消息相关字段
+    document.getElementById('rule-only-at-messages').checked = false;
+    document.getElementById('rule-at-name').value = '';
+    document.getElementById('rule-reply-at-sender').checked = false;
+
+    // 隐藏@名称输入框
+    document.getElementById('at-name-container').style.display = 'none';
+
     // 设置标题
     document.getElementById('ruleModalTitle').textContent = '添加消息转发规则';
-    
+
     // 重置当前编辑的规则ID
     currentRuleId = null;
-    
+
     // 加载平台选项
     await loadPlatformOptions();
-    
+
     // 显示模态框
     const modal = new bootstrap.Modal(document.getElementById('ruleModal'));
     modal.show();
@@ -42,6 +50,20 @@ async function showEditRuleModal(ruleId) {
         document.getElementById('rule-chat').value = rule.chat_pattern;
         document.getElementById('rule-priority').value = rule.priority;
         document.getElementById('rule-enabled').checked = rule.enabled === 1;
+
+        // 填充@消息相关字段
+        const onlyAtMessages = rule.only_at_messages === 1;
+        document.getElementById('rule-only-at-messages').checked = onlyAtMessages;
+        document.getElementById('rule-at-name').value = rule.at_name || '';
+        document.getElementById('rule-reply-at-sender').checked = rule.reply_at_sender === 1;
+
+        // 控制@名称输入框的显示
+        const atNameContainer = document.getElementById('at-name-container');
+        if (onlyAtMessages) {
+            atNameContainer.style.display = 'block';
+        } else {
+            atNameContainer.style.display = 'none';
+        }
         
         // 加载平台选项
         await loadPlatformOptions();
@@ -104,6 +126,11 @@ async function saveRule() {
     const platformId = document.getElementById('rule-platform').value;
     const priority = document.getElementById('rule-priority').value;
     const enabled = document.getElementById('rule-enabled').checked;
+
+    // 获取@消息相关字段
+    const onlyAtMessages = document.getElementById('rule-only-at-messages').checked;
+    const atName = document.getElementById('rule-at-name').value.trim();
+    const replyAtSender = document.getElementById('rule-reply-at-sender').checked;
     
     // 验证表单
     if (!name || !instanceId || !chatPattern || !platformId || !priority) {
@@ -119,7 +146,10 @@ async function saveRule() {
             chat_pattern: chatPattern,
             platform_id: platformId,
             priority: parseInt(priority),
-            enabled: enabled ? 1 : 0
+            enabled: enabled ? 1 : 0,
+            only_at_messages: onlyAtMessages ? 1 : 0,
+            at_name: atName,
+            reply_at_sender: replyAtSender ? 1 : 0
         };
         
         // 发送请求
@@ -244,10 +274,18 @@ async function testPlatform(platformId) {
         const response = await fetchAPI(`/api/platforms/${platformId}/test`, {
             method: 'POST'
         });
-        
+
         // 显示测试结果
-        if (response.success) {
-            showNotification(`平台测试成功: ${response.message}`, 'success');
+        // API返回格式: {"code": 0, "message": "测试完成", "data": result}
+        if (response.code === 0) {
+            // 检查测试结果
+            const testResult = response.data;
+            if (testResult && !testResult.error) {
+                showNotification(`平台测试成功: ${testResult.message || '连接正常'}`, 'success');
+            } else {
+                const errorMsg = testResult ? testResult.error : '测试失败';
+                showNotification(`平台测试失败: ${errorMsg}`, 'warning');
+            }
         } else {
             showNotification(`平台测试失败: ${response.message}`, 'warning');
         }
