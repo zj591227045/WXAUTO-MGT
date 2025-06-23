@@ -245,10 +245,17 @@ class DBManager:
             last_message_time INTEGER,
             create_time INTEGER NOT NULL,
             conversation_id TEXT,
+            manual_added INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'active',
             UNIQUE(instance_id, who)
         )
         """)
         logger.debug("创建listeners表")
+
+        # 创建listeners表索引
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_listeners_status ON listeners(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_listeners_manual_added ON listeners(manual_added)")
+        logger.debug("创建listeners表索引")
 
         # 消息表
         conn.execute("""
@@ -347,6 +354,35 @@ class DBManager:
         END
         """)
         logger.debug("创建消息过滤触发器完成")
+
+        # 升级现有表结构
+        await self._upgrade_table_structure(conn)
+
+    async def _upgrade_table_structure(self, conn):
+        """升级现有表结构，添加缺失的字段"""
+        try:
+            # 检查listeners表是否需要升级
+            cursor = conn.execute("PRAGMA table_info(listeners)")
+            columns = cursor.fetchall()
+            column_names = [col[1] for col in columns]
+
+            # 检查并添加manual_added字段
+            if 'manual_added' not in column_names:
+                logger.info("添加manual_added字段到listeners表")
+                conn.execute("ALTER TABLE listeners ADD COLUMN manual_added INTEGER DEFAULT 0")
+                conn.execute("UPDATE listeners SET manual_added = 0 WHERE manual_added IS NULL")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_listeners_manual_added ON listeners(manual_added)")
+
+            # 检查并添加status字段
+            if 'status' not in column_names:
+                logger.info("添加status字段到listeners表")
+                conn.execute("ALTER TABLE listeners ADD COLUMN status TEXT DEFAULT 'active'")
+                conn.execute("UPDATE listeners SET status = 'active' WHERE status IS NULL")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_listeners_status ON listeners(status)")
+
+            logger.debug("表结构升级完成")
+        except Exception as e:
+            logger.error(f"升级表结构时出错: {e}")
 
     async def execute(self, sql: str, params: tuple = None) -> None:
         """

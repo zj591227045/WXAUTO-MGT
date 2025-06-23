@@ -1097,11 +1097,12 @@ async def add_listener(request: Request):
             if field not in data:
                 raise HTTPException(status_code=400, detail=f"缺少必需字段: {field}")
 
-        # 调用 Python 端的消息监听器
+        # 调用 Python 端的消息监听器（标记为手动添加，不受超时限制）
         success = await message_listener.add_listener(
             instance_id=data['instance_id'],
             who=data['chat_name'],
             conversation_id="",  # 初始时会话ID为空
+            manual_added=True,  # 手动添加的监听对象不受超时限制
             save_pic=True,
             save_file=True,
             save_voice=True,
@@ -1193,13 +1194,21 @@ async def get_listeners(instance_id: Optional[str] = None, since: Optional[int] 
             listeners = [listener for listener in listeners if listener.get('instance_id') == instance_id]
             logger.debug(f"过滤后剩余 {len(listeners)} 个监听对象")
 
-        # 添加额外信息
+        # 添加额外信息并统一字段名
         for listener in listeners:
+            # 统一字段名：将 'who' 字段映射为 'chat_name'
+            if 'who' in listener:
+                listener['chat_name'] = listener['who']
+
+            # 设置状态信息
+            status = listener.get('status', 'active')
+            listener['status'] = status
+
             # 获取最后一条消息时间
             try:
                 # 始终尝试获取最新的消息时间
                 listener_instance_id = listener.get('instance_id')
-                chat_name = listener.get('chat_name')
+                chat_name = listener.get('chat_name') or listener.get('who')
 
                 # 查询最后一条消息
                 query = """

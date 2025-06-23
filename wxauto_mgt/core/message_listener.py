@@ -38,6 +38,7 @@ class ListenerInfo:
     processed_at_startup: bool = False  # 是否在启动时处理过
     reset_attempts: int = 0  # 重置尝试次数
     conversation_id: str = ""  # Dify会话ID
+    manual_added: bool = False  # 是否为手动添加的监听对象（不受超时限制）
 
 class MessageListener:
     def __init__(
@@ -586,7 +587,7 @@ class MessageListener:
                 logger.error(f"检查监听对象是否存在时出错: {e}")
                 return False
 
-    async def add_listener(self, instance_id: str, who: str, conversation_id: str = "", **kwargs) -> bool:
+    async def add_listener(self, instance_id: str, who: str, conversation_id: str = "", manual_added: bool = False, **kwargs) -> bool:
         """
         添加监听对象
 
@@ -594,6 +595,7 @@ class MessageListener:
             instance_id: 实例ID
             who: 监听对象的标识
             conversation_id: Dify会话ID，默认为空字符串
+            manual_added: 是否为手动添加的监听对象（不受超时限制）
             **kwargs: 其他参数
 
         Returns:
@@ -609,11 +611,16 @@ class MessageListener:
                 self.listeners[instance_id][who].last_message_time = time.time()
                 self.listeners[instance_id][who].active = True
 
+                # 更新手动添加标识
+                if manual_added:
+                    self.listeners[instance_id][who].manual_added = True
+                    logger.info(f"监听对象 {who} 已标记为手动添加（不受超时限制）")
+
                 # 如果提供了新的会话ID，更新会话ID
                 if conversation_id:
                     self.listeners[instance_id][who].conversation_id = conversation_id
                     # 更新数据库中的会话ID
-                    await self._save_listener(instance_id, who, conversation_id)
+                    await self._save_listener(instance_id, who, conversation_id, manual_added)
                     logger.debug(f"更新监听对象会话ID: {instance_id} - {who} - {conversation_id}")
 
                 return True
@@ -649,13 +656,18 @@ class MessageListener:
                 who=who,
                 last_message_time=time.time(),
                 last_check_time=time.time(),
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
+                manual_added=manual_added
             )
 
             # 添加到数据库
-            await self._save_listener(instance_id, who, conversation_id)
+            await self._save_listener(instance_id, who, conversation_id, manual_added)
 
-            logger.info(f"成功添加实例 {instance_id} 的监听对象: {who}")
+            if manual_added:
+                logger.info(f"成功添加手动监听对象（不受超时限制）: {instance_id} - {who}")
+            else:
+                logger.info(f"成功添加实例 {instance_id} 的监听对象: {who}")
+
             if conversation_id:
                 logger.debug(f"监听对象已设置会话ID: {instance_id} - {who} - {conversation_id}")
 
@@ -736,12 +748,17 @@ class MessageListener:
         async with self._lock:
             for instance_id in list(self.listeners.keys()):
                 for who, info in list(self.listeners[instance_id].items()):
+                    # 检查是否为手动添加的监听对象（不受超时限制）
+                    if getattr(info, 'manual_added', False):
+                        logger.debug(f"跳过手动添加的监听对象（不受超时限制）: {instance_id} - {who}")
+                        continue
+
                     # 检查是否超时
                     if current_time - info.last_message_time > timeout:
-                        # 如果已经标记为不活跃，直接准备移除
+                        # 如果已经标记为不活跃，跳过
                         if not info.active:
                             logger.debug(f"监听对象已标记为不活跃: {instance_id} - {who}")
-                            pending_check.append((instance_id, who, False))  # 不需要再次检查
+                            continue
                         else:
                             # 标记为需要检查
                             logger.debug(f"监听对象可能超时，将检查最新消息: {instance_id} - {who}")
@@ -876,19 +893,19 @@ class MessageListener:
 
                         continue  # 跳过移除步骤
 
-                # 执行移除操作并检查结果
-                success = await self.remove_listener(instance_id, who)
+                # 执行状态更新操作（标记为非活跃）
+                success = await self._mark_listener_inactive(instance_id, who)
                 if success:
                     removed_count += 1
-                    logger.info(f"已移除超时的监听对象: {instance_id} - {who}")
+                    logger.info(f"已标记超时的监听对象为非活跃: {instance_id} - {who}")
                 else:
-                    logger.error(f"移除超时监听对象失败: {instance_id} - {who}")
+                    logger.error(f"标记超时监听对象为非活跃失败: {instance_id} - {who}")
             except Exception as e:
                 logger.error(f"处理超时监听对象时出错: {e}")
                 logger.exception(e)
 
         if removed_count > 0:
-            logger.info(f"已清理 {removed_count} 个不活跃的监听对象")
+            logger.info(f"已标记 {removed_count} 个监听对象为非活跃")
 
         return removed_count
 
@@ -1033,7 +1050,7 @@ class MessageListener:
             logger.error(f"保存消息到数据库失败: {e}")
             return ""
 
-    async def _save_listener(self, instance_id: str, who: str, conversation_id: str = "") -> bool:
+    async def _save_listener(self, instance_id: str, who: str, conversation_id: str = "", manual_added: bool = False) -> bool:
         """
         保存监听对象到数据库
 
@@ -1041,6 +1058,7 @@ class MessageListener:
             instance_id: 实例ID
             who: 监听对象的标识
             conversation_id: Dify会话ID，默认为空字符串
+            manual_added: 是否为手动添加的监听对象
 
         Returns:
             bool: 是否保存成功
@@ -1051,7 +1069,9 @@ class MessageListener:
                 'instance_id': instance_id,
                 'who': who,
                 'last_message_time': current_time,
-                'create_time': current_time
+                'create_time': current_time,
+                'manual_added': 1 if manual_added else 0,
+                'status': 'active'  # 新添加的监听对象默认为活跃状态
             }
 
             # 如果提供了会话ID，添加到数据中
@@ -1059,21 +1079,24 @@ class MessageListener:
                 data['conversation_id'] = conversation_id
                 logger.debug(f"保存监听对象会话ID: {instance_id} - {who} - {conversation_id}")
 
+            if manual_added:
+                logger.debug(f"保存手动添加的监听对象: {instance_id} - {who}")
+
             # 先检查是否已存在
-            query = "SELECT id, conversation_id FROM listeners WHERE instance_id = ? AND who = ?"
+            query = "SELECT id, conversation_id, manual_added FROM listeners WHERE instance_id = ? AND who = ?"
             exists = await db_manager.fetchone(query, (instance_id, who))
 
             if exists:
                 # 已存在，执行更新操作
                 if conversation_id:
-                    # 如果提供了新的会话ID，更新会话ID
-                    update_query = "UPDATE listeners SET last_message_time = ?, conversation_id = ? WHERE instance_id = ? AND who = ?"
-                    await db_manager.execute(update_query, (current_time, conversation_id, instance_id, who))
+                    # 如果提供了新的会话ID，更新会话ID、手动添加标识和状态
+                    update_query = "UPDATE listeners SET last_message_time = ?, conversation_id = ?, manual_added = ?, status = 'active' WHERE instance_id = ? AND who = ?"
+                    await db_manager.execute(update_query, (current_time, conversation_id, 1 if manual_added else 0, instance_id, who))
                     logger.debug(f"更新监听对象和会话ID: {instance_id} - {who} - {conversation_id}")
                 else:
-                    # 如果没有提供新的会话ID，只更新时间戳
-                    update_query = "UPDATE listeners SET last_message_time = ? WHERE instance_id = ? AND who = ?"
-                    await db_manager.execute(update_query, (current_time, instance_id, who))
+                    # 如果没有提供新的会话ID，只更新时间戳、手动添加标识和状态
+                    update_query = "UPDATE listeners SET last_message_time = ?, manual_added = ?, status = 'active' WHERE instance_id = ? AND who = ?"
+                    await db_manager.execute(update_query, (current_time, 1 if manual_added else 0, instance_id, who))
                     logger.debug(f"更新监听对象: {instance_id} - {who}")
             else:
                 # 不存在，插入新记录
@@ -1152,8 +1175,8 @@ class MessageListener:
         try:
             logger.info("从数据库加载监听对象")
 
-            # 查询所有监听对象，包括会话ID
-            query = "SELECT instance_id, who, last_message_time, conversation_id FROM listeners"
+            # 查询所有监听对象，包括会话ID、手动添加标识和状态
+            query = "SELECT instance_id, who, last_message_time, conversation_id, manual_added, status FROM listeners"
             listeners = await db_manager.fetchall(query)
 
             if not listeners:
@@ -1167,6 +1190,8 @@ class MessageListener:
                     who = listener.get('who')
                     last_message_time = listener.get('last_message_time', time.time())
                     conversation_id = listener.get('conversation_id', '')
+                    manual_added = bool(listener.get('manual_added', 0))
+                    status = listener.get('status', 'active')  # 默认为活跃状态
 
                     # 跳过无效记录
                     if not instance_id or not who:
@@ -1177,17 +1202,25 @@ class MessageListener:
                         self.listeners[instance_id] = {}
 
                     # 添加监听对象
-                    self.listeners[instance_id][who] = ListenerInfo(
+                    listener_info = ListenerInfo(
                         instance_id=instance_id,
                         who=who,
                         last_message_time=float(last_message_time),
                         last_check_time=time.time(),
-                        conversation_id=conversation_id
+                        conversation_id=conversation_id,
+                        manual_added=manual_added
                     )
+                    # 设置活跃状态
+                    listener_info.active = (status == 'active')
+                    self.listeners[instance_id][who] = listener_info
 
                     # 记录会话ID信息
                     if conversation_id:
                         logger.debug(f"加载监听对象会话ID: {instance_id} - {who} - {conversation_id}")
+
+                    # 记录手动添加信息
+                    if manual_added:
+                        logger.info(f"加载手动添加的监听对象（不受超时限制）: {instance_id} - {who}")
 
             # 计算加载的监听对象数量
             total = sum(len(listeners) for listeners in self.listeners.values())
@@ -1639,6 +1672,44 @@ class MessageListener:
                 logger.exception(e)
 
         logger.info("启动时监听对象处理完成")
+
+    async def _mark_listener_inactive(self, instance_id: str, who: str) -> bool:
+        """
+        标记监听对象为非活跃状态（而不是删除）
+
+        Args:
+            instance_id: 实例ID
+            who: 监听对象的标识
+
+        Returns:
+            bool: 是否标记成功
+        """
+        try:
+            # 更新内存中的状态
+            async with self._lock:
+                if instance_id in self.listeners and who in self.listeners[instance_id]:
+                    self.listeners[instance_id][who].active = False
+                    logger.debug(f"内存中标记监听对象为非活跃: {instance_id} - {who}")
+
+            # 更新数据库中的状态
+            update_sql = "UPDATE listeners SET status = 'inactive' WHERE instance_id = ? AND who = ?"
+            await db_manager.execute(update_sql, (instance_id, who))
+
+            # 验证更新是否成功
+            verify_sql = "SELECT status FROM listeners WHERE instance_id = ? AND who = ?"
+            verify_result = await db_manager.fetchone(verify_sql, (instance_id, who))
+
+            if verify_result and verify_result.get('status') == 'inactive':
+                logger.debug(f"数据库中标记监听对象为非活跃成功: {instance_id} - {who}")
+                return True
+            else:
+                logger.warning(f"数据库中标记监听对象为非活跃可能失败: {instance_id} - {who}, 验证结果: {verify_result}")
+                return False
+
+        except Exception as e:
+            logger.error(f"标记监听对象为非活跃失败: {e}")
+            logger.exception(e)
+            return False
 
 # 创建全局实例
 message_listener = MessageListener()
