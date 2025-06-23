@@ -79,6 +79,89 @@ async def test_api():
     await initialize_managers()
     return {"status": "ok", "message": "API测试成功"}
 
+# 实例状态API
+@api_router.get("/instances/{instance_id}/status")
+async def get_instance_status(instance_id: str):
+    """
+    获取实例状态和uptime信息
+
+    Args:
+        instance_id: 实例ID
+    """
+    try:
+        # 记录API调用
+        logger.debug(f"获取实例状态 API 被调用，参数：instance_id={instance_id}")
+
+        # 从数据库获取实例信息
+        query = "SELECT * FROM instances WHERE instance_id = ?"
+        instance = await db_manager.fetchone(query, (instance_id,))
+
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"实例 {instance_id} 不存在")
+
+        # 获取实例的API URL和API KEY
+        base_url = instance.get('base_url')
+        api_key = instance.get('api_key')
+
+        if not base_url or not api_key:
+            raise HTTPException(status_code=400, detail=f"实例 {instance_id} 缺少API URL或API KEY")
+
+        # 构建实例health API URL
+        import requests
+        if not base_url.endswith('/'):
+            base_url += '/'
+
+        status_url = f"{base_url}api/health"
+        headers = {
+            'X-API-Key': api_key,
+            'Content-Type': 'application/json'
+        }
+
+        # 获取状态信息
+        logger.debug(f"向实例 {instance_id} 发送状态请求: {status_url}")
+        response = requests.get(status_url, headers=headers, timeout=5)
+
+        # 检查响应状态
+        if response.status_code != 200:
+            logger.warning(f"实例 {instance_id} 状态请求失败，状态码: {response.status_code}")
+            return {
+                "code": 1,
+                "message": "实例离线或无法访问",
+                "data": {
+                    "status": "offline",
+                    "uptime": 0,
+                    "wechat_status": "disconnected"
+                }
+            }
+
+        # 解析响应
+        result = response.json()
+        logger.debug(f"实例 {instance_id} 状态响应: {result}")
+
+        # 如果响应中已经包含code字段，直接返回
+        if 'code' in result:
+            return result
+
+        # 否则包装响应数据
+        return {
+            "code": 0,
+            "message": "获取成功",
+            "data": result
+        }
+
+    except Exception as e:
+        logger.warning(f"获取实例 {instance_id} 状态失败: {e}")
+        logger.warning(traceback.format_exc())
+        return {
+            "code": 1,
+            "message": f"获取状态失败: {str(e)}",
+            "data": {
+                "status": "error",
+                "uptime": 0,
+                "wechat_status": "disconnected"
+            }
+        }
+
 # 系统资源API
 @api_router.get("/system/resources")
 async def get_system_resources(instance_id: Optional[str] = None):
@@ -602,51 +685,11 @@ async def get_instances():
                     logger.warning(f"获取实例 {instance_id} 监听对象数量失败: {e}")
                     listeners_count = 0
 
-                # 获取实例运行时间和资源信息
-                try:
-                    # 获取实例的API URL和API KEY
-                    base_url = instance.get('base_url')
-                    api_key = instance.get('api_key')
-
-                    if not base_url or not api_key:
-                        logger.warning(f"实例 {instance_id} 缺少API URL或API KEY")
-                        runtime = '未知'
-                        cpu_percent = 0
-                        memory_used = 0
-                        memory_total = 0
-                        memory_percent = 0
-                        instance['status'] = 'OFFLINE'
-                    else:
-                        # 使用缓存的状态获取函数
-                        status_data = await get_instance_status_cached(instance_id, base_url, api_key)
-
-                        runtime = status_data['runtime']
-                        cpu_percent = status_data['cpu_percent']
-                        memory_used = status_data['memory_used']
-                        memory_total = status_data['memory_total']
-                        memory_percent = status_data['memory_percent']
-                        instance['status'] = status_data['status']
-                except Exception as e:
-                    logger.warning(f"获取实例 {instance_id} 资源信息失败: {e}")
-                    logger.warning(traceback.format_exc())
-                    runtime = '未知'
-                    cpu_percent = 0
-                    memory_used = 0
-                    memory_total = 0
-                    memory_percent = 0
-
-                # 资源信息已经在上面获取，这里不需要重复获取
-
-                # 构建实例信息
+                # 构建实例信息（不包含资源信息，资源信息通过专门的API获取）
                 result.append({
                     **instance,
                     "messages_count": messages_count,
-                    "listeners_count": listeners_count,
-                    "runtime": runtime,
-                    "cpu_percent": cpu_percent,
-                    "memory_used": memory_used,
-                    "memory_total": memory_total,
-                    "memory_percent": memory_percent
+                    "listeners_count": listeners_count
                 })
         except Exception as e:
             logger.warning(f"从数据库获取实例列表失败: {e}")

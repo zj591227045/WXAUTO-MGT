@@ -3,84 +3,162 @@
 {% block head %}
 <style>
     .instance-card {
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        margin-bottom: 20px;
-        transition: transform 0.3s;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        margin-bottom: 16px;
+        transition: all 0.3s ease;
+        border: 1px solid #e9ecef;
+        overflow: hidden;
     }
     .instance-card:hover {
-        transform: translateY(-5px);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
     }
     .instance-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 15px;
-        border-bottom: 1px solid #eee;
+        padding: 12px 16px;
+        border-bottom: 1px solid #f1f3f4;
+        background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
     }
     .instance-title {
-        font-size: 1.2rem;
-        font-weight: bold;
+        font-size: 1.1rem;
+        font-weight: 600;
         margin: 0;
+        color: #2c3e50;
     }
     .instance-status {
-        padding: 5px 10px;
-        border-radius: 20px;
-        font-size: 0.8rem;
-        font-weight: bold;
+        padding: 4px 12px;
+        border-radius: 16px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
     }
     .status-online {
-        background-color: #d4edda;
+        background: linear-gradient(135deg, #d4edda, #c3e6cb);
         color: #155724;
+        box-shadow: 0 2px 4px rgba(21, 87, 36, 0.2);
     }
     .status-offline {
-        background-color: #f8f9fa;
+        background: linear-gradient(135deg, #f8f9fa, #e9ecef);
         color: #6c757d;
+        box-shadow: 0 2px 4px rgba(108, 117, 125, 0.2);
     }
     .status-error {
-        background-color: #f8d7da;
+        background: linear-gradient(135deg, #f8d7da, #f5c6cb);
         color: #721c24;
+        box-shadow: 0 2px 4px rgba(114, 28, 36, 0.2);
     }
     .status-disabled {
-        background-color: #e2e3e5;
+        background: linear-gradient(135deg, #e2e3e5, #d6d8db);
         color: #383d41;
+        box-shadow: 0 2px 4px rgba(56, 61, 65, 0.2);
     }
     .metric-container {
-        display: flex;
-        flex-wrap: wrap;
-        padding: 15px;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        padding: 12px 16px;
+        background-color: #fafbfc;
     }
     .metric-box {
-        flex: 1 0 30%;
-        margin: 5px;
-        padding: 10px;
-        background-color: #f8f9fa;
-        border-radius: 5px;
+        padding: 8px 12px;
+        background: linear-gradient(135deg, #ffffff, #f8f9fa);
+        border-radius: 8px;
         text-align: center;
+        border: 1px solid #e9ecef;
+        transition: all 0.2s ease;
+    }
+    .metric-box:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     }
     .metric-value {
-        font-size: 1.5rem;
-        font-weight: bold;
-        color: #007bff;
+        font-size: 1.2rem;
+        font-weight: 700;
+        color: #2c3e50;
+        margin-bottom: 2px;
+        line-height: 1.2;
     }
     .metric-label {
+        font-size: 0.7rem;
+        color: #6c757d;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .instance-info {
+        padding: 8px 16px;
+        background-color: #f8f9fa;
+        border-top: 1px solid #e9ecef;
         font-size: 0.8rem;
+    }
+    .instance-info p {
+        margin: 2px 0;
         color: #6c757d;
     }
+    .instance-info strong {
+        color: #495057;
+        font-weight: 600;
+    }
     .instance-actions {
-        padding: 15px;
-        border-top: 1px solid #eee;
+        padding: 10px 16px;
+        border-top: 1px solid #e9ecef;
         display: flex;
         justify-content: flex-end;
+        gap: 6px;
+        background-color: #ffffff;
     }
     .instance-actions .btn {
-        margin-left: 10px;
+        font-size: 0.75rem;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-weight: 500;
     }
     .refresh-btn {
         position: absolute;
         top: 10px;
         right: 10px;
         z-index: 10;
+    }
+
+    /* 响应式设计 */
+    @media (max-width: 768px) {
+        .metric-container {
+            grid-template-columns: 1fr;
+            gap: 6px;
+            padding: 8px 12px;
+        }
+
+        .metric-box {
+            padding: 6px 8px;
+        }
+
+        .metric-value {
+            font-size: 1rem;
+        }
+
+        .metric-label {
+            font-size: 0.65rem;
+        }
+
+        .instance-actions {
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .instance-actions .btn {
+            font-size: 0.7rem;
+            padding: 3px 6px;
+        }
+    }
+
+    @media (min-width: 1200px) {
+        .metric-container {
+            grid-template-columns: repeat(3, 1fr);
+        }
     }
 </style>
 {% endblock %}

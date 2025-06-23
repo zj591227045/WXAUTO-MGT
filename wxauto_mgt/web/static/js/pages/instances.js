@@ -27,12 +27,18 @@ document.addEventListener('DOMContentLoaded', function() {
 /**
  * 初始化实例管理页面
  */
-function initInstancesPage() {
+async function initInstancesPage() {
     // 加载实例列表
-    loadInstances();
+    await loadInstances();
 
-    // 设置轮询刷新实例列表
-    pollingManager.addTask('instances', loadInstances, 30000);
+    // 延迟2秒后刷新所有在线实例的资源信息
+    setTimeout(async () => {
+        console.log('开始自动刷新实例资源信息...');
+        await refreshAllInstanceResources();
+    }, 2000);
+
+    // 注释掉定时刷新，避免覆盖手动刷新的正确信息
+    // pollingManager.addTask('instances', loadInstances, 30000);
 }
 
 /**
@@ -40,24 +46,39 @@ function initInstancesPage() {
  */
 async function refreshAllInstanceResources() {
     try {
+        console.log('开始刷新所有实例资源信息...');
+
         // 获取所有实例卡片
         const instanceCards = document.querySelectorAll('.instance-card');
+        console.log(`找到 ${instanceCards.length} 个实例卡片`);
 
         // 遍历实例卡片
         for (const card of instanceCards) {
             // 获取实例ID
             const instanceId = card.id.replace('instance-card-', '');
+            console.log(`处理实例: ${instanceId}`);
 
             // 获取实例状态
             const statusElement = card.querySelector('.instance-status');
-            if (statusElement && statusElement.classList.contains('status-online')) {
+            const isOnline = statusElement && statusElement.classList.contains('status-online');
+            console.log(`实例 ${instanceId} 在线状态: ${isOnline}`);
+
+            if (isOnline) {
                 // 如果实例在线，刷新资源
+                console.log(`刷新实例 ${instanceId} 的资源信息...`);
                 await refreshInstanceResources(instanceId, true);
 
                 // 添加延迟，避免同时发送太多请求
-                await new Promise(resolve => setTimeout(resolve, 500));
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            } else {
+                // 即使离线也尝试刷新一次，可能状态不准确
+                console.log(`实例 ${instanceId} 显示离线，但仍尝试刷新资源...`);
+                await refreshInstanceResources(instanceId, true);
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
+
+        console.log('所有实例资源信息刷新完成');
     } catch (error) {
         console.error('刷新所有实例资源失败:', error);
     }
@@ -82,6 +103,17 @@ async function loadInstances() {
 
         // 获取实例列表
         const instances = await fetchAPI('/api/instances');
+
+        // 调试信息：打印实例数据
+        console.log('获取到的实例列表:', instances);
+        instances.forEach((instance, index) => {
+            console.log(`实例 ${index + 1}:`, {
+                instance_id: instance.instance_id,
+                name: instance.name,
+                messages_count: instance.messages_count,
+                listeners_count: instance.listeners_count
+            });
+        });
 
         // 清空容器
         instancesContainer.innerHTML = '';
@@ -121,7 +153,7 @@ async function loadInstances() {
 function createInstanceCard(instance) {
     // 创建卡片容器
     const cardCol = document.createElement('div');
-    cardCol.className = 'col-md-6 col-lg-4';
+    cardCol.className = 'col-sm-6 col-md-4 col-lg-3 col-xl-3';
 
     // 获取状态样式
     let statusClass = 'status-offline';
@@ -163,27 +195,27 @@ function createInstanceCard(instance) {
 
                 <!-- 第二行：CPU、运行时间 -->
                 <div class="metric-box">
-                    <div class="metric-value" id="cpu-${instance.instance_id}">${instance.cpu_percent}%</div>
+                    <div class="metric-value" id="cpu-${instance.instance_id}">加载中...</div>
                     <div class="metric-label">CPU</div>
                 </div>
                 <div class="metric-box">
-                    <div class="metric-value" id="runtime-${instance.instance_id}">${instance.runtime}</div>
+                    <div class="metric-value" id="runtime-${instance.instance_id}">加载中...</div>
                     <div class="metric-label">运行时间</div>
                 </div>
 
                 <!-- 第三行：内存、内存使用 -->
                 <div class="metric-box">
-                    <div class="metric-value" id="memory-percent-${instance.instance_id}">${instance.memory_percent}%</div>
+                    <div class="metric-value" id="memory-percent-${instance.instance_id}">加载中...</div>
                     <div class="metric-label">内存</div>
                 </div>
                 <div class="metric-box">
-                    <div class="metric-value" id="memory-usage-${instance.instance_id}">${instance.memory_used}/${instance.memory_total}GB</div>
+                    <div class="metric-value" id="memory-usage-${instance.instance_id}">加载中...</div>
                     <div class="metric-label">内存使用</div>
                 </div>
             </div>
-            <div class="p-3">
-                <p class="mb-1"><strong>ID:</strong> ${instance.instance_id}</p>
-                <p class="mb-1"><strong>API地址:</strong> ${instance.base_url}</p>
+            <div class="instance-info">
+                <p><strong>ID:</strong> ${instance.instance_id}</p>
+                <p><strong>API地址:</strong> ${instance.base_url}</p>
             </div>
             <div class="instance-actions">
                 <button class="btn btn-sm btn-outline-primary edit-instance" data-instance-id="${instance.instance_id}">
@@ -459,78 +491,108 @@ async function refreshInstanceResources(instanceId, silent = false) {
             button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 刷新中...';
         }
 
-        // 发送请求获取资源信息
-        const response = await fetchAPI(`/api/system/resources?instance_id=${instanceId}`);
+        // 并行获取状态和资源信息
+        const [statusResponse, resourceResponse] = await Promise.allSettled([
+            fetchAPI(`/api/instances/${instanceId}/status`),
+            fetchAPI(`/api/system/resources?instance_id=${instanceId}`)
+        ]);
 
-        // 检查响应
-        if (response && response.data) {
-            const data = response.data;
+        // 处理状态信息
+        let status = 'OFFLINE';
+        let uptime = 'N/A';
+        let wechatStatus = 'disconnected';
 
-            // 更新CPU使用率
-            const cpuElement = document.getElementById(`cpu-${instanceId}`);
-            if (cpuElement && data.cpu && data.cpu.usage_percent !== undefined) {
-                cpuElement.textContent = `${data.cpu.usage_percent.toFixed(1)}%`;
+        if (statusResponse.status === 'fulfilled' && statusResponse.value) {
+            const statusData = statusResponse.value;
+            console.log(`实例 ${instanceId} 状态响应:`, statusData);
+
+            // health接口可能直接返回数据，也可能包装在code/data中
+            let healthData = statusData;
+            if (statusData.code === 0 && statusData.data) {
+                healthData = statusData.data;
             }
 
-            // 更新内存百分比
-            const memoryPercentElement = document.getElementById(`memory-percent-${instanceId}`);
-            if (memoryPercentElement && data.memory && data.memory.usage_percent !== undefined) {
-                memoryPercentElement.textContent = `${data.memory.usage_percent.toFixed(1)}%`;
-            }
+            // 检查状态
+            if (healthData.status === 'ok') {
+                status = 'ONLINE';
+                wechatStatus = healthData.wechat_status || 'connected';
 
-            // 更新内存使用情况
-            const memoryUsageElement = document.getElementById(`memory-usage-${instanceId}`);
-            if (memoryUsageElement && data.memory) {
-                // 注意：后端已经将 MB 转换为 GB 并保留一位小数
-                const used = data.memory.used;
-                const total = data.memory.total;
-                // 直接显示数值，不需要再格式化小数位
-                memoryUsageElement.textContent = `${used}/${total}GB`;
-            }
+                // 处理uptime
+                if (typeof healthData.uptime === 'number' && healthData.uptime > 0) {
+                    const uptimeSeconds = healthData.uptime;
+                    const days = Math.floor(uptimeSeconds / 86400);
+                    const hours = Math.floor((uptimeSeconds % 86400) / 3600);
+                    const minutes = Math.floor((uptimeSeconds % 3600) / 60);
 
-            // 更新运行时间
-            const runtimeElement = document.getElementById(`runtime-${instanceId}`);
-            if (runtimeElement) {
-                if (data.uptime) {
-                    // 如果有uptime字段，优先使用
-                    if (typeof data.uptime === 'number') {
-                        // 如果是数字，需要格式化
-                        const uptime_seconds = data.uptime;
-                        const days = Math.floor(uptime_seconds / 86400);
-                        const hours = Math.floor((uptime_seconds % 86400) / 3600);
-                        const minutes = Math.floor((uptime_seconds % 3600) / 60);
-
-                        if (days > 0) {
-                            runtimeElement.textContent = `${days}天${hours}小时${minutes}分钟`;
-                        } else if (hours > 0) {
-                            runtimeElement.textContent = `${hours}小时${minutes}分钟`;
-                        } else {
-                            runtimeElement.textContent = `${minutes}分钟`;
-                        }
+                    if (days > 0) {
+                        uptime = `${days}天${hours}小时${minutes}分钟`;
+                    } else if (hours > 0) {
+                        uptime = `${hours}小时${minutes}分钟`;
                     } else {
-                        // 如果是字符串，直接使用
-                        runtimeElement.textContent = data.uptime;
+                        uptime = `${minutes}分钟`;
                     }
-                } else if (data.runtime) {
-                    // 否则使用runtime字段
-                    runtimeElement.textContent = data.runtime;
                 }
-            }
-
-            // 显示成功通知
-            if (!silent) {
-                showNotification(`实例 ${instanceId} 资源信息已更新`, 'success');
+            } else {
+                // 如果状态不是ok，设置为离线
+                status = 'OFFLINE';
+                wechatStatus = healthData.wechat_status || 'disconnected';
             }
         } else {
-            // 显示错误通知
-            if (!silent) {
-                showNotification('获取资源信息失败：响应格式不正确', 'warning');
+            console.log(`实例 ${instanceId} 状态请求失败:`, statusResponse.reason);
+        }
+
+        // 处理资源信息
+        let cpuPercent = 'N/A';
+        let memoryPercent = 'N/A';
+        let memoryUsage = 'N/A';
+
+        if (resourceResponse.status === 'fulfilled' && resourceResponse.value) {
+            const resourceData = resourceResponse.value;
+            console.log(`实例 ${instanceId} 资源响应:`, resourceData);
+
+            if (resourceData && resourceData.data) {
+                const data = resourceData.data;
+
+                // 处理CPU信息
+                if (data.cpu && typeof data.cpu.usage_percent === 'number') {
+                    cpuPercent = `${data.cpu.usage_percent.toFixed(1)}%`;
+                }
+
+                // 处理内存信息
+                if (data.memory) {
+                    if (typeof data.memory.usage_percent === 'number') {
+                        memoryPercent = `${data.memory.usage_percent.toFixed(1)}%`;
+                    }
+                    if (typeof data.memory.used === 'number' && typeof data.memory.total === 'number') {
+                        const used = (data.memory.used / 1024).toFixed(1);
+                        const total = (data.memory.total / 1024).toFixed(1);
+                        memoryUsage = `${used}/${total}GB`;
+                    }
+                }
             }
         }
-    } catch (error) {
-        console.error('刷新实例资源失败:', error);
+
+        // 更新状态标签
+        updateInstanceStatus(instanceId, status, wechatStatus);
+
+        // 更新界面元素
+        updateInstanceMetrics(instanceId, {
+            cpu_percent: cpuPercent,
+            memory_percent: memoryPercent,
+            memory_usage: memoryUsage,
+            runtime: uptime
+        });
+
+        // 显示成功通知
         if (!silent) {
-            showNotification(`刷新资源失败: ${error.message}`, 'danger');
+            showNotification(`实例 ${instanceId} 信息已更新`, 'success');
+        }
+
+        console.log(`实例 ${instanceId} 信息刷新成功 - 状态: ${status}, 微信: ${wechatStatus}`);
+    } catch (error) {
+        console.error('刷新实例信息失败:', error);
+        if (!silent) {
+            showNotification(`刷新信息失败: ${error.message}`, 'danger');
         }
     } finally {
         // 恢复按钮状态
@@ -539,5 +601,141 @@ async function refreshInstanceResources(instanceId, silent = false) {
             button.disabled = false;
             button.innerHTML = '<i class="fas fa-sync-alt"></i> 刷新资源';
         }
+    }
+}
+
+/**
+ * 格式化CPU使用率
+ * @param {number|string} cpuPercent - CPU使用率
+ * @returns {string} - 格式化后的CPU使用率
+ */
+function formatCpuPercent(cpuPercent) {
+    if (cpuPercent === null || cpuPercent === undefined || cpuPercent === '') {
+        return 'N/A';
+    }
+
+    const percent = parseFloat(cpuPercent);
+    if (isNaN(percent)) {
+        return 'N/A';
+    }
+
+    return `${percent.toFixed(1)}%`;
+}
+
+/**
+ * 格式化内存使用率
+ * @param {number|string} memoryPercent - 内存使用率
+ * @returns {string} - 格式化后的内存使用率
+ */
+function formatMemoryPercent(memoryPercent) {
+    if (memoryPercent === null || memoryPercent === undefined || memoryPercent === '') {
+        return 'N/A';
+    }
+
+    const percent = parseFloat(memoryPercent);
+    if (isNaN(percent)) {
+        return 'N/A';
+    }
+
+    return `${percent.toFixed(1)}%`;
+}
+
+/**
+ * 格式化内存使用情况
+ * @param {number|string} memoryUsed - 已使用内存(GB)
+ * @param {number|string} memoryTotal - 总内存(GB)
+ * @returns {string} - 格式化后的内存使用情况
+ */
+function formatMemoryUsage(memoryUsed, memoryTotal) {
+    if (memoryUsed === null || memoryUsed === undefined || memoryUsed === '' ||
+        memoryTotal === null || memoryTotal === undefined || memoryTotal === '') {
+        return 'N/A';
+    }
+
+    const used = parseFloat(memoryUsed);
+    const total = parseFloat(memoryTotal);
+
+    if (isNaN(used) || isNaN(total)) {
+        return 'N/A';
+    }
+
+    return `${used.toFixed(1)}/${total.toFixed(1)}GB`;
+}
+
+/**
+ * 格式化运行时间
+ * @param {string} runtime - 运行时间
+ * @returns {string} - 格式化后的运行时间
+ */
+function formatRuntime(runtime) {
+    if (runtime === null || runtime === undefined || runtime === '') {
+        return 'N/A';
+    }
+
+    // 如果已经是字符串格式，直接返回
+    if (typeof runtime === 'string') {
+        return runtime;
+    }
+
+    return 'N/A';
+}
+
+/**
+ * 更新实例状态标签
+ * @param {string} instanceId - 实例ID
+ * @param {string} status - 状态 (ONLINE/OFFLINE/ERROR)
+ * @param {string} wechatStatus - 微信状态 (connected/disconnected)
+ */
+function updateInstanceStatus(instanceId, status, wechatStatus) {
+    const statusElement = document.querySelector(`#instance-card-${instanceId} .instance-status`);
+    if (!statusElement) return;
+
+    // 移除所有状态类
+    statusElement.classList.remove('status-online', 'status-offline', 'status-error', 'status-disabled');
+
+    // 根据状态设置样式和文本
+    if (status === 'ONLINE' && wechatStatus === 'connected') {
+        statusElement.classList.add('status-online');
+        statusElement.textContent = '在线';
+    } else if (status === 'ONLINE' && wechatStatus === 'disconnected') {
+        statusElement.classList.add('status-offline');
+        statusElement.textContent = '微信未连接';
+    } else if (status === 'ERROR') {
+        statusElement.classList.add('status-error');
+        statusElement.textContent = '错误';
+    } else {
+        statusElement.classList.add('status-offline');
+        statusElement.textContent = '离线';
+    }
+}
+
+/**
+ * 更新实例指标信息
+ * @param {string} instanceId - 实例ID
+ * @param {Object} metrics - 指标数据
+ */
+function updateInstanceMetrics(instanceId, metrics) {
+    // 更新CPU使用率
+    const cpuElement = document.getElementById(`cpu-${instanceId}`);
+    if (cpuElement && metrics.cpu_percent !== undefined) {
+        cpuElement.textContent = metrics.cpu_percent;
+    }
+
+    // 更新内存百分比
+    const memoryPercentElement = document.getElementById(`memory-percent-${instanceId}`);
+    if (memoryPercentElement && metrics.memory_percent !== undefined) {
+        memoryPercentElement.textContent = metrics.memory_percent;
+    }
+
+    // 更新内存使用情况
+    const memoryUsageElement = document.getElementById(`memory-usage-${instanceId}`);
+    if (memoryUsageElement && metrics.memory_usage !== undefined) {
+        memoryUsageElement.textContent = metrics.memory_usage;
+    }
+
+    // 更新运行时间
+    const runtimeElement = document.getElementById(`runtime-${instanceId}`);
+    if (runtimeElement && metrics.runtime !== undefined) {
+        runtimeElement.textContent = metrics.runtime;
     }
 }
