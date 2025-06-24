@@ -170,7 +170,7 @@ class StatusUpdater(QObject):
             metrics = {
                 "cpu_usage": metrics_data.get("cpu_usage", 0),
                 "memory_usage": metrics_data.get("memory_usage", 0),  # MB
-                "memory_total": 4 * 1024,  # 默认4GB，单位MB
+                "memory_total": self._get_system_memory_total(),  # 动态获取系统内存总量
                 "message_count": message_count,
                 "uptime": health_info.get("uptime", 0)  # 从健康状态中获取运行时间
             }
@@ -191,6 +191,23 @@ class StatusUpdater(QObject):
             logger.error(f"更新状态时出错: {e}")
             logger.error(f"异常堆栈: {traceback.format_exc()}")
             self.update_failed.emit(str(e))
+
+    def _get_system_memory_total(self) -> int:
+        """
+        获取系统内存总量（MB）
+
+        Returns:
+            int: 系统内存总量，单位MB
+        """
+        try:
+            import psutil
+            memory = psutil.virtual_memory()
+            memory_total_mb = memory.total / (1024 * 1024)
+            return round(memory_total_mb)
+        except Exception as e:
+            logger.warning(f"获取系统内存总量失败: {e}")
+            # 如果获取失败，返回一个合理的默认值
+            return 8 * 1024  # 默认8GB
 
 
 class StatusMonitorPanel(QWidget):

@@ -57,6 +57,46 @@ def handle_exception(exc_type, exc_value, exc_traceback):
 
     logger.critical("未捕获的异常", exc_info=(exc_type, exc_value, exc_traceback))
 
+    # 如果是严重错误，尝试安全关闭
+    if exc_type.__name__ in ['SegmentationFault', 'SystemError', 'MemoryError']:
+        logger.critical(f"检测到严重错误 {exc_type.__name__}，尝试安全关闭程序")
+        try:
+            # 尝试清理资源
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop and not loop.is_closed():
+                loop.run_until_complete(cleanup_services())
+        except:
+            pass  # 忽略清理过程中的错误
+
+        # 强制退出
+        import os
+        os._exit(1)
+
+def setup_signal_handlers():
+    """设置信号处理器"""
+    try:
+        # 在Unix系统上设置SIGSEGV处理器
+        if hasattr(signal, 'SIGSEGV'):
+            def segfault_handler(signum, frame):
+                logger.critical("检测到段错误(SIGSEGV)，程序即将退出")
+                print("检测到段错误(SIGSEGV)，程序即将退出")
+                try:
+                    # 尝试清理资源
+                    import asyncio
+                    loop = asyncio.get_event_loop()
+                    if loop and not loop.is_closed():
+                        loop.run_until_complete(cleanup_services())
+                except:
+                    pass
+                import os
+                os._exit(1)
+
+            signal.signal(signal.SIGSEGV, segfault_handler)
+            logger.info("已设置SIGSEGV信号处理器")
+    except Exception as e:
+        logger.warning(f"设置信号处理器失败: {e}")
+
 async def init_services():
     """初始化各服务"""
     try:
@@ -235,6 +275,9 @@ def main():
     try:
         # 设置未捕获异常处理器
         sys.excepthook = handle_exception
+
+        # 设置信号处理器
+        setup_signal_handlers()
 
         # 初始化Qt应用
         app = QApplication.instance()

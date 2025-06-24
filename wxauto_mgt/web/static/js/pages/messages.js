@@ -153,10 +153,30 @@ async function loadListeners(forceRefresh = false) {
                 currentListener = listener;
             }
 
-            // 获取状态标签
-            const statusLabel = listener.status === 'active' ?
-                '<span class="badge bg-success">活跃</span>' :
-                '<span class="badge bg-secondary">未活跃</span>';
+            // 获取活跃状态标签
+            let statusLabel = '';
+            let activityLabel = '';
+
+            if (listener.status === 'active') {
+                // 检查是否最近有活动（5分钟内）
+                const currentTime = Date.now() / 1000;
+                const lastActivity = listener.last_message_time || 0;
+                const timeDiff = currentTime - lastActivity;
+
+                if (timeDiff < 300) { // 5分钟内
+                    statusLabel = '<span class="badge bg-success">🟢 活跃</span>';
+                    activityLabel = '最近活跃';
+                } else if (timeDiff < 1800) { // 30分钟内
+                    statusLabel = '<span class="badge bg-warning">🟡 空闲</span>';
+                    activityLabel = '空闲中';
+                } else {
+                    statusLabel = '<span class="badge bg-secondary">🟡 空闲</span>';
+                    activityLabel = '长时间空闲';
+                }
+            } else {
+                statusLabel = '<span class="badge bg-danger">🔴 非活跃</span>';
+                activityLabel = '非活跃';
+            }
 
             // 获取最后消息时间
             const lastMessageTime = listener.last_message_time ?

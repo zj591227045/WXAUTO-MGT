@@ -142,6 +142,16 @@ class MessageListener:
                 self._paused = False
                 self._pause_event.set()
 
+    async def _internal_pause_listening(self):
+        """内部暂停监听（不影响用户设置的暂停状态）"""
+        # 这个方法用于内部操作时的临时暂停，不会改变用户设置的暂停状态
+        pass
+
+    async def _internal_resume_listening(self):
+        """内部恢复监听（不影响用户设置的暂停状态）"""
+        # 这个方法用于内部操作时的临时恢复，不会改变用户设置的暂停状态
+        pass
+
     async def wait_if_paused(self):
         """如果监听服务被暂停，则等待恢复"""
         await self._pause_event.wait()
@@ -210,23 +220,14 @@ class MessageListener:
             api_client: API客户端实例
         """
         try:
-            # 暂停其他监听活动，确保获取主窗口消息时不受干扰
-            await self.pause_listening()
-            logger.info(f"获取主窗口消息前暂停监听服务: 实例 {instance_id}")
-
-            try:
-                # 获取主窗口未读消息，设置接收图片、文件、语音信息、URL信息参数为True
-                messages = await api_client.get_unread_messages(
-                    save_pic=True,
-                    save_video=False,
-                    save_file=True,
-                    save_voice=True,
-                    parse_url=True
-                )
-            finally:
-                # 恢复监听服务
-                await self.resume_listening()
-                logger.info(f"获取主窗口消息后恢复监听服务: 实例 {instance_id}")
+            # 获取主窗口未读消息，设置接收图片、文件、语音信息、URL信息参数为True
+            messages = await api_client.get_unread_messages(
+                save_pic=True,
+                save_video=False,
+                save_file=True,
+                save_voice=True,
+                parse_url=True
+            )
             if not messages:
                 return
 
@@ -380,18 +381,9 @@ class MessageListener:
                     continue
 
                 try:
-                    # 暂停其他监听活动，确保获取监听对象消息时不受干扰
-                    await self.pause_listening()
-                    logger.debug(f"获取监听对象消息前暂停监听服务: 实例 {instance_id}, 监听对象 {who}")
-
-                    try:
-                        # 获取该监听对象的新消息
-                        logger.debug(f"开始获取实例 {instance_id} 监听对象 {who} 的新消息")
-                        messages = await api_client.get_listener_messages(who)
-                    finally:
-                        # 恢复监听服务
-                        await self.resume_listening()
-                        logger.debug(f"获取监听对象消息后恢复监听服务: 实例 {instance_id}, 监听对象 {who}")
+                    # 获取该监听对象的新消息
+                    logger.debug(f"开始获取实例 {instance_id} 监听对象 {who} 的新消息")
+                    messages = await api_client.get_listener_messages(who)
 
                     if messages:
                         # 更新最后消息时间
@@ -636,17 +628,11 @@ class MessageListener:
                 logger.error(f"找不到实例 {instance_id} 的API客户端")
                 return False
 
-            # 暂停其他监听活动，确保添加监听对象时不受干扰
-            await self.pause_listening()
-            logger.info(f"添加监听对象前暂停监听服务: 实例 {instance_id}, 监听对象 {who}")
-
             try:
                 # 调用API添加监听
                 api_success = await api_client.add_listener(who, **kwargs)
             finally:
-                # 恢复监听服务
-                await self.resume_listening()
-                logger.info(f"添加监听对象后恢复监听服务: 实例 {instance_id}, 监听对象 {who}")
+                pass
             if not api_success:
                 return False
 
@@ -695,17 +681,11 @@ class MessageListener:
                 return False
 
             try:
-                # 暂停其他监听活动，确保移除监听对象时不受干扰
-                await self.pause_listening()
-                logger.info(f"移除监听对象前暂停监听服务: 实例 {instance_id}, 监听对象 {who}")
-
                 try:
                     # 调用API客户端的移除监听方法
                     await api_client.remove_listener(who)
                 finally:
-                    # 恢复监听服务
-                    await self.resume_listening()
-                    logger.info(f"移除监听对象后恢复监听服务: 实例 {instance_id}, 监听对象 {who}")
+                    pass
                 # 无论API调用成功与否，都尝试清理本地数据
                 try:
                     # 从内存中移除

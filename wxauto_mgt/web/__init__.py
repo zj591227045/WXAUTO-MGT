@@ -113,32 +113,15 @@ async def stop_web_service():
 
         # 等待线程结束
         if _web_server_thread and _web_server_thread.is_alive():
-            # 使用更可靠的方式终止线程
-            import ctypes
-            import inspect
+            logger.info("等待Web服务线程正常结束...")
 
-            # 获取线程ID
-            thread_id = _web_server_thread.ident
+            # 等待线程正常结束
+            _web_server_thread.join(timeout=10)
 
-            # 如果线程ID有效，尝试强制终止线程
-            if thread_id:
-                try:
-                    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                        ctypes.c_long(thread_id),
-                        ctypes.py_object(SystemExit)
-                    )
-                    if res > 1:
-                        # 如果返回值大于1，说明出现了错误，需要清理
-                        ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                            ctypes.c_long(thread_id),
-                            ctypes.c_long(0)
-                        )
-                        logger.warning("无法正常终止Web服务线程")
-                except Exception as e:
-                    logger.warning(f"终止Web服务线程时出错: {e}")
-
-            # 等待线程结束
-            _web_server_thread.join(timeout=5)
+            # 如果线程仍然存活，记录警告但不强制终止
+            if _web_server_thread.is_alive():
+                logger.warning("Web服务线程未能在10秒内正常结束，但将继续等待其自然结束")
+                # 不使用强制终止，避免Segmentation fault
 
         _web_service_running = False
         _web_server_thread = None

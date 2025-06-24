@@ -446,6 +446,27 @@ class MainWindow(QMainWindow):
         self.reload_config_btn.clicked.connect(self._reload_config)
         web_service_layout.addWidget(self.reload_config_btn)
 
+        # 添加暂停/继续监听按钮
+        self.pause_resume_btn = QPushButton("暂停监听")
+        self.pause_resume_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FFA500;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #FFB84D;
+            }
+        """)
+        self.pause_resume_btn.setToolTip("暂停/继续消息监听服务")
+        self.pause_resume_btn.clicked.connect(self._toggle_listening_service)
+        web_service_layout.addWidget(self.pause_resume_btn)
+
+        # 初始化监听状态
+        self._is_listening_paused = False
+
         # 将Web服务控制区域添加到工具栏
         self.toolbar.addWidget(web_service_container)
 
@@ -543,6 +564,75 @@ class MainWindow(QMainWindow):
             asyncio.create_task(self._restart_application())
         else:
             self.status_changed.emit("已取消重载配置", 3000)
+
+    def _toggle_listening_service(self):
+        """暂停/继续消息监听服务"""
+        # 创建异步任务处理监听服务切换
+        asyncio.create_task(self._toggle_listening_service_async())
+
+    async def _toggle_listening_service_async(self):
+        """异步暂停/继续消息监听服务"""
+        try:
+            # 导入消息监听器
+            from wxauto_mgt.core.message_listener import message_listener
+
+            if self._is_listening_paused:
+                # 如果当前是暂停状态，则恢复监听
+                await message_listener.resume_listening()
+                self._is_listening_paused = False
+                self.pause_resume_btn.setText("暂停监听")
+                self.pause_resume_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #FFA500;
+                        color: white;
+                        border: none;
+                        padding: 6px 12px;
+                        border-radius: 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #FFB84D;
+                    }
+                """)
+                logger.info("已恢复消息监听服务")
+                self.status_changed.emit("已恢复消息监听服务", 3000)
+
+                # 同步消息面板的状态
+                if hasattr(self, 'message_panel'):
+                    self.message_panel._is_listening_paused = False
+                    if hasattr(self.message_panel, 'pause_resume_btn'):
+                        self.message_panel.pause_resume_btn.setText("暂停监听")
+                        self.message_panel.pause_resume_btn.setStyleSheet("QPushButton { background-color: #FFA500; }")
+
+            else:
+                # 如果当前是运行状态，则暂停监听
+                await message_listener.pause_listening()
+                self._is_listening_paused = True
+                self.pause_resume_btn.setText("继续监听")
+                self.pause_resume_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #FF4500;
+                        color: white;
+                        border: none;
+                        padding: 6px 12px;
+                        border-radius: 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #FF6347;
+                    }
+                """)
+                logger.info("已暂停消息监听服务")
+                self.status_changed.emit("已暂停消息监听服务", 3000)
+
+                # 同步消息面板的状态
+                if hasattr(self, 'message_panel'):
+                    self.message_panel._is_listening_paused = True
+                    if hasattr(self.message_panel, 'pause_resume_btn'):
+                        self.message_panel.pause_resume_btn.setText("继续监听")
+                        self.message_panel.pause_resume_btn.setStyleSheet("QPushButton { background-color: #FF4500; }")
+
+        except Exception as e:
+            logger.error(f"切换监听服务状态时出错: {e}")
+            QMessageBox.critical(self, "操作失败", f"切换监听服务状态时出错: {str(e)}")
 
     async def _restart_application(self):
         """重启应用程序"""
