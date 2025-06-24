@@ -10,18 +10,8 @@ from wxauto_mgt.ui.components.dialogs.rule_dialog import AddEditRuleDialog
 
 # 导入设置对话框
 try:
-    # 从同级的dialogs.py文件导入
-    import sys
-    import os
-    # 添加父目录到路径
-    parent_dir = os.path.dirname(os.path.dirname(__file__))
-    sys.path.insert(0, parent_dir)
-    from dialogs import SettingsDialog as _SettingsDialog
-    # 确保导入的是正确的类
-    if hasattr(_SettingsDialog, '__init__') and callable(_SettingsDialog):
-        SettingsDialog = _SettingsDialog
-    else:
-        raise ImportError("导入的SettingsDialog不是有效的类")
+    # 从父级目录的dialogs.py文件导入
+    from ..dialogs import SettingsDialog
 except ImportError as e:
     print(f"导入SettingsDialog失败: {e}")
     # 如果仍然无法导入，使用占位符

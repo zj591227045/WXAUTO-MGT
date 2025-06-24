@@ -29,6 +29,7 @@ from wxauto_mgt.core.message_listener import message_listener
 from wxauto_mgt.core.message_delivery_service import message_delivery_service
 from wxauto_mgt.core.message_sender import message_sender
 from wxauto_mgt.utils.logging import setup_logging, logger
+from wxauto_mgt.utils.ssl_config import init_ssl
 
 def handle_exception(exc_type, exc_value, exc_traceback):
     """
@@ -160,6 +161,14 @@ async def init_services():
 
         # 初始化日志
         setup_logging(log_dir, console_level="DEBUG", file_level="DEBUG")
+
+        # 初始化SSL配置 - 修复HTTPS连接问题
+        logger.info("正在初始化SSL配置...")
+        ssl_success = init_ssl()
+        if ssl_success:
+            logger.info("SSL配置初始化成功")
+        else:
+            logger.warning("SSL配置初始化失败，HTTPS连接可能受影响")
 
         # 初始化数据库
         db_path = os.path.join(data_dir, 'wxauto_mgt.db')

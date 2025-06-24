@@ -349,46 +349,40 @@ class WebServicePanel(QWidget):
             })
 
             # 启动Web服务
+            # 确保配置中不包含debug参数
+            if 'debug' in config:
+                del config['debug']
+
+            # 检查依赖项
             try:
-                # 确保配置中不包含debug参数
-                if 'debug' in config:
-                    del config['debug']
-
-                # 检查依赖项
-                try:
-                    import fastapi
-                    import uvicorn
-                    import jinja2
-                except ImportError as e:
-                    error_msg = f"缺少必要的依赖项: {e}\n请安装: pip install fastapi uvicorn jinja2"
-                    self.add_log(f"启动Web服务失败: 缺少依赖项 - {e}")
-                    logger.error(error_msg)
-                    return
-
-                # 移除端口检查机制，直接尝试启动Web服务
-                # 端口检查经常出现误报，让Web服务器自己处理端口冲突
-                self.add_log(f"准备启动Web服务，地址: http://{host}:{port}")
-
-                self.add_log(f"正在启动Web服务，地址: http://{host}:{port}...")
-                success = await start_web_service(config)
-
-                if success:
-                    self.add_log(f"Web服务已启动，地址: http://{host}:{port}")
-                    logger.info(f"Web服务已启动，地址: http://{host}:{port}")
-                else:
-                    self.add_log("启动Web服务失败")
-                    logger.error("启动Web服务失败")
-
-                    # 如果启动失败，提供端口冲突的解决建议
-                    self.add_log(f"提示: 如果端口 {port} 被占用，请尝试以下解决方案:")
-                    self.add_log("1. 更改端口号到其他值（如8081、8082、9090等）")
-                    self.add_log("2. 检查是否有其他程序占用该端口")
-                    self.add_log("3. 重启计算机释放被占用的端口")
-            except Exception as e:
-                import traceback
-                error_msg = f"启动Web服务时出错: {str(e)}\n{traceback.format_exc()}"
-                self.add_log(f"启动Web服务失败: {str(e)}")
+                import fastapi
+                import uvicorn
+                import jinja2
+            except ImportError as e:
+                error_msg = f"缺少必要的依赖项: {e}\n请安装: pip install fastapi uvicorn jinja2"
+                self.add_log(f"启动Web服务失败: 缺少依赖项 - {e}")
                 logger.error(error_msg)
+                return
+
+            # 移除端口检查机制，直接尝试启动Web服务
+            # 端口检查经常出现误报，让Web服务器自己处理端口冲突
+            self.add_log(f"准备启动Web服务，地址: http://{host}:{port}")
+
+            self.add_log(f"正在启动Web服务，地址: http://{host}:{port}...")
+            success = await start_web_service(config)
+
+            if success:
+                self.add_log(f"Web服务已启动，地址: http://{host}:{port}")
+                logger.info(f"Web服务已启动，地址: http://{host}:{port}")
+            else:
+                self.add_log("启动Web服务失败")
+                logger.error("启动Web服务失败")
+
+                # 如果启动失败，提供端口冲突的解决建议
+                self.add_log(f"提示: 如果端口 {port} 被占用，请尝试以下解决方案:")
+                self.add_log("1. 更改端口号到其他值（如8081、8082、9090等）")
+                self.add_log("2. 检查是否有其他程序占用该端口")
+                self.add_log("3. 重启计算机释放被占用的端口")
 
             # 更新状态显示
             self._update_web_service_status()

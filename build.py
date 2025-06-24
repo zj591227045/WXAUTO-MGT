@@ -12,6 +12,8 @@ import sys
 import shutil
 import subprocess
 import platform
+import ssl
+import certifi
 from pathlib import Path
 
 # 项目根目录
@@ -29,8 +31,6 @@ OUTPUT_DIR = "dist"
 
 # 需要排除的模块
 EXCLUDED_MODULES = [
-    "ssl",
-    "_ssl",
     "pytest",
     "pytest-asyncio",
     "pytest-qt"
@@ -46,17 +46,53 @@ HIDDEN_IMPORTS = [
     "wxauto_mgt.utils",
     "wxauto_mgt.web",
 
+    # SSL/TLS相关 - 修复HTTPS连接问题
+    "certifi",
+    "_ssl",
+    "ssl",
+    "_hashlib",
+    "_socket",
+    "select",
+
+    # HTTP请求相关
+    "urllib3",
+    "urllib3.util",
+    "urllib3.util.ssl_",
+    "urllib3.contrib",
+    "urllib3.contrib.pyopenssl",
+    "urllib3.packages",
+    "urllib3.packages.ssl_match_hostname",
+    "requests",
+    "requests.adapters",
+    "requests.auth",
+    "requests.cookies",
+    "requests.models",
+    "requests.sessions",
+    "requests.structures",
+    "requests.utils",
+    "requests.certs",
+    "requests.packages",
+    "requests.packages.urllib3",
+
     # 加密相关
     "cryptography",
     "cryptography.hazmat",
     "cryptography.hazmat.backends",
     "cryptography.hazmat.backends.openssl",
     "cryptography.hazmat.bindings",
+    "cryptography.hazmat.bindings._rust",
     "cryptography.hazmat.primitives",
     "cryptography.hazmat.primitives.asymmetric",
     "cryptography.hazmat.primitives.ciphers",
     "cryptography.hazmat.primitives.kdf",
     "cryptography.hazmat.primitives.serialization",
+    "cryptography.hazmat.primitives.hashes",
+    "cryptography.x509",
+
+    # OpenSSL相关
+    "OpenSSL",
+    "OpenSSL.SSL",
+    "OpenSSL.crypto",
 
     # Web相关
     "fastapi",
@@ -75,12 +111,18 @@ HIDDEN_IMPORTS = [
     "uvicorn.middleware",
     "uvicorn.lifespan",
     "uvicorn.protocols",
+    "uvicorn.protocols.http",
+    "uvicorn.protocols.websockets",
+    "uvicorn.server",
+    "uvicorn.supervisors",
+    "uvicorn.workers",
 
     "pydantic",
     "pydantic.fields",
     "pydantic.main",
     "pydantic.error_wrappers",
     "pydantic.validators",
+    "pydantic.v1",
 
     "jose",
     "jose.jwt",
@@ -122,14 +164,145 @@ HIDDEN_IMPORTS = [
     "websockets",
     "watchgod",
     "itsdangerous",
-    "jinja2"
+    "jinja2",
+
+    # HTTP客户端相关
+    "aiohttp",
+    "aiohttp.client",
+    "aiohttp.connector",
+    "aiohttp.helpers",
+    "aiohttp.resolver",
+
+    # 日志相关
+    "loguru",
+
+    # 数据库相关
+    "aiosqlite",
+    "sqlite3",
+
+    # 系统监控相关
+    "psutil",
+
+    # 配置文件相关
+    "yaml",
+    "dotenv",
+
+    # 版本管理相关
+    "semver",
+    "packaging",
+
+    # 网络相关
+    "socket",
+    "socketserver",
+    "_socket",
+    "http",
+    "http.client",
+    "http.server",
+    "urllib",
+    "urllib.parse",
+    "urllib.request",
+    "urllib.error",
+
+    # 哈希和编码相关
+    "hashlib",
+    "_hashlib",
+    "hmac",
+    "base64",
+    "json",
+
+    # 异步相关
+    "asyncio",
+    "asyncio.events",
+    "asyncio.protocols",
+    "asyncio.transports",
+    "concurrent",
+    "concurrent.futures",
+    "threading",
+    "multiprocessing",
+
+    # 系统相关
+    "_ctypes",
+    "ctypes",
+    "ctypes.util",
+    "_struct",
+    "struct",
+
+    # 压缩相关
+    "binascii",
+    "_binascii",
+    "zlib",
+    "_zlib",
+    "bz2",
+    "_bz2",
+    "lzma",
+    "_lzma"
 ]
+
+def get_ssl_files():
+    """获取SSL相关的文件和DLL"""
+    ssl_files = []
+    binaries = []
+
+    try:
+        # 添加certifi证书文件
+        import certifi
+        cert_path = certifi.where()
+        if os.path.exists(cert_path):
+            ssl_files.append((cert_path, '.'))
+            print(f"找到证书文件: {cert_path}")
+    except ImportError:
+        print("警告: certifi未安装，可能影响HTTPS连接")
+
+    # 检测SSL DLL文件
+    if platform.system() == "Windows":
+        # 常见的SSL DLL位置
+        possible_ssl_paths = []
+
+        # 检查conda环境
+        if 'CONDA_PREFIX' in os.environ:
+            conda_lib = os.path.join(os.environ['CONDA_PREFIX'], 'Library', 'bin')
+            possible_ssl_paths.append(conda_lib)
+
+        # 检查Python安装目录
+        python_dir = os.path.dirname(sys.executable)
+        possible_ssl_paths.extend([
+            os.path.join(python_dir, 'DLLs'),
+            os.path.join(python_dir, 'Library', 'bin'),
+            python_dir
+        ])
+
+        # 要查找的SSL相关DLL
+        ssl_dlls = [
+            'libssl-3-x64.dll',
+            'libcrypto-3-x64.dll',
+            'libssl-1_1-x64.dll',
+            'libcrypto-1_1-x64.dll',
+            '_ssl.pyd'
+        ]
+
+        for search_path in possible_ssl_paths:
+            if not os.path.exists(search_path):
+                continue
+
+            for dll_name in ssl_dlls:
+                dll_path = os.path.join(search_path, dll_name)
+                if os.path.exists(dll_path):
+                    if dll_name.endswith('.pyd'):
+                        ssl_files.append((dll_path, '.'))
+                    else:
+                        binaries.append((dll_path, '.'))
+                    print(f"找到SSL文件: {dll_path}")
+
+    return ssl_files, binaries
+
+# 获取SSL相关文件
+SSL_DATAS, SSL_BINARIES = get_ssl_files()
 
 # 需要包含的数据文件
 DATAS = [
     (str(ROOT_DIR / "wxauto_mgt" / "config"), os.path.join("wxauto_mgt", "config")),
-    (str(ROOT_DIR / "wxauto_mgt" / "web" / "requirements.txt"), os.path.join("wxauto_mgt", "web"))
-]
+    (str(ROOT_DIR / "wxauto_mgt" / "requirements.txt"), os.path.join("wxauto_mgt", "web"))
+] + SSL_DATAS
 
 # 创建必要的数据目录结构
 def create_data_dirs():
@@ -176,7 +349,11 @@ def clean_build_dirs():
         dir_path = os.path.join(ROOT_DIR, dir_name)
         if os.path.exists(dir_path):
             print(f"删除目录: {dir_path}")
-            shutil.rmtree(dir_path)
+            try:
+                shutil.rmtree(dir_path)
+            except PermissionError as e:
+                print(f"警告: 无法删除目录 {dir_path}: {e}")
+                print("请确保没有程序正在使用该目录中的文件，然后重试")
 
     # 清理PyInstaller生成的spec文件
     spec_file = os.path.join(ROOT_DIR, f"{APP_NAME}.spec")
@@ -193,6 +370,9 @@ def create_spec_file():
     # 准备数据文件字符串
     datas_str = ", ".join([f"(r'{src}', r'{dst}')" for src, dst in DATAS])
 
+    # 准备二进制文件字符串
+    binaries_str = ", ".join([f"(r'{src}', r'{dst}')" for src, dst in SSL_BINARIES])
+
     # 准备图标路径
     icon_path = str(ICON_PATH) if ICON_PATH.exists() else ""
 
@@ -207,10 +387,10 @@ ROOT_DIR = r'{str(ROOT_DIR)}'
 a = Analysis(
     [r'{str(MAIN_SCRIPT)}'],
     pathex=[r'{str(ROOT_DIR)}'],
-    binaries=[],
+    binaries=[{binaries_str}],
     datas=[{datas_str}],
     hiddenimports={HIDDEN_IMPORTS},
-    hookspath=[],
+    hookspath=[r'{str(ROOT_DIR / "hooks")}'],
     hooksconfig={{}},
     runtime_hooks=[],
     excludes={EXCLUDED_MODULES},
