@@ -1019,8 +1019,9 @@ class MessageDeliveryService:
 
             # 准备@列表
             at_list = None
-            if reply_at_sender and 'sender' in message and message['sender']:
-                sender = message['sender']
+            # 优先使用sender_remark字段，如果没有值则回退使用sender字段
+            sender = message.get('sender_remark') or message.get('sender', '')
+            if reply_at_sender and sender:
                 at_list = [sender]
                 file_logger.info(f"将在回复中@发送者: {sender}")
                 logger.info(f"将在回复中@发送者: {sender}")

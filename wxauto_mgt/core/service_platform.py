@@ -576,8 +576,8 @@ class DifyPlatform(ServicePlatform):
             is_file_message = 'dify_file' in message or ('local_file_path' in message and message.get('file_type') in ['image', 'file'])
 
             # 构建请求数据
-            # 获取发送者和聊天名称
-            sender = message.get('sender', '')
+            # 获取发送者和聊天名称，优先使用sender_remark字段
+            sender = message.get('sender_remark') or message.get('sender', '')
             chat_name = message.get('chat_name', '')
 
             # 根据消息对象名称与发送者名称是否相同来判断群聊

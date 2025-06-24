@@ -113,8 +113,9 @@ class ZhiWeiJZPlatform(ServicePlatform):
             
             # 提取消息内容和发送者
             content = message.get('content', '')
-            sender_name = message.get('sender', '')
-            
+            # 优先使用sender_remark字段，如果没有值则回退使用sender字段
+            sender_name = message.get('sender_remark') or message.get('sender', '')
+
             # 记录处理开始
             logger.info(f"开始处理记账消息: {content[:50]}... (发送者: {sender_name})")
             
