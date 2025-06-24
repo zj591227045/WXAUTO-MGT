@@ -58,7 +58,7 @@ class WebServicePanel(QWidget):
         port_label = QLabel("端口号:")
         self.port_spinbox = QSpinBox()
         self.port_spinbox.setRange(1024, 65535)
-        self.port_spinbox.setValue(8443)  # 默认端口
+        self.port_spinbox.setValue(8080)  # 默认端口
         self.port_spinbox.setFixedWidth(100)
         self.port_spinbox.setToolTip("Web服务端口号 (1024-65535)")
         port_layout.addWidget(self.port_spinbox)
@@ -68,8 +68,8 @@ class WebServicePanel(QWidget):
         # 主机地址
         host_layout = QHBoxLayout()
         host_label = QLabel("主机地址:")
-        self.host_input = QLineEdit("127.0.0.1")
-        self.host_input.setToolTip("Web服务主机地址，默认为127.0.0.1")
+        self.host_input = QLineEdit("0.0.0.0")
+        self.host_input.setToolTip("Web服务主机地址，默认为0.0.0.0（监听所有网络接口）")
         self.host_input.setFixedWidth(200)
         host_layout.addWidget(self.host_input)
         host_layout.addStretch()
@@ -202,6 +202,8 @@ class WebServicePanel(QWidget):
 
         # 添加初始日志
         self.add_log("Web服务管理面板已初始化")
+
+
 
     def add_log(self, message):
         """添加日志"""
@@ -363,17 +365,9 @@ class WebServicePanel(QWidget):
                     logger.error(error_msg)
                     return
 
-                # 检查端口是否被占用
-                import socket
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                try:
-                    sock.bind((host, port))
-                    sock.close()
-                except socket.error:
-                    error_msg = f"端口 {port} 已被占用，请尝试其他端口"
-                    self.add_log(error_msg)
-                    logger.error(error_msg)
-                    return
+                # 移除端口检查机制，直接尝试启动Web服务
+                # 端口检查经常出现误报，让Web服务器自己处理端口冲突
+                self.add_log(f"准备启动Web服务，地址: http://{host}:{port}")
 
                 self.add_log(f"正在启动Web服务，地址: http://{host}:{port}...")
                 success = await start_web_service(config)
@@ -384,6 +378,12 @@ class WebServicePanel(QWidget):
                 else:
                     self.add_log("启动Web服务失败")
                     logger.error("启动Web服务失败")
+
+                    # 如果启动失败，提供端口冲突的解决建议
+                    self.add_log(f"提示: 如果端口 {port} 被占用，请尝试以下解决方案:")
+                    self.add_log("1. 更改端口号到其他值（如8081、8082、9090等）")
+                    self.add_log("2. 检查是否有其他程序占用该端口")
+                    self.add_log("3. 重启计算机释放被占用的端口")
             except Exception as e:
                 import traceback
                 error_msg = f"启动Web服务时出错: {str(e)}\n{traceback.format_exc()}"
@@ -428,8 +428,8 @@ class WebServicePanel(QWidget):
         try:
             # 获取当前配置
             config = get_web_service_config()
-            host = config.get('host', '127.0.0.1')
-            port = config.get('port', 8443)
+            host = config.get('host', '0.0.0.0')
+            port = config.get('port', 8080)
 
             # 如果监听地址是0.0.0.0，替换为localhost
             if host == '0.0.0.0':

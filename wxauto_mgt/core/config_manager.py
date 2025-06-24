@@ -60,8 +60,11 @@ class ConfigManager:
 
         # 设置默认配置文件路径
         if default_config_path is None:
-            app_dir = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-            self._default_config_path = app_dir / "config" / "default_config.json"
+            # 当前文件是 wxauto_mgt/core/config_manager.py
+            # 需要找到 wxauto_mgt/config/default_config.json
+            current_dir = Path(__file__).parent  # wxauto_mgt/core
+            wxauto_mgt_dir = current_dir.parent  # wxauto_mgt
+            self._default_config_path = wxauto_mgt_dir / "config" / "default_config.json"
         else:
             self._default_config_path = Path(default_config_path)
 
@@ -72,8 +75,37 @@ class ConfigManager:
         # 加载配置
         await self.load_config()
 
+        # 检查是否为首次运行，如果是则保存默认配置到数据库
+        await self._ensure_default_configs()
+
         self._initialized = True
         logger.info("配置管理器初始化完成")
+
+    async def _ensure_default_configs(self) -> None:
+        """
+        确保默认配置已保存到数据库
+        如果数据库中没有配置项，则将默认配置保存到数据库
+        """
+        try:
+            # 检查数据库中是否已有配置
+            rows = await db_manager.fetchall("SELECT COUNT(*) as count FROM configs")
+            config_count = rows[0]['count'] if rows else 0
+
+            if config_count == 0:
+                logger.info("检测到首次运行，正在保存默认配置到数据库...")
+
+                # 保存当前配置（包含默认配置）到数据库
+                success = await self.save_config()
+
+                if success:
+                    logger.info("默认配置已成功保存到数据库")
+                else:
+                    logger.warning("保存默认配置到数据库失败")
+            else:
+                logger.debug(f"数据库中已有 {config_count} 个配置项，跳过默认配置保存")
+
+        except Exception as e:
+            logger.error(f"检查和保存默认配置时出错: {e}")
 
     async def _init_encryption(self, encryption_key: Optional[str] = None) -> None:
         """
@@ -248,7 +280,19 @@ class ConfigManager:
                     # 尝试解析JSON值
                     value = json.loads(value)
                 except (json.JSONDecodeError, TypeError):
-                    pass
+                    # 如果不是JSON，尝试转换布尔值
+                    if isinstance(value, str):
+                        if value.lower() == 'true':
+                            value = True
+                        elif value.lower() == 'false':
+                            value = False
+                        elif value.isdigit():
+                            value = int(value)
+                        else:
+                            try:
+                                value = float(value)
+                            except ValueError:
+                                pass  # 保持原始字符串值
 
                 self._set_nested_key(config, key, value)
 
@@ -276,6 +320,28 @@ class ConfigManager:
             current = current[k]
 
         current[keys[-1]] = value
+
+    def _get_nested_key(self, config: Dict, key: str) -> Any:
+        """
+        获取嵌套键值
+
+        Args:
+            config: 配置字典
+            key: 键路径（使用.分隔）
+
+        Returns:
+            Any: 键对应的值，如果不存在返回None
+        """
+        keys = key.split('.')
+        current = config
+
+        for k in keys:
+            if isinstance(current, dict) and k in current:
+                current = current[k]
+            else:
+                return None
+
+        return current
 
     def _merge_configs(self, default_config: Dict, override_config: Dict) -> Dict:
         """

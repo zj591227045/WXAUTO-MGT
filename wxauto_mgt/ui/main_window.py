@@ -454,22 +454,22 @@ class MainWindow(QMainWindow):
         # 添加到主布局
         web_service_layout.addWidget(web_service_group)
 
-        # 添加重载配置按钮
-        self.reload_config_btn = QPushButton("重载配置")
-        self.reload_config_btn.setStyleSheet("""
+        # 添加消息监听控制按钮
+        self.message_listener_btn = QPushButton("开始监听")
+        self.message_listener_btn.setStyleSheet("""
             QPushButton {
-                background-color: #fa8c16;
+                background-color: #52c41a;
                 color: white;
                 border: none;
                 padding: 6px 12px;
                 border-radius: 4px;
             }
             QPushButton:hover {
-                background-color: #ffa940;
+                background-color: #73d13d;
             }
         """)
-        self.reload_config_btn.clicked.connect(self._reload_config)
-        web_service_layout.addWidget(self.reload_config_btn)
+        self.message_listener_btn.clicked.connect(self._toggle_message_listener)
+        web_service_layout.addWidget(self.message_listener_btn)
 
         # 添加暂停/继续监听按钮
         self.pause_resume_btn = QPushButton("暂停监听")
@@ -498,6 +498,9 @@ class MainWindow(QMainWindow):
         # 初始化Web服务状态
         self._update_web_service_status()
 
+        # 初始化消息监听按钮状态
+        self._update_message_listener_status()
+
     def _update_web_service_status(self):
         """更新Web服务状态显示"""
         running = is_web_service_running()
@@ -521,6 +524,26 @@ class MainWindow(QMainWindow):
 
         # 确保状态显示正确
         QApplication.processEvents()
+
+    def _update_message_listener_status(self):
+        """更新消息监听按钮状态"""
+        try:
+            from wxauto_mgt.core.message_listener import message_listener
+
+            # 检查消息监听器是否正在运行
+            is_running = message_listener.running
+
+            # 更新按钮状态
+            self._update_message_listener_button(is_running)
+
+            # 更新暂停/继续按钮的可见性
+            self._update_pause_resume_buttons_visibility(is_running)
+
+        except Exception as e:
+            logger.error(f"更新消息监听状态失败: {e}")
+            # 如果出错，默认显示为未运行状态
+            self._update_message_listener_button(False)
+            self._update_pause_resume_buttons_visibility(False)
 
     def _open_web_service_tab(self):
         """打开Web服务管理选项卡"""
@@ -573,22 +596,85 @@ class MainWindow(QMainWindow):
 
     # 这些方法已移至Web服务面板，这里删除
 
-    def _reload_config(self):
-        """重载配置"""
-        # 创建确认对话框
-        reply = QMessageBox.question(
-            self,
-            '确认彻底重启',
-            "重载配置需要彻底关闭并重启程序，所有服务将被重新初始化。\n\n确定要继续吗？",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+    def _toggle_message_listener(self):
+        """切换消息监听状态"""
+        asyncio.create_task(self._toggle_message_listener_async())
 
-        if reply == QMessageBox.Yes:
-            # 创建异步任务重载配置并重启程序
-            asyncio.create_task(self._restart_application())
+    async def _toggle_message_listener_async(self):
+        """异步切换消息监听状态"""
+        try:
+            from wxauto_mgt.core.message_listener import message_listener
+
+            if message_listener.running:
+                # 停止监听
+                self.status_changed.emit("正在停止消息监听...", 0)
+                await message_listener.stop()
+                self.status_changed.emit("消息监听已停止", 3000)
+                logger.info("消息监听已停止")
+
+                # 更新按钮状态
+                self._update_message_listener_button(False)
+
+                # 隐藏暂停/继续监听按钮
+                self._update_pause_resume_buttons_visibility(False)
+
+            else:
+                # 开始监听
+                self.status_changed.emit("正在启动消息监听...", 0)
+                await message_listener.start()
+                self.status_changed.emit("消息监听已启动", 3000)
+                logger.info("消息监听已启动")
+
+                # 更新按钮状态
+                self._update_message_listener_button(True)
+
+                # 显示暂停/继续监听按钮
+                self._update_pause_resume_buttons_visibility(True)
+
+        except Exception as e:
+            error_msg = f"切换消息监听状态失败: {str(e)}"
+            self.status_changed.emit(error_msg, 5000)
+            logger.error(error_msg)
+
+    def _update_message_listener_button(self, is_running: bool):
+        """更新消息监听按钮状态"""
+        if is_running:
+            self.message_listener_btn.setText("结束监听")
+            self.message_listener_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #ff4d4f;
+                    color: white;
+                    border: none;
+                    padding: 6px 12px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #ff7875;
+                }
+            """)
         else:
-            self.status_changed.emit("已取消重载配置", 3000)
+            self.message_listener_btn.setText("开始监听")
+            self.message_listener_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #52c41a;
+                    color: white;
+                    border: none;
+                    padding: 6px 12px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #73d13d;
+                }
+            """)
+
+    def _update_pause_resume_buttons_visibility(self, visible: bool):
+        """更新暂停/继续监听按钮的可见性"""
+        # 查找消息面板中的暂停/继续按钮并设置可见性
+        if hasattr(self, 'message_panel'):
+            if hasattr(self.message_panel, 'pause_btn'):
+                self.message_panel.pause_btn.setVisible(visible)
+            if hasattr(self.message_panel, 'resume_btn'):
+                self.message_panel.resume_btn.setVisible(visible)
 
     def _toggle_listening_service(self):
         """暂停/继续消息监听服务"""

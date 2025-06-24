@@ -168,6 +168,12 @@ async def init_services():
         # 等待一下确保表创建完成
         await asyncio.sleep(0.1)
 
+        # 初始化配置管理器
+        logger.info("正在初始化配置管理器...")
+        from wxauto_mgt.core.config_manager import config_manager
+        await config_manager.initialize()
+        logger.info("配置管理器初始化完成")
+
         # 加载实例配置
         logger.info("正在加载实例配置...")
         try:
@@ -213,10 +219,15 @@ async def init_services():
 
         # 初始化消息监听
         try:
-            # 设置消息监听服务默认为启用状态
-            logger.info("正在启动消息监听...")
-            await message_listener.start()
-            logger.info("消息监听服务已启动")
+            # 检查是否启用自动启动消息监听
+            auto_start = config_manager.get('message_listener.auto_start', True)  # 默认为True保持向后兼容
+
+            if auto_start:
+                logger.info("正在启动消息监听...")
+                await message_listener.start()
+                logger.info("消息监听服务已启动")
+            else:
+                logger.info("消息监听自动启动已禁用，跳过启动")
         except Exception as e:
             logger.error(f"初始化消息监听失败: {str(e)}")
             # 不中断启动流程

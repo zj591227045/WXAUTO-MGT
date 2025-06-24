@@ -338,6 +338,9 @@ class SettingsDialog(QDialog):
         self._init_ui()
         self._load_settings()
 
+        # 连接信号，实现实时保存
+        self._connect_auto_save_signals()
+
     def _init_ui(self):
         """初始化UI组件"""
         # 主布局
@@ -399,9 +402,11 @@ class SettingsDialog(QDialog):
         notify_layout = QVBoxLayout(self.notify_group)
 
         self.notify_new_check = QCheckBox("接收新消息通知")
+        self.notify_new_check.setToolTip("启用后，当监听到新消息时会在UI中显示通知")
         notify_layout.addWidget(self.notify_new_check)
 
         self.notify_status_check = QCheckBox("接收状态变更通知")
+        self.notify_status_check.setToolTip("启用后，当实例状态或监听对象状态发生变化时会显示通知")
         notify_layout.addWidget(self.notify_status_check)
 
         message_layout.addRow(self.notify_group)
@@ -429,75 +434,47 @@ class SettingsDialog(QDialog):
 
         self.tab_widget.addTab(self.database_tab, "数据库")
 
-        # 集成设置选项卡
-        self.integration_tab = QWidget()
-        integration_layout = QFormLayout(self.integration_tab)
-
-        # ASTRBot集成
-        self.astrbot_group = QGroupBox("ASTRBot集成")
-        astrbot_layout = QFormLayout(self.astrbot_group)
-
-        self.astrbot_enable_check = QCheckBox("启用ASTRBot集成")
-        astrbot_layout.addRow("", self.astrbot_enable_check)
-
-        self.astrbot_url_edit = QLineEdit()
-        astrbot_layout.addRow("ASTRBot URL:", self.astrbot_url_edit)
-
-        self.astrbot_token_edit = QLineEdit()
-        self.astrbot_token_edit.setEchoMode(QLineEdit.Password)
-        astrbot_layout.addRow("ASTRBot Token:", self.astrbot_token_edit)
-
-        integration_layout.addRow(self.astrbot_group)
-
-        # LLM集成
-        self.llm_group = QGroupBox("LLM集成")
-        llm_layout = QFormLayout(self.llm_group)
-
-        self.llm_enable_check = QCheckBox("启用LLM集成")
-        llm_layout.addRow("", self.llm_enable_check)
-
-        self.llm_provider_combo = QComboBox()
-        self.llm_provider_combo.addItems(["OpenAI", "自定义"])
-        llm_layout.addRow("LLM提供商:", self.llm_provider_combo)
-
-        self.llm_api_edit = QLineEdit()
-        llm_layout.addRow("API地址:", self.llm_api_edit)
-
-        self.llm_key_edit = QLineEdit()
-        self.llm_key_edit.setEchoMode(QLineEdit.Password)
-        llm_layout.addRow("API密钥:", self.llm_key_edit)
-
-        integration_layout.addRow(self.llm_group)
-
-        self.tab_widget.addTab(self.integration_tab, "集成")
-
         # Web服务设置选项卡
         self.web_service_tab = QWidget()
-        web_service_layout = QFormLayout(self.web_service_tab)
+        web_service_layout = QVBoxLayout(self.web_service_tab)
+        web_service_layout.setContentsMargins(10, 10, 10, 10)
+        web_service_layout.setSpacing(10)
 
-        # Web服务启用
-        self.web_service_enable_check = QCheckBox("启用Web管理服务")
-        web_service_layout.addRow("", self.web_service_enable_check)
+        # 创建Web服务配置表单
+        form_layout = QFormLayout()
+        form_layout.setContentsMargins(0, 10, 0, 10)
+        form_layout.setSpacing(10)
 
-        # 服务器地址
-        self.web_host_edit = QLineEdit()
-        self.web_host_edit.setPlaceholderText("127.0.0.1")
-        web_service_layout.addRow("服务器地址:", self.web_host_edit)
+        # 主机地址
+        host_layout = QHBoxLayout()
+        self.web_host_edit = QLineEdit("0.0.0.0")
+        self.web_host_edit.setToolTip("Web服务主机地址，默认为0.0.0.0（监听所有网络接口）")
+        self.web_host_edit.setFixedWidth(200)
+        host_layout.addWidget(self.web_host_edit)
+        host_layout.addStretch()
+        form_layout.addRow("主机地址:", host_layout)
 
-        # 服务器端口
+        # 端口号
+        port_layout = QHBoxLayout()
         self.web_port_spin = QSpinBox()
         self.web_port_spin.setRange(1024, 65535)
-        self.web_port_spin.setValue(8443)
-        web_service_layout.addRow("服务器端口:", self.web_port_spin)
+        self.web_port_spin.setValue(8080)  # 默认端口
+        self.web_port_spin.setFixedWidth(100)
+        self.web_port_spin.setToolTip("Web服务端口号 (1024-65535)")
+        port_layout.addWidget(self.web_port_spin)
+        port_layout.addStretch()
+        form_layout.addRow("端口号:", port_layout)
 
-        # 自动启动Web服务
+        # 自动启动
+        auto_start_layout = QHBoxLayout()
         self.web_auto_start_check = QCheckBox("程序启动时自动启动Web服务")
-        web_service_layout.addRow("", self.web_auto_start_check)
+        self.web_auto_start_check.setChecked(False)
+        auto_start_layout.addWidget(self.web_auto_start_check)
+        auto_start_layout.addStretch()
+        form_layout.addRow("", auto_start_layout)
 
-        # 调试模式
-        self.web_debug_check = QCheckBox("启用调试模式")
-        self.web_debug_check.setToolTip("启用后会显示详细的调试信息")
-        web_service_layout.addRow("", self.web_debug_check)
+        web_service_layout.addLayout(form_layout)
+        web_service_layout.addStretch()
 
         self.tab_widget.addTab(self.web_service_tab, "Web服务")
 
@@ -531,7 +508,7 @@ class SettingsDialog(QDialog):
                 self.log_level_combo.setCurrentIndex(index)
 
             # 自动启动监听
-            auto_start = config_manager.get('message_listener.auto_start', False)
+            auto_start = config_manager.get('message_listener.auto_start', True)  # 默认为True，与默认配置一致
             self.auto_start_check.setChecked(auto_start)
 
             # 自动刷新状态
@@ -558,6 +535,13 @@ class SettingsDialog(QDialog):
             # 监听超时时间
             listener_timeout = config_manager.get('message_listener.listener_timeout_minutes', 30)
             self.timeout_spin.setValue(listener_timeout)
+
+            # 消息通知设置
+            notify_new = config_manager.get('message_listener.notify_new_messages', True)
+            self.notify_new_check.setChecked(notify_new)
+
+            notify_status = config_manager.get('message_listener.notify_status_changes', True)
+            self.notify_status_check.setChecked(notify_status)
         except Exception as e:
             logger.error(f"加载消息监听设置失败: {e}")
 
@@ -566,35 +550,122 @@ class SettingsDialog(QDialog):
             # 数据库路径
             db_path = config_manager.get('db.path', './data/wxauto_mgt.db')
             self.db_path_edit.setText(db_path)
+
+            # 自动清理旧消息
+            auto_clean = config_manager.get('db.auto_clean_messages', False)
+            self.auto_clean_check.setChecked(auto_clean)
+
+            # 保留时间
+            retention_days = config_manager.get('db.retention_days', 7)
+            self.retention_spin.setValue(retention_days)
         except Exception as e:
             logger.error(f"加载数据库设置失败: {e}")
 
         # 加载Web服务设置
         try:
-            # Web服务启用
-            web_service_enabled = config_manager.get('web_service.enabled', False)
-            self.web_service_enable_check.setChecked(web_service_enabled)
+            # 从config_store同步加载Web服务配置（与主窗口保持一致）
+            from wxauto_mgt.data.config_store import config_store
+            import json
 
-            # 服务器地址
-            web_host = config_manager.get('web_service.host', '127.0.0.1')
-            self.web_host_edit.setText(web_host)
+            # 使用同步方法加载配置
+            web_config_raw = config_store.get_config_sync('system', 'web_service', {})
 
-            # 服务器端口
-            web_port = config_manager.get('web_service.port', 8443)
-            self.web_port_spin.setValue(web_port)
+            # 如果返回的是字符串，解析为字典
+            if isinstance(web_config_raw, str):
+                web_config = json.loads(web_config_raw)
+            else:
+                web_config = web_config_raw
 
-            # 自动启动Web服务
-            web_auto_start = config_manager.get('web_service.auto_start', False)
-            self.web_auto_start_check.setChecked(web_auto_start)
+            if web_config:
+                # 设置主机地址
+                if 'host' in web_config:
+                    self.web_host_edit.setText(web_config['host'])
+                else:
+                    self.web_host_edit.setText('0.0.0.0')
 
-            # 调试模式
-            web_debug = config_manager.get('web_service.debug', False)
-            self.web_debug_check.setChecked(web_debug)
+                # 设置端口号
+                if 'port' in web_config:
+                    self.web_port_spin.setValue(web_config['port'])
+                else:
+                    self.web_port_spin.setValue(8080)
+
+                # 设置自动启动
+                if 'auto_start' in web_config:
+                    self.web_auto_start_check.setChecked(web_config['auto_start'])
+                else:
+                    self.web_auto_start_check.setChecked(False)
+
+                logger.debug(f"已加载Web服务配置: {web_config}")
+            else:
+                # 使用默认值
+                self.web_host_edit.setText('0.0.0.0')
+                self.web_port_spin.setValue(8080)
+                self.web_auto_start_check.setChecked(False)
+                logger.debug("未找到Web服务配置，使用默认值")
         except Exception as e:
             logger.error(f"加载Web服务设置失败: {e}")
+            # 使用默认值
+            self.web_host_edit.setText('0.0.0.0')
+            self.web_port_spin.setValue(8080)
+            self.web_auto_start_check.setChecked(False)
 
-        # 加载集成设置
-        # TODO: 实现集成设置加载逻辑
+    def _connect_auto_save_signals(self):
+        """连接自动保存信号"""
+        # 连接重要设置的变更信号，实现实时保存
+        self.auto_start_check.toggled.connect(self._auto_save_auto_start)
+
+    def _auto_save_auto_start(self, checked):
+        """自动保存auto_start设置"""
+        try:
+            from wxauto_mgt.core.config_manager import config_manager
+            import asyncio
+
+            # 保存设置
+            config_manager.set('message_listener.auto_start', checked)
+
+            # 异步保存到数据库
+            asyncio.create_task(config_manager.save_config())
+
+            logger.info(f"自动保存auto_start设置: {checked}")
+        except Exception as e:
+            logger.error(f"自动保存auto_start设置失败: {e}")
+
+    async def _save_web_service_config_async(self, host, port, auto_start):
+        """异步保存Web服务配置"""
+        try:
+            from wxauto_mgt.data.config_store import config_store
+            from wxauto_mgt.web import set_web_service_config, get_web_service_config
+
+            # 保存到config_store
+            await config_store.set_config('system', 'web_service', {
+                'host': host,
+                'port': port,
+                'auto_start': auto_start
+            })
+
+            # 同步更新Web服务配置
+            config = get_web_service_config()
+            config['host'] = host
+            config['port'] = port
+            set_web_service_config(config)
+
+            logger.debug(f"已保存Web服务配置: host={host}, port={port}, auto_start={auto_start}")
+        except Exception as e:
+            logger.error(f"异步保存Web服务配置失败: {e}")
+
+    async def _start_cleanup_task(self, retention_days):
+        """启动数据库清理任务"""
+        try:
+            from wxauto_mgt.core.message_store import message_store
+
+            # 执行清理
+            success = await message_store.cleanup_old_messages(retention_days)
+            if success:
+                logger.info(f"数据库清理完成，保留{retention_days}天内的消息")
+            else:
+                logger.error("数据库清理失败")
+        except Exception as e:
+            logger.error(f"启动数据库清理任务失败: {e}")
 
     def _apply_settings(self):
         """应用设置"""
@@ -653,6 +724,13 @@ class SettingsDialog(QDialog):
             listener_timeout = self.timeout_spin.value()
             config_manager.set('message_listener.listener_timeout_minutes', listener_timeout)
 
+            # 消息通知设置
+            notify_new = self.notify_new_check.isChecked()
+            config_manager.set('message_listener.notify_new_messages', notify_new)
+
+            notify_status = self.notify_status_check.isChecked()
+            config_manager.set('message_listener.notify_status_changes', notify_status)
+
             # 更新消息监听器设置
             from wxauto_mgt.core.message_listener import message_listener
             message_listener.poll_interval = poll_interval
@@ -666,37 +744,34 @@ class SettingsDialog(QDialog):
             # 数据库路径
             db_path = self.db_path_edit.text().strip()
             config_manager.set('db.path', db_path)
+
+            # 自动清理旧消息
+            auto_clean = self.auto_clean_check.isChecked()
+            config_manager.set('db.auto_clean_messages', auto_clean)
+
+            # 保留时间
+            retention_days = self.retention_spin.value()
+            config_manager.set('db.retention_days', retention_days)
+
+            # 如果启用了自动清理，启动清理任务
+            if auto_clean:
+                asyncio.create_task(self._start_cleanup_task(retention_days))
         except Exception as e:
             logger.error(f"保存数据库设置失败: {e}")
 
         # 保存Web服务设置
         try:
-            # Web服务启用
-            web_service_enabled = self.web_service_enable_check.isChecked()
-            config_manager.set('web_service.enabled', web_service_enabled)
-
-            # 服务器地址
-            web_host = self.web_host_edit.text().strip() or '127.0.0.1'
-            config_manager.set('web_service.host', web_host)
-
-            # 服务器端口
+            # 获取配置
+            web_host = self.web_host_edit.text().strip() or '0.0.0.0'
             web_port = self.web_port_spin.value()
-            config_manager.set('web_service.port', web_port)
-
-            # 自动启动Web服务
             web_auto_start = self.web_auto_start_check.isChecked()
-            config_manager.set('web_service.auto_start', web_auto_start)
 
-            # 调试模式
-            web_debug = self.web_debug_check.isChecked()
-            config_manager.set('web_service.debug', web_debug)
+            # 保存到config_store（与Web服务面板同步）
+            asyncio.create_task(self._save_web_service_config_async(web_host, web_port, web_auto_start))
 
-            logger.info(f"保存Web服务设置: enabled={web_service_enabled}, host={web_host}, port={web_port}, auto_start={web_auto_start}, debug={web_debug}")
+            logger.info(f"保存Web服务设置: host={web_host}, port={web_port}, auto_start={web_auto_start}")
         except Exception as e:
             logger.error(f"保存Web服务设置失败: {e}")
-
-        # 保存集成设置
-        # TODO: 实现集成设置保存逻辑
 
         # 异步保存配置
         asyncio.create_task(config_manager.save_config())

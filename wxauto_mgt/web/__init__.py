@@ -15,8 +15,8 @@ from wxauto_mgt.utils.logging import logger
 _web_server_thread = None
 _web_service_running = False
 _web_service_config = {
-    'port': 8443,
-    'host': '127.0.0.1'
+    'port': 8080,
+    'host': '0.0.0.0'
 }
 
 def get_web_service_config():
