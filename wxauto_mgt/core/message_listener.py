@@ -20,6 +20,8 @@ from collections import defaultdict
 
 from wxauto_mgt.core.api_client import instance_manager
 from wxauto_mgt.data.db_manager import db_manager
+from wxauto_mgt.core.config_notifier import config_notifier, ConfigChangeEvent
+from wxauto_mgt.core.service_monitor import service_monitor
 
 # 配置日志 - 使用主日志记录器，确保所有日志都记录到主日志文件
 logger = logging.getLogger('wxauto_mgt')
@@ -75,6 +77,9 @@ class MessageListener:
         # 启动时间戳，用于提供宽限期
         self.startup_timestamp = 0
 
+        # 配置变更监听标志
+        self._config_listeners_registered = False
+
     async def start(self):
         """启动监听服务"""
         if self.running:
@@ -103,6 +108,9 @@ class MessageListener:
             # 处理完成后，释放锁
             self._starting_up = False
 
+        # 注册配置变更监听器
+        await self._register_config_listeners()
+
         # 创建主要任务
         main_window_task = asyncio.create_task(self._main_window_check_loop())
         listeners_task = asyncio.create_task(self._listeners_check_loop())
@@ -117,6 +125,9 @@ class MessageListener:
 
         self.running = False
         logger.info("停止消息监听服务")
+
+        # 注销配置变更监听器
+        await self._unregister_config_listeners()
 
         # 取消所有任务
         for task in self._tasks:
@@ -158,6 +169,9 @@ class MessageListener:
 
     async def _main_window_check_loop(self):
         """主窗口未读消息检查循环"""
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+
         while self.running:
             try:
                 # 检查是否暂停
@@ -168,16 +182,41 @@ class MessageListener:
                 for instance_id, api_client in instances.items():
                     # 再次检查是否暂停（每个实例处理前）
                     await self.wait_if_paused()
+
+                    # 检查API客户端连接状态
+                    if not await self._check_api_client_health(instance_id, api_client):
+                        logger.warning(f"实例 {instance_id} API客户端连接异常，跳过本次检查")
+                        continue
+
                     await self.check_main_window_messages(instance_id, api_client)
+
+                # 重置错误计数
+                consecutive_errors = 0
                 await asyncio.sleep(self.poll_interval)
+
             except asyncio.CancelledError:
+                logger.info("主窗口检查循环被取消")
                 break
             except Exception as e:
-                logger.error(f"检查主窗口消息时出错: {e}")
-                await asyncio.sleep(self.poll_interval)
+                consecutive_errors += 1
+                logger.error(f"检查主窗口消息时出错 (连续错误: {consecutive_errors}/{max_consecutive_errors}): {e}")
+                logger.exception(e)
+
+                # 记录错误到监控系统
+                service_monitor.record_error("message_listener", f"主窗口检查错误: {e}", "main_window_check")
+
+                # 如果连续错误过多，增加等待时间
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.warning(f"主窗口检查连续出错 {consecutive_errors} 次，延长等待时间")
+                    await asyncio.sleep(self.poll_interval * 3)
+                else:
+                    await asyncio.sleep(self.poll_interval)
 
     async def _listeners_check_loop(self):
         """监听对象消息检查循环"""
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+
         while self.running:
             try:
                 # 检查是否暂停
@@ -188,28 +227,69 @@ class MessageListener:
                 for instance_id, api_client in instances.items():
                     # 再次检查是否暂停（每个实例处理前）
                     await self.wait_if_paused()
+
+                    # 检查API客户端连接状态
+                    if not await self._check_api_client_health(instance_id, api_client):
+                        logger.warning(f"实例 {instance_id} API客户端连接异常，跳过本次检查")
+                        continue
+
                     await self.check_listener_messages(instance_id, api_client)
+
+                # 重置错误计数
+                consecutive_errors = 0
                 await asyncio.sleep(self.poll_interval)
+
             except asyncio.CancelledError:
+                logger.info("监听对象检查循环被取消")
                 break
             except Exception as e:
-                logger.error(f"检查监听对象消息时出错: {e}")
-                await asyncio.sleep(self.poll_interval)
+                consecutive_errors += 1
+                logger.error(f"检查监听对象消息时出错 (连续错误: {consecutive_errors}/{max_consecutive_errors}): {e}")
+                logger.exception(e)
+
+                # 记录错误到监控系统
+                service_monitor.record_error("message_listener", f"监听对象检查错误: {e}", "listener_check")
+
+                # 如果连续错误过多，增加等待时间
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.warning(f"监听对象检查连续出错 {consecutive_errors} 次，延长等待时间")
+                    await asyncio.sleep(self.poll_interval * 3)
+                else:
+                    await asyncio.sleep(self.poll_interval)
 
     async def _cleanup_loop(self):
         """清理过期监听对象循环"""
+        consecutive_errors = 0
+        max_consecutive_errors = 3
+
         while self.running:
             try:
                 # 检查是否暂停
                 await self.wait_if_paused()
 
                 await self._remove_inactive_listeners()
+
+                # 重置错误计数
+                consecutive_errors = 0
                 await asyncio.sleep(60)  # 每分钟检查一次
+
             except asyncio.CancelledError:
+                logger.info("清理循环被取消")
                 break
             except Exception as e:
-                logger.error(f"清理过期监听对象时出错: {e}")
-                await asyncio.sleep(60)
+                consecutive_errors += 1
+                logger.error(f"清理过期监听对象时出错 (连续错误: {consecutive_errors}/{max_consecutive_errors}): {e}")
+                logger.exception(e)
+
+                # 记录错误到监控系统
+                service_monitor.record_error("message_listener", f"清理任务错误: {e}", "cleanup")
+
+                # 如果连续错误过多，增加等待时间
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.warning(f"清理任务连续出错 {consecutive_errors} 次，延长等待时间")
+                    await asyncio.sleep(180)  # 等待3分钟
+                else:
+                    await asyncio.sleep(60)
 
     async def check_main_window_messages(self, instance_id: str, api_client):
         """
@@ -326,6 +406,10 @@ class MessageListener:
 
                         logger.debug(f"准备保存主窗口消息: {save_data}")
                         message_id = await self._save_message(save_data)
+
+                        # 记录消息处理统计
+                        if message_id:
+                            service_monitor.record_message_processed()
 
                         # 直接处理消息投递和回复 - 新增部分
                         if message_id:
@@ -520,6 +604,8 @@ class MessageListener:
                             message_id = await self._save_message(save_data)
                             if message_id:
                                 logger.debug(f"监听消息保存成功，ID: {message_id}")
+                                # 记录消息处理统计
+                                service_monitor.record_message_processed()
                     else:
                         logger.debug(f"实例 {instance_id} 监听对象 {who} 没有新消息")
 
@@ -657,6 +743,9 @@ class MessageListener:
             if conversation_id:
                 logger.debug(f"监听对象已设置会话ID: {instance_id} - {who} - {conversation_id}")
 
+            # 记录监听对象添加统计
+            service_monitor.record_listener_added()
+
             return True
 
     async def remove_listener(self, instance_id: str, who: str):
@@ -705,6 +794,10 @@ class MessageListener:
 
                 # 只要完成了本地清理，就认为移除成功
                 logger.info(f"已移除实例 {instance_id} 的监听对象: {who}")
+
+                # 记录监听对象移除统计
+                service_monitor.record_listener_removed()
+
                 return True
 
             except Exception as e:
@@ -1688,6 +1781,132 @@ class MessageListener:
 
         except Exception as e:
             logger.error(f"标记监听对象为非活跃失败: {e}")
+            logger.exception(e)
+            return False
+
+    async def _register_config_listeners(self):
+        """注册配置变更监听器"""
+        if self._config_listeners_registered:
+            return
+
+        try:
+            # 监听所有配置变更事件
+            await config_notifier.subscribe_all(self._on_config_changed)
+            self._config_listeners_registered = True
+            logger.info("已注册配置变更监听器")
+        except Exception as e:
+            logger.error(f"注册配置变更监听器失败: {e}")
+
+    async def _unregister_config_listeners(self):
+        """注销配置变更监听器"""
+        if not self._config_listeners_registered:
+            return
+
+        try:
+            await config_notifier.unsubscribe_all(self._on_config_changed)
+            self._config_listeners_registered = False
+            logger.info("已注销配置变更监听器")
+        except Exception as e:
+            logger.error(f"注销配置变更监听器失败: {e}")
+
+    async def _on_config_changed(self, event: ConfigChangeEvent):
+        """
+        处理配置变更事件
+
+        Args:
+            event: 配置变更事件
+        """
+        try:
+            logger.info(f"收到配置变更通知: {event.change_type.value}")
+
+            # 根据变更类型进行相应处理
+            if event.change_type.value.startswith('platform_') or event.change_type.value.startswith('rule_'):
+                # 平台或规则配置变更，重新加载相关配置
+                await self._reload_config_cache()
+
+        except Exception as e:
+            logger.error(f"处理配置变更事件失败: {e}")
+            logger.exception(e)
+
+    async def _reload_config_cache(self):
+        """重新加载配置缓存"""
+        try:
+            logger.info("开始重新加载配置缓存")
+
+            # 重新初始化服务平台管理器和规则管理器
+            from wxauto_mgt.core.service_platform_manager import platform_manager, rule_manager
+
+            # 强制重新初始化（清除已初始化标志）
+            platform_manager._initialized = False
+            rule_manager._initialized = False
+
+            # 重新初始化
+            await platform_manager.initialize()
+            await rule_manager.initialize()
+
+            logger.info("配置缓存重新加载完成")
+
+            # 记录配置重新加载统计
+            service_monitor.record_config_reload()
+
+        except Exception as e:
+            logger.error(f"重新加载配置缓存失败: {e}")
+            logger.exception(e)
+
+    async def _check_api_client_health(self, instance_id: str, api_client) -> bool:
+        """
+        检查API客户端连接健康状态
+
+        Args:
+            instance_id: 实例ID
+            api_client: API客户端实例
+
+        Returns:
+            bool: 连接是否健康
+        """
+        try:
+            # 检查客户端是否已初始化
+            if not hasattr(api_client, 'initialized') or not api_client.initialized:
+                logger.warning(f"实例 {instance_id} API客户端未初始化，尝试重新初始化")
+                try:
+                    init_result = await api_client.initialize()
+                    if not init_result:
+                        logger.error(f"实例 {instance_id} API客户端重新初始化失败")
+                        return False
+                    logger.info(f"实例 {instance_id} API客户端重新初始化成功")
+                except Exception as init_e:
+                    logger.error(f"实例 {instance_id} API客户端初始化异常: {init_e}")
+                    return False
+
+            # 简单的健康检查 - 尝试获取实例状态
+            try:
+                # 这里可以调用一个轻量级的API来检查连接状态
+                # 如果API客户端有健康检查方法，使用它
+                if hasattr(api_client, 'health_check'):
+                    health_result = await api_client.health_check()
+                    return health_result
+                else:
+                    # 如果没有专门的健康检查方法，认为已初始化的客户端是健康的
+                    return True
+
+            except Exception as health_e:
+                logger.warning(f"实例 {instance_id} 健康检查失败: {health_e}")
+                # 尝试重新初始化
+                try:
+                    logger.info(f"尝试重新初始化实例 {instance_id}")
+                    init_result = await api_client.initialize()
+                    if init_result:
+                        logger.info(f"实例 {instance_id} 重新初始化成功")
+                        return True
+                    else:
+                        logger.error(f"实例 {instance_id} 重新初始化失败")
+                        return False
+                except Exception as reinit_e:
+                    logger.error(f"实例 {instance_id} 重新初始化异常: {reinit_e}")
+                    return False
+
+        except Exception as e:
+            logger.error(f"检查实例 {instance_id} API客户端健康状态时出错: {e}")
             logger.exception(e)
             return False
 

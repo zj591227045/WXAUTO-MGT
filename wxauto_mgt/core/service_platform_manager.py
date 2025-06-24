@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Any
 
 from wxauto_mgt.data.db_manager import db_manager
 from wxauto_mgt.core.service_platform import ServicePlatform, create_platform
+from wxauto_mgt.core.config_notifier import config_notifier, ConfigChangeType
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,15 @@ class ServicePlatformManager:
                     if enabled:
                         self._platforms[platform_id] = platform
                     logger.info(f"注册平台成功: {name} ({platform_id}) - {'启用' if enabled else '禁用'}")
+
+                    # 发送配置变更通知
+                    await config_notifier.notify(ConfigChangeType.PLATFORM_ADDED, {
+                        'platform_id': platform_id,
+                        'name': name,
+                        'type': platform_type,
+                        'enabled': enabled
+                    })
+
                     return platform_id
                 except Exception as add_error:
                     logger.error(f"添加平台到管理器时出错: {add_error}")
@@ -341,6 +351,14 @@ class ServicePlatformManager:
                 try:
                     self._platforms[platform_id] = platform
                     logger.info(f"更新平台成功: {name} ({platform_id})")
+
+                    # 发送配置变更通知
+                    await config_notifier.notify(ConfigChangeType.PLATFORM_UPDATED, {
+                        'platform_id': platform_id,
+                        'name': name,
+                        'config': config
+                    })
+
                     return True
                 except Exception as update_error:
                     logger.error(f"更新平台管理器时出错: {update_error}")
@@ -413,6 +431,14 @@ class ServicePlatformManager:
                 logger.warning(f"重新加载平台实例失败，但数据库已更新: {reload_error}")
 
             logger.info(f"简单更新平台配置成功: {name} ({platform_id})")
+
+            # 发送配置变更通知
+            await config_notifier.notify(ConfigChangeType.PLATFORM_UPDATED, {
+                'platform_id': platform_id,
+                'name': name,
+                'config': config
+            })
+
             return True
         except Exception as e:
             logger.error(f"简单更新平台配置失败: {e}")
@@ -473,6 +499,12 @@ class ServicePlatformManager:
                     if platform_id in self._platforms:
                         del self._platforms[platform_id]
                     logger.info(f"删除平台成功: {platform_id}")
+
+                    # 发送配置变更通知
+                    await config_notifier.notify(ConfigChangeType.PLATFORM_DELETED, {
+                        'platform_id': platform_id
+                    })
+
                     return True
                 except Exception as del_error:
                     logger.error(f"从管理器删除平台时出错: {del_error}")
@@ -534,6 +566,12 @@ class ServicePlatformManager:
                 logger.warning(f"从内存中移除平台实例失败，但数据库已更新: {remove_error}")
 
             logger.info(f"简单删除平台成功: {platform_id}")
+
+            # 发送配置变更通知
+            await config_notifier.notify(ConfigChangeType.PLATFORM_DELETED, {
+                'platform_id': platform_id
+            })
+
             return True
         except Exception as e:
             logger.error(f"简单删除平台失败: {e}")
@@ -606,6 +644,14 @@ class ServicePlatformManager:
                             del self._platforms[platform_id]
 
                     logger.info(f"{'启用' if enabled else '禁用'}平台成功: {platform_id}")
+
+                    # 发送配置变更通知
+                    change_type = ConfigChangeType.PLATFORM_ENABLED if enabled else ConfigChangeType.PLATFORM_DISABLED
+                    await config_notifier.notify(change_type, {
+                        'platform_id': platform_id,
+                        'enabled': enabled
+                    })
+
                     return True
                 except Exception as update_error:
                     logger.error(f"更新管理器时出错: {update_error}")
@@ -804,6 +850,16 @@ class DeliveryRuleManager:
 
             logger.info(f"添加规则: {name} ({rule_id})")
 
+            # 发送配置变更通知
+            await config_notifier.notify(ConfigChangeType.RULE_ADDED, {
+                'rule_id': rule_id,
+                'name': name,
+                'instance_id': instance_id,
+                'chat_pattern': chat_pattern,
+                'platform_id': platform_id,
+                'priority': priority
+            })
+
             return rule_id
         except Exception as e:
             logger.error(f"添加规则失败: {e}")
@@ -872,6 +928,16 @@ class DeliveryRuleManager:
 
             logger.info(f"更新规则: {name} ({rule_id})")
 
+            # 发送配置变更通知
+            await config_notifier.notify(ConfigChangeType.RULE_UPDATED, {
+                'rule_id': rule_id,
+                'name': name,
+                'instance_id': instance_id,
+                'chat_pattern': chat_pattern,
+                'platform_id': platform_id,
+                'priority': priority
+            })
+
             return True
         except Exception as e:
             logger.error(f"更新规则失败: {e}")
@@ -911,6 +977,11 @@ class DeliveryRuleManager:
             await self._load_rules()
 
             logger.info(f"删除规则: {rule_id}")
+
+            # 发送配置变更通知
+            await config_notifier.notify(ConfigChangeType.RULE_DELETED, {
+                'rule_id': rule_id
+            })
 
             return True
         except Exception as e:
@@ -957,6 +1028,13 @@ class DeliveryRuleManager:
             await self._load_rules()
 
             logger.info(f"{'启用' if enabled else '禁用'}规则: {rule_id}")
+
+            # 发送配置变更通知
+            change_type = ConfigChangeType.RULE_ENABLED if enabled else ConfigChangeType.RULE_DISABLED
+            await config_notifier.notify(change_type, {
+                'rule_id': rule_id,
+                'enabled': enabled
+            })
 
             return True
         except Exception as e:
