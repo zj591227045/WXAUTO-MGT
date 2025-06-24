@@ -481,8 +481,11 @@ class MessageDeliveryService:
             )
 
             # 发送回复 - 记录详细信息
-            reply_content = delivery_result.get('content', '')
-            if reply_content:
+            # 检查平台是否建议发送回复
+            should_reply = delivery_result.get('should_reply', True)  # 默认发送回复
+            reply_content = delivery_result.get('content', '') or delivery_result.get('reply_content', '')
+
+            if should_reply and reply_content:
                 # 记录详细的回复信息
                 logger.info(f"准备发送回复: ID={message_id}, 实例={message['instance_id']}, 聊天={message['chat_name']}, 内容长度={len(reply_content)}")
                 logger.debug(f"回复内容摘要: {reply_content[:100]}{'...' if len(reply_content) > 100 else ''}")
@@ -518,6 +521,11 @@ class MessageDeliveryService:
                     # 标记为回复失败
                     logger.error(f"回复发送失败: ID={message_id}, 聊天={message['chat_name']}")
                     await self._update_message_reply_status(message_id, 2, reply_content)
+            elif not should_reply:
+                # 平台建议不发送回复（如"信息与记账无关"）
+                logger.info(f"平台建议不发送回复: ID={message_id}, 实例={message['instance_id']}, 聊天={message['chat_name']}")
+                # 标记为不需要回复（使用状态0表示不需要回复）
+                await self._update_message_reply_status(message_id, 0, reply_content or "不需要回复")
             else:
                 # 记录警告日志
                 logger.warning(f"平台没有返回回复内容: ID={message_id}, 实例={message['instance_id']}, 聊天={message['chat_name']}")

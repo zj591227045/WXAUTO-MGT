@@ -1426,6 +1426,227 @@ async def get_logs(limit: int = 50, since: Optional[int] = None):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取日志失败: {str(e)}")
 
+# 记账平台相关API
+
+@api_router.post("/platforms/zhiweijz")
+async def create_zhiweijz_platform(request: Request):
+    """创建只为记账平台"""
+    try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
+        data = await request.json()
+
+        # 验证必需字段
+        required_fields = ['name', 'server_url', 'username', 'password']
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"缺少必需字段: {field}")
+
+        # 创建平台配置
+        config = {
+            'server_url': data['server_url'].rstrip('/'),
+            'username': data['username'],
+            'password': data['password'],
+            'account_book_id': data.get('account_book_id', ''),
+            'account_book_name': data.get('account_book_name', ''),
+            'auto_login': data.get('auto_login', True),
+            'token_refresh_interval': data.get('token_refresh_interval', 300),
+            'request_timeout': data.get('request_timeout', 30),
+            'max_retries': data.get('max_retries', 3)
+        }
+
+        # 注册平台
+        platform_id = await platform_manager.register_platform(
+            "zhiweijz",
+            data['name'],
+            config,
+            enabled=data.get('enabled', True)
+        )
+
+        if platform_id:
+            return {"code": 0, "message": "只为记账平台创建成功", "data": {"platform_id": platform_id}}
+        else:
+            raise HTTPException(status_code=500, detail="创建只为记账平台失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"创建只为记账平台失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"创建只为记账平台失败: {str(e)}")
+
+@api_router.get("/accounting/records")
+async def get_accounting_records(
+    platform_id: Optional[str] = None,
+    instance_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    success_only: Optional[bool] = None
+):
+    """获取记账记录"""
+    try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
+        # 构建查询条件
+        query = "SELECT * FROM accounting_records WHERE 1=1"
+        params = []
+
+        if platform_id:
+            query += " AND platform_id = ?"
+            params.append(platform_id)
+
+        if instance_id:
+            query += " AND instance_id = ?"
+            params.append(instance_id)
+
+        if success_only is not None:
+            query += " AND success = ?"
+            params.append(1 if success_only else 0)
+
+        # 添加排序和分页
+        query += " ORDER BY create_time DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        # 执行查询
+        records = await db_manager.fetchall(query, tuple(params))
+
+        # 获取总数
+        count_query = "SELECT COUNT(*) as total FROM accounting_records WHERE 1=1"
+        count_params = []
+
+        if platform_id:
+            count_query += " AND platform_id = ?"
+            count_params.append(platform_id)
+
+        if instance_id:
+            count_query += " AND instance_id = ?"
+            count_params.append(instance_id)
+
+        if success_only is not None:
+            count_query += " AND success = ?"
+            count_params.append(1 if success_only else 0)
+
+        total_result = await db_manager.fetchone(count_query, tuple(count_params))
+        total = total_result['total'] if total_result else 0
+
+        return {
+            "code": 0,
+            "message": "获取成功",
+            "data": {
+                "records": records,
+                "total": total,
+                "limit": limit,
+                "offset": offset
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"获取记账记录失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"获取记账记录失败: {str(e)}")
+
+@api_router.get("/accounting/stats")
+async def get_accounting_stats(platform_id: Optional[str] = None):
+    """获取记账统计信息"""
+    try:
+        # 确保管理器已初始化
+        await initialize_managers()
+
+        # 构建查询条件
+        if platform_id:
+            query = "SELECT * FROM accounting_stats WHERE platform_id = ?"
+            params = (platform_id,)
+        else:
+            query = "SELECT * FROM accounting_stats"
+            params = ()
+
+        # 执行查询
+        stats = await db_manager.fetchall(query, params)
+
+        return {
+            "code": 0,
+            "message": "获取成功",
+            "data": stats
+        }
+
+    except Exception as e:
+        logger.error(f"获取记账统计信息失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"获取记账统计信息失败: {str(e)}")
+
+@api_router.post("/accounting/test")
+async def test_accounting_connection(request: Request):
+    """测试记账平台连接"""
+    try:
+        data = await request.json()
+
+        # 验证必需字段
+        required_fields = ['server_url', 'username', 'password']
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"缺少必需字段: {field}")
+
+        # 创建临时记账管理器进行测试
+        from wxauto_mgt.core.async_accounting_manager import AsyncAccountingManager
+
+        config = {
+            'server_url': data['server_url'].rstrip('/'),
+            'username': data['username'],
+            'password': data['password'],
+            'account_book_id': data.get('account_book_id', ''),
+            'auto_login': True,
+            'request_timeout': 30
+        }
+
+        async with AsyncAccountingManager(config) as manager:
+            # 测试登录
+            success, message = await manager.login()
+
+            if success:
+                # 测试获取账本列表
+                books_success, books_message, books = await manager.get_account_books()
+
+                return {
+                    "code": 0,
+                    "message": "连接测试成功",
+                    "data": {
+                        "login_success": True,
+                        "login_message": message,
+                        "books_success": books_success,
+                        "books_message": books_message,
+                        "account_books": books if books_success else []
+                    }
+                }
+            else:
+                return {
+                    "code": 1,
+                    "message": f"连接测试失败: {message}",
+                    "data": {
+                        "login_success": False,
+                        "login_message": message,
+                        "books_success": False,
+                        "books_message": "",
+                        "account_books": []
+                    }
+                }
+
+    except Exception as e:
+        logger.error(f"测试记账连接失败: {e}")
+        logger.error(traceback.format_exc())
+        return {
+            "code": 1,
+            "message": f"测试失败: {str(e)}",
+            "data": {
+                "login_success": False,
+                "login_message": str(e),
+                "books_success": False,
+                "books_message": "",
+                "account_books": []
+            }
+        }
+
 def register_api_routes(app: FastAPI):
     """
     注册API路由

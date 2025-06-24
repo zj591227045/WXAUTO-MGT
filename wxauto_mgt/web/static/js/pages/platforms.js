@@ -34,6 +34,17 @@ const platformTypeConfigs = {
         { id: 'random_delay', label: '随机延迟回复', type: 'checkbox', default: false },
         { id: 'min_delay', label: '最小延迟（秒）', type: 'number', default: 1, min: 0, max: 60 },
         { id: 'max_delay', label: '最大延迟（秒）', type: 'number', default: 5, min: 0, max: 60 }
+    ],
+    zhiweijz: [
+        { id: 'server_url', label: '服务器地址', type: 'text', required: true, placeholder: 'https://api.zhiweijz.com' },
+        { id: 'username', label: '用户名', type: 'text', required: true, placeholder: '登录邮箱' },
+        { id: 'password', label: '密码', type: 'password', required: true },
+        { id: 'login_button', label: '', type: 'button', text: '登录', onclick: 'loginZhiWeiJZ' },
+        { id: 'account_book_select', label: '选择账本', type: 'select', required: true, options: [], disabled: true },
+        { id: 'auto_login', label: '自动登录', type: 'checkbox', default: true },
+        { id: 'token_refresh_interval', label: 'Token刷新间隔（秒）', type: 'number', default: 300, min: 60, max: 3600 },
+        { id: 'request_timeout', label: '请求超时时间（秒）', type: 'number', default: 30, min: 5, max: 120 },
+        { id: 'max_retries', label: '最大重试次数', type: 'number', default: 3, min: 1, max: 10 }
     ]
 };
 
@@ -479,6 +490,7 @@ function loadPlatformConfigFields(platformType, configData = {}) {
                 input.id = fieldId;
                 input.name = field.id;
                 if (field.required) input.required = true;
+                if (field.disabled) input.disabled = true;
 
                 // 添加选项
                 if (field.options) {
@@ -517,7 +529,18 @@ function loadPlatformConfigFields(platformType, configData = {}) {
                 formGroup.appendChild(checkDiv);
                 break;
 
-            default: // text, number, etc.
+            case 'button':
+                input = document.createElement('button');
+                input.className = 'btn btn-primary';
+                input.type = 'button';
+                input.id = fieldId;
+                input.textContent = field.text || field.label;
+                if (field.onclick) {
+                    input.onclick = () => window[field.onclick](fieldId);
+                }
+                break;
+
+            default: // text, number, password, etc.
                 input = document.createElement('input');
                 input.className = 'form-control';
                 input.type = field.type;
@@ -528,6 +551,7 @@ function loadPlatformConfigFields(platformType, configData = {}) {
                 if (field.min !== undefined) input.min = field.min;
                 if (field.max !== undefined) input.max = field.max;
                 if (field.step !== undefined) input.step = field.step;
+                if (field.placeholder) input.placeholder = field.placeholder;
                 break;
         }
 
@@ -573,6 +597,9 @@ async function savePlatform() {
 
             if (!element) continue;
 
+            // 跳过按钮类型的字段
+            if (field.type === 'button') continue;
+
             let value;
             if (field.type === 'checkbox') {
                 value = element.checked;
@@ -585,7 +612,17 @@ async function savePlatform() {
                 return;
             }
 
-            config[field.id] = value;
+            // 特殊处理只为记账的账本选择
+            if (type === 'zhiweijz' && field.id === 'account_book_select') {
+                if (value) {
+                    // 获取选中的账本信息
+                    const selectedOption = element.options[element.selectedIndex];
+                    config['account_book_id'] = value;
+                    config['account_book_name'] = selectedOption.textContent.replace(' (默认)', '');
+                }
+            } else {
+                config[field.id] = value;
+            }
         }
     }
 
@@ -894,5 +931,106 @@ async function testPlatform(platformId) {
     } catch (error) {
         console.error('测试平台失败:', error);
         showNotification(`测试平台失败: ${error.message}`, 'danger');
+    }
+}
+
+/**
+ * 只为记账登录
+ * @param {string} buttonId - 登录按钮ID
+ */
+async function loginZhiWeiJZ(buttonId) {
+    try {
+        // 获取登录信息
+        const serverUrl = document.getElementById('platform-config-server_url').value.trim();
+        const username = document.getElementById('platform-config-username').value.trim();
+        const password = document.getElementById('platform-config-password').value.trim();
+
+        // 验证输入
+        if (!serverUrl) {
+            showNotification('请输入服务器地址', 'warning');
+            return;
+        }
+
+        if (!username) {
+            showNotification('请输入用户名', 'warning');
+            return;
+        }
+
+        if (!password) {
+            showNotification('请输入密码', 'warning');
+            return;
+        }
+
+        // 禁用登录按钮
+        const loginBtn = document.getElementById(buttonId);
+        const originalText = loginBtn.textContent;
+        loginBtn.disabled = true;
+        loginBtn.textContent = '登录中...';
+
+        try {
+            // 发送登录请求
+            const response = await fetchAPI('/api/accounting/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    server_url: serverUrl,
+                    username: username,
+                    password: password
+                })
+            });
+
+            if (response.code === 0) {
+                const data = response.data;
+
+                if (data.login_success) {
+                    // 登录成功，更新账本选择框
+                    const accountBookSelect = document.getElementById('platform-config-account_book_select');
+
+                    // 清空选项
+                    accountBookSelect.innerHTML = '<option value="">请选择账本</option>';
+
+                    // 添加账本选项
+                    if (data.account_books && data.account_books.length > 0) {
+                        data.account_books.forEach(book => {
+                            const option = document.createElement('option');
+                            option.value = book.id;
+                            option.textContent = book.name + (book.is_default ? ' (默认)' : '');
+                            accountBookSelect.appendChild(option);
+                        });
+
+                        // 启用账本选择框
+                        accountBookSelect.disabled = false;
+
+                        // 默认选择第一个账本
+                        if (accountBookSelect.options.length > 1) {
+                            accountBookSelect.selectedIndex = 1;
+                        }
+
+                        showNotification(`登录成功！找到 ${data.account_books.length} 个账本`, 'success');
+                    } else {
+                        showNotification('登录成功，但没有找到账本', 'warning');
+                    }
+                } else {
+                    showNotification(`登录失败: ${data.login_message}`, 'danger');
+                }
+            } else {
+                showNotification(`登录失败: ${response.message}`, 'danger');
+            }
+        } finally {
+            // 恢复登录按钮
+            loginBtn.disabled = false;
+            loginBtn.textContent = originalText;
+        }
+
+    } catch (error) {
+        console.error('只为记账登录失败:', error);
+        showNotification(`登录失败: ${error.message}`, 'danger');
+
+        // 恢复登录按钮
+        const loginBtn = document.getElementById(buttonId);
+        if (loginBtn) {
+            loginBtn.disabled = false;
+            loginBtn.textContent = '登录';
+        }
     }
 }

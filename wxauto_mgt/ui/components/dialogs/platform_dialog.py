@@ -9,7 +9,7 @@ import asyncio
 import json
 from typing import Dict, List, Optional, Any
 
-from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer, QMetaObject, Q_ARG
+from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer, QMetaObject, Q_ARG, QThread
 from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -24,6 +24,75 @@ from wxauto_mgt.utils.logging import get_logger
 from qasync import asyncSlot
 
 logger = get_logger()
+
+
+class ZhiWeiJZLoginThread(QThread):
+    """只为记账登录线程"""
+    login_success = Signal(list)  # 登录成功信号，传递账本列表
+    login_failed = Signal(str)    # 登录失败信号，传递错误信息
+
+    def __init__(self, server_url, username, password):
+        super().__init__()
+        self.server_url = server_url
+        self.username = username
+        self.password = password
+
+    def run(self):
+        """执行登录操作"""
+        try:
+            # 导入异步记账管理器
+            from wxauto_mgt.core.async_accounting_manager import AsyncAccountingManager
+
+            # 创建配置
+            config = {
+                'server_url': self.server_url,
+                'username': self.username,
+                'password': self.password,
+                'auto_login': True,
+                'request_timeout': 30
+            }
+
+            # 在新的事件循环中运行异步操作
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                # 创建管理器并测试登录
+                manager = AsyncAccountingManager(config)
+
+                # 初始化管理器
+                success = loop.run_until_complete(manager.initialize())
+                if not success:
+                    self.login_failed.emit("初始化管理器失败")
+                    return
+
+                # 尝试登录
+                login_success, login_message = loop.run_until_complete(
+                    manager.login(self.server_url, self.username, self.password)
+                )
+
+                if login_success:
+                    # 获取账本列表
+                    books_success, books_message, books = loop.run_until_complete(
+                        manager.get_account_books()
+                    )
+
+                    if books_success:
+                        self.login_success.emit(books)
+                    else:
+                        self.login_failed.emit(f"获取账本列表失败: {books_message}")
+                else:
+                    self.login_failed.emit(login_message)
+
+                # 清理管理器
+                loop.run_until_complete(manager.cleanup())
+
+            finally:
+                loop.close()
+
+        except Exception as e:
+            self.login_failed.emit(f"登录过程中发生错误: {str(e)}")
+
 
 class AddEditPlatformDialog(QDialog):
     """添加/编辑服务平台对话框"""
@@ -77,6 +146,7 @@ class AddEditPlatformDialog(QDialog):
         self.type_combo.addItem("Dify", "dify")
         self.type_combo.addItem("OpenAI", "openai")
         self.type_combo.addItem("关键词匹配", "keyword")
+        self.type_combo.addItem("只为记账", "zhiweijz")
         self.type_combo.currentIndexChanged.connect(self._on_type_changed)
         self.type_combo.setMinimumWidth(300)  # 设置最小宽度
         form_layout.addRow("平台类型:", self.type_combo)
@@ -324,6 +394,79 @@ class AddEditPlatformDialog(QDialog):
 
         # 添加关键词匹配选项卡
         self.config_stack.addWidget(self.keyword_match_tab)
+
+        # 只为记账配置选项卡
+        self.zhiweijz_tab = QWidget()
+        zhiweijz_layout = QFormLayout(self.zhiweijz_tab)
+        zhiweijz_layout.setLabelAlignment(Qt.AlignRight)
+        zhiweijz_layout.setSpacing(10)
+
+        # 服务器地址
+        self.zhiweijz_server_url = QLineEdit()
+        self.zhiweijz_server_url.setPlaceholderText("例如: https://api.zhiweijz.com")
+        self.zhiweijz_server_url.setMinimumWidth(300)
+        zhiweijz_layout.addRow("服务器地址:", self.zhiweijz_server_url)
+
+        # 用户名
+        self.zhiweijz_username = QLineEdit()
+        self.zhiweijz_username.setPlaceholderText("登录邮箱")
+        self.zhiweijz_username.setMinimumWidth(300)
+        zhiweijz_layout.addRow("用户名:", self.zhiweijz_username)
+
+        # 密码
+        self.zhiweijz_password = QLineEdit()
+        self.zhiweijz_password.setPlaceholderText("登录密码")
+        self.zhiweijz_password.setMinimumWidth(300)
+        self.zhiweijz_password.setEchoMode(QLineEdit.Password)
+        zhiweijz_layout.addRow("密码:", self.zhiweijz_password)
+
+        # 登录按钮
+        login_layout = QHBoxLayout()
+        self.zhiweijz_login_btn = QPushButton("登录")
+        self.zhiweijz_login_btn.clicked.connect(self._login_zhiweijz)
+        self.zhiweijz_login_btn.setMinimumWidth(100)
+        login_layout.addWidget(self.zhiweijz_login_btn)
+        login_layout.addStretch()
+        zhiweijz_layout.addRow("", login_layout)
+
+        # 账本选择
+        self.zhiweijz_account_book_combo = QComboBox()
+        self.zhiweijz_account_book_combo.setMinimumWidth(300)
+        self.zhiweijz_account_book_combo.setEnabled(False)  # 初始禁用，登录后启用
+        zhiweijz_layout.addRow("选择账本:", self.zhiweijz_account_book_combo)
+
+        # 自动登录
+        self.zhiweijz_auto_login = QCheckBox("自动登录")
+        self.zhiweijz_auto_login.setChecked(True)
+        zhiweijz_layout.addRow("", self.zhiweijz_auto_login)
+
+        # Token刷新间隔
+        self.zhiweijz_token_refresh_interval = QSpinBox()
+        self.zhiweijz_token_refresh_interval.setRange(60, 3600)
+        self.zhiweijz_token_refresh_interval.setValue(300)
+        self.zhiweijz_token_refresh_interval.setSuffix(" 秒")
+        zhiweijz_layout.addRow("Token刷新间隔:", self.zhiweijz_token_refresh_interval)
+
+        # 请求超时时间
+        self.zhiweijz_request_timeout = QSpinBox()
+        self.zhiweijz_request_timeout.setRange(5, 120)
+        self.zhiweijz_request_timeout.setValue(30)
+        self.zhiweijz_request_timeout.setSuffix(" 秒")
+        zhiweijz_layout.addRow("请求超时时间:", self.zhiweijz_request_timeout)
+
+        # 最大重试次数
+        self.zhiweijz_max_retries = QSpinBox()
+        self.zhiweijz_max_retries.setRange(1, 10)
+        self.zhiweijz_max_retries.setValue(3)
+        zhiweijz_layout.addRow("最大重试次数:", self.zhiweijz_max_retries)
+
+        # 记账失败时进行警告
+        self.zhiweijz_warn_on_irrelevant = QCheckBox("记账失败时进行警告")
+        self.zhiweijz_warn_on_irrelevant.setChecked(False)  # 默认不勾选
+        self.zhiweijz_warn_on_irrelevant.setToolTip("勾选后，当API返回'消息与记账无关'时会发送警告消息到微信；不勾选则不发送任何消息")
+        zhiweijz_layout.addRow("", self.zhiweijz_warn_on_irrelevant)
+
+        self.config_stack.addWidget(self.zhiweijz_tab)
 
         # 初始化规则列表和回复列表
         self.rules = []
@@ -652,6 +795,8 @@ class AddEditPlatformDialog(QDialog):
             index = 1
         elif platform_type == "keyword" or platform_type == "keyword_match":
             index = 2
+        elif platform_type == "zhiweijz":
+            index = 3
         else:
             index = 0
         self.type_combo.setCurrentIndex(index)
@@ -713,6 +858,30 @@ class AddEditPlatformDialog(QDialog):
             # 加载规则
             self.rules = config.get("rules", []).copy()
             self._update_rules_list()
+        elif platform_type == "zhiweijz":
+            # 加载只为记账配置
+            self.zhiweijz_server_url.setText(config.get("server_url", ""))
+            self.zhiweijz_username.setText(config.get("username", ""))
+            # 设置密码为掩码，实际值会在保存时处理
+            self.zhiweijz_password.setText("******")
+            # 保存原始密码，用于后续处理
+            self.original_password = config.get("password", "")
+
+            # 加载账本信息
+            account_book_id = config.get("account_book_id", "")
+            account_book_name = config.get("account_book_name", "")
+
+            # 如果有账本信息，添加到下拉框
+            if account_book_id and account_book_name:
+                self.zhiweijz_account_book_combo.clear()
+                self.zhiweijz_account_book_combo.addItem(account_book_name, account_book_id)
+                self.zhiweijz_account_book_combo.setEnabled(True)
+
+            self.zhiweijz_auto_login.setChecked(config.get("auto_login", True))
+            self.zhiweijz_token_refresh_interval.setValue(config.get("token_refresh_interval", 300))
+            self.zhiweijz_request_timeout.setValue(config.get("request_timeout", 30))
+            self.zhiweijz_max_retries.setValue(config.get("max_retries", 3))
+            self.zhiweijz_warn_on_irrelevant.setChecked(config.get("warn_on_irrelevant", False))
 
     def get_platform_data(self) -> Dict[str, Any]:
         """
@@ -766,6 +935,36 @@ class AddEditPlatformDialog(QDialog):
                 "min_reply_time": self.min_reply_time.value(),
                 "max_reply_time": self.max_reply_time.value(),
                 "rules": self.rules,
+                "message_send_mode": message_send_mode
+            }
+        elif platform_type == "zhiweijz":
+            # 获取密码，如果是掩码且在编辑模式下，则使用原始值
+            password = self.zhiweijz_password.text().strip()
+            if self.is_edit_mode and password == "******" and hasattr(self, 'original_password'):
+                password = self.original_password
+                logger.info("使用原始密码而不是掩码值")
+
+            # 获取选中的账本信息
+            account_book_id = ""
+            account_book_name = ""
+            if self.zhiweijz_account_book_combo.currentIndex() >= 0:
+                account_book_id = self.zhiweijz_account_book_combo.currentData() or ""
+                account_book_name = self.zhiweijz_account_book_combo.currentText()
+                # 移除 "(默认)" 标识
+                if account_book_name.endswith(" (默认)"):
+                    account_book_name = account_book_name[:-5]
+
+            config = {
+                "server_url": self.zhiweijz_server_url.text().strip(),
+                "username": self.zhiweijz_username.text().strip(),
+                "password": password,
+                "account_book_id": account_book_id,
+                "account_book_name": account_book_name,
+                "auto_login": self.zhiweijz_auto_login.isChecked(),
+                "token_refresh_interval": self.zhiweijz_token_refresh_interval.value(),
+                "request_timeout": self.zhiweijz_request_timeout.value(),
+                "max_retries": self.zhiweijz_max_retries.value(),
+                "warn_on_irrelevant": self.zhiweijz_warn_on_irrelevant.isChecked(),
                 "message_send_mode": message_send_mode
             }
 
@@ -859,6 +1058,35 @@ class AddEditPlatformDialog(QDialog):
                 self.config_stack.setCurrentIndex(2)
                 self.keywords_edit.setFocus()
                 return False
+        elif platform_type == "zhiweijz":
+            # 验证服务器地址
+            if not self.zhiweijz_server_url.text().strip():
+                QMessageBox.warning(self, "错误", "请输入服务器地址")
+                self.config_stack.setCurrentIndex(3)
+                self.zhiweijz_server_url.setFocus()
+                return False
+
+            # 验证用户名
+            if not self.zhiweijz_username.text().strip():
+                QMessageBox.warning(self, "错误", "请输入用户名")
+                self.config_stack.setCurrentIndex(3)
+                self.zhiweijz_username.setFocus()
+                return False
+
+            # 验证密码
+            password = self.zhiweijz_password.text().strip()
+            if not password:
+                QMessageBox.warning(self, "错误", "请输入密码")
+                self.config_stack.setCurrentIndex(3)
+                self.zhiweijz_password.setFocus()
+                return False
+
+            # 验证是否已选择账本
+            if self.zhiweijz_account_book_combo.currentIndex() < 0:
+                QMessageBox.warning(self, "错误", "请先登录并选择账本")
+                self.config_stack.setCurrentIndex(3)
+                self.zhiweijz_login_btn.setFocus()
+                return False
 
         return True
 
@@ -904,3 +1132,96 @@ class AddEditPlatformDialog(QDialog):
         except Exception as e:
             logger.error(f"测试连接失败: {e}")
             QMessageBox.warning(self, "错误", f"测试连接失败: {str(e)}")
+
+    def _login_zhiweijz(self):
+        """只为记账登录"""
+        try:
+            # 验证输入
+            server_url = self.zhiweijz_server_url.text().strip()
+            username = self.zhiweijz_username.text().strip()
+            password = self.zhiweijz_password.text().strip()
+
+            if not server_url:
+                QMessageBox.warning(self, "错误", "请输入服务器地址")
+                self.zhiweijz_server_url.setFocus()
+                return
+
+            if not username:
+                QMessageBox.warning(self, "错误", "请输入用户名")
+                self.zhiweijz_username.setFocus()
+                return
+
+            if not password:
+                QMessageBox.warning(self, "错误", "请输入密码")
+                self.zhiweijz_password.setFocus()
+                return
+
+            # 禁用登录按钮
+            self.zhiweijz_login_btn.setEnabled(False)
+            self.zhiweijz_login_btn.setText("登录中...")
+
+            # 创建登录线程
+            self.login_thread = ZhiWeiJZLoginThread(server_url, username, password)
+            self.login_thread.login_success.connect(self._on_zhiweijz_login_success)
+            self.login_thread.login_failed.connect(self._on_zhiweijz_login_failed)
+            self.login_thread.start()
+
+        except Exception as e:
+            logger.error(f"启动登录失败: {e}")
+            QMessageBox.warning(self, "错误", f"启动登录失败: {str(e)}")
+            self._reset_login_button()
+
+    def _on_zhiweijz_login_success(self, books):
+        """登录成功处理"""
+        try:
+            # 重置登录按钮
+            self._reset_login_button()
+
+            # 清空账本下拉框
+            self.zhiweijz_account_book_combo.clear()
+
+            # 添加账本到下拉框
+            if books:
+                for book in books:
+                    book_name = book.get('name', 'Unknown')
+                    book_id = book.get('id', '')
+
+                    # 如果是默认账本，在名称后添加标识
+                    if book.get('is_default', False):
+                        display_name = f"{book_name} (默认)"
+                    else:
+                        display_name = book_name
+
+                    self.zhiweijz_account_book_combo.addItem(display_name, book_id)
+
+                # 启用账本选择
+                self.zhiweijz_account_book_combo.setEnabled(True)
+
+                # 默认选择第一个账本
+                if self.zhiweijz_account_book_combo.count() > 0:
+                    self.zhiweijz_account_book_combo.setCurrentIndex(0)
+
+                QMessageBox.information(self, "成功", f"登录成功！找到 {len(books)} 个账本")
+            else:
+                QMessageBox.warning(self, "警告", "登录成功，但没有找到账本")
+
+        except Exception as e:
+            logger.error(f"处理登录成功失败: {e}")
+            QMessageBox.warning(self, "错误", f"处理登录结果失败: {str(e)}")
+
+    def _on_zhiweijz_login_failed(self, error_message):
+        """登录失败处理"""
+        try:
+            # 重置登录按钮
+            self._reset_login_button()
+
+            # 显示错误信息
+            QMessageBox.warning(self, "登录失败", error_message)
+
+        except Exception as e:
+            logger.error(f"处理登录失败失败: {e}")
+
+    def _reset_login_button(self):
+        """重置登录按钮状态"""
+        self.zhiweijz_login_btn.setEnabled(True)
+        self.zhiweijz_login_btn.setText("登录")
