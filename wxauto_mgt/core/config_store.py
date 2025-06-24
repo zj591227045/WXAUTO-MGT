@@ -27,7 +27,7 @@ class ConfigStore:
         if db_path is None:
             # 获取项目根目录
             root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            db_path = os.path.join(root_dir, 'wxauto_mgt', 'data', 'wxauto_mgt.db')
+            db_path = os.path.join(root_dir, 'data', 'wxauto_mgt.db')
         
         self.db_path = db_path
         logger.debug(f"配置存储使用数据库: {db_path}")

@@ -30,6 +30,60 @@ api_router = APIRouter()
 # 初始化标志
 _initialized = False
 
+async def verify_request_auth(request: Request):
+    """
+    验证请求的认证状态
+
+    Args:
+        request: FastAPI请求对象
+
+    Raises:
+        HTTPException: 认证失败时抛出
+    """
+    try:
+        from .security import check_password_required, verify_token
+
+        # 检查是否需要密码验证
+        password_required = await check_password_required()
+        if not password_required:
+            # 如果没有设置密码，则跳过验证
+            return
+
+        # 首先尝试从Cookie获取token
+        token = request.cookies.get("auth_token")
+
+        # 如果Cookie中没有token，尝试从Authorization头获取
+        if not token:
+            auth_header = request.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header[7:]  # 移除"Bearer "前缀
+
+        # 如果仍然没有token，返回认证错误
+        if not token:
+            raise HTTPException(
+                status_code=401,
+                detail="需要认证令牌",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+
+        # 验证token
+        payload = verify_token(token)
+        if payload is None:
+            raise HTTPException(
+                status_code=401,
+                detail="无效的认证令牌",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"认证验证失败: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="认证服务错误"
+        )
+
 async def initialize_managers():
     """初始化管理器"""
     global _initialized
@@ -79,9 +133,154 @@ async def test_api():
     await initialize_managers()
     return {"status": "ok", "message": "API测试成功"}
 
+# 登录API
+@api_router.post("/auth/login")
+async def login(request: Request):
+    """
+    用户登录接口
+
+    请求体:
+        {
+            "password": "用户密码"
+        }
+
+    返回:
+        {
+            "code": 0,
+            "message": "登录成功",
+            "data": {
+                "token": "JWT令牌",
+                "expires_in": 86400
+            }
+        }
+    """
+    try:
+        from .security import authenticate_password, create_access_token, check_password_required
+
+        # 检查是否需要密码验证
+        password_required = await check_password_required()
+        if not password_required:
+            # 如果没有设置密码，直接返回成功（无需token）
+            return {
+                "code": 0,
+                "message": "无需密码验证",
+                "data": {
+                    "token": None,
+                    "expires_in": 0,
+                    "password_required": False
+                }
+            }
+
+        # 获取请求数据
+        data = await request.json()
+        password = data.get("password", "")
+
+        if not password:
+            raise HTTPException(status_code=400, detail="密码不能为空")
+
+        # 验证密码
+        is_valid = await authenticate_password(password)
+        if not is_valid:
+            raise HTTPException(status_code=401, detail="密码错误")
+
+        # 创建JWT令牌
+        token_data = {"sub": "web_user", "type": "access"}
+        token = create_access_token(token_data)
+
+        # 创建响应并设置Cookie
+        from fastapi.responses import JSONResponse
+        response = JSONResponse({
+            "code": 0,
+            "message": "登录成功",
+            "data": {
+                "token": token,
+                "expires_in": 86400,  # 24小时
+                "password_required": True
+            }
+        })
+
+        # 设置Cookie，有效期24小时
+        response.set_cookie(
+            key="auth_token",
+            value=token,
+            max_age=24 * 60 * 60,  # 24小时
+            httponly=True,  # 防止XSS攻击
+            secure=False,   # 开发环境使用HTTP
+            samesite="lax"  # CSRF保护
+        )
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"登录失败: {e}")
+        raise HTTPException(status_code=500, detail="登录服务错误")
+
+# 退出登录API
+@api_router.post("/auth/logout")
+async def logout():
+    """
+    用户退出登录接口
+
+    返回:
+        {
+            "code": 0,
+            "message": "退出成功"
+        }
+    """
+    try:
+        # 创建响应并清除Cookie
+        from fastapi.responses import JSONResponse
+        response = JSONResponse({
+            "code": 0,
+            "message": "退出成功"
+        })
+
+        # 删除认证Cookie
+        response.delete_cookie("auth_token")
+
+        return response
+
+    except Exception as e:
+        logger.error(f"退出登录失败: {e}")
+        raise HTTPException(status_code=500, detail="退出登录服务错误")
+
+# 检查认证状态API
+@api_router.get("/auth/status")
+async def auth_status():
+    """
+    检查认证状态
+
+    返回:
+        {
+            "code": 0,
+            "message": "成功",
+            "data": {
+                "password_required": true/false
+            }
+        }
+    """
+    try:
+        from .security import check_password_required
+
+        password_required = await check_password_required()
+
+        return {
+            "code": 0,
+            "message": "成功",
+            "data": {
+                "password_required": password_required
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"检查认证状态失败: {e}")
+        raise HTTPException(status_code=500, detail="认证服务错误")
+
 # 实例状态API
 @api_router.get("/instances/{instance_id}/status")
-async def get_instance_status(instance_id: str):
+async def get_instance_status(instance_id: str, request: Request):
     """
     获取实例状态和uptime信息
 
@@ -89,6 +288,8 @@ async def get_instance_status(instance_id: str):
         instance_id: 实例ID
     """
     try:
+        # 验证认证
+        await verify_request_auth(request)
         # 记录API调用
         logger.debug(f"获取实例状态 API 被调用，参数：instance_id={instance_id}")
 
@@ -164,7 +365,7 @@ async def get_instance_status(instance_id: str):
 
 # 系统资源API
 @api_router.get("/system/resources")
-async def get_system_resources(instance_id: Optional[str] = None):
+async def get_system_resources(request: Request, instance_id: Optional[str] = None):
     """
     获取系统资源使用情况
 
@@ -172,6 +373,8 @@ async def get_system_resources(instance_id: Optional[str] = None):
         instance_id: 可选的实例ID，如果提供则返回该实例的资源使用情况
     """
     try:
+        # 验证认证
+        await verify_request_auth(request)
         # 记录API调用
         logger.debug(f"获取系统资源 API 被调用，参数：instance_id={instance_id}")
 
@@ -338,9 +541,12 @@ async def get_system_resources(instance_id: Optional[str] = None):
 
 # 系统状态API
 @api_router.get("/system/status")
-async def get_system_status():
+async def get_system_status(request: Request):
     """获取系统状态"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -642,9 +848,12 @@ async def get_instance_status_cached(instance_id: str, base_url: str, api_key: s
 
 # 实例列表API
 @api_router.get("/instances")
-async def get_instances():
+async def get_instances(request: Request):
     """获取所有实例"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -705,6 +914,9 @@ async def get_instances():
 async def create_instance(request: Request):
     """创建新的实例"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -767,6 +979,9 @@ async def create_instance(request: Request):
 async def update_instance(instance_id: str, request: Request):
     """更新实例"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -828,9 +1043,12 @@ async def update_instance(instance_id: str, request: Request):
 
 # 删除实例API
 @api_router.delete("/instances/{instance_id}")
-async def delete_instance(instance_id: str):
+async def delete_instance(instance_id: str, request: Request):
     """删除实例"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -860,9 +1078,12 @@ async def delete_instance(instance_id: str):
 
 # 服务平台列表API
 @api_router.get("/platforms")
-async def get_platforms():
+async def get_platforms(request: Request):
     """获取所有服务平台"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -890,9 +1111,12 @@ async def get_platforms():
 
 # 消息转发规则列表API
 @api_router.get("/rules")
-async def get_rules(instance_id: Optional[str] = None):
+async def get_rules(request: Request, instance_id: Optional[str] = None):
     """获取所有消息转发规则"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -917,6 +1141,9 @@ async def get_rules(instance_id: Optional[str] = None):
 async def create_platform(request: Request):
     """创建新的服务平台"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -953,6 +1180,9 @@ async def create_platform(request: Request):
 async def update_platform(platform_id: str, request: Request):
     """更新服务平台"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         data = await request.json()
 
         # 验证必需字段
@@ -989,9 +1219,12 @@ async def update_platform(platform_id: str, request: Request):
 
 # 删除服务平台API
 @api_router.delete("/platforms/{platform_id}")
-async def delete_platform(platform_id: str):
+async def delete_platform(platform_id: str, request: Request):
     """删除服务平台"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 调用 Python 端的平台管理器
         success = await platform_manager.delete_platform(platform_id)
 
@@ -1009,9 +1242,12 @@ async def delete_platform(platform_id: str):
 
 # 测试服务平台连接API
 @api_router.post("/platforms/{platform_id}/test")
-async def test_platform_connection(platform_id: str):
+async def test_platform_connection(platform_id: str, request: Request):
     """测试服务平台连接"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 获取平台实例
         platform = await platform_manager.get_platform(platform_id)
         if not platform:
@@ -1034,6 +1270,9 @@ async def test_platform_connection(platform_id: str):
 async def create_rule(request: Request):
     """创建新的消息转发规则"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -1074,6 +1313,9 @@ async def create_rule(request: Request):
 async def update_rule(rule_id: str, request: Request):
     """更新消息转发规则"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         data = await request.json()
 
         # 验证必需字段
@@ -1109,9 +1351,12 @@ async def update_rule(rule_id: str, request: Request):
 
 # 删除消息转发规则API
 @api_router.delete("/rules/{rule_id}")
-async def delete_rule(rule_id: str):
+async def delete_rule(rule_id: str, request: Request):
     """删除消息转发规则"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 调用 Python 端的规则管理器
         success = await rule_manager.delete_rule(rule_id)
 
@@ -1132,6 +1377,9 @@ async def delete_rule(rule_id: str):
 async def add_listener(request: Request):
     """添加监听对象"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         data = await request.json()
 
         # 验证必需字段
@@ -1169,6 +1417,9 @@ async def add_listener(request: Request):
 async def remove_listener(request: Request):
     """删除监听对象"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         data = await request.json()
 
         # 验证必需字段
@@ -1197,7 +1448,7 @@ async def remove_listener(request: Request):
 
 # 监听对象列表API
 @api_router.get("/listeners")
-async def get_listeners(instance_id: Optional[str] = None, since: Optional[int] = None):
+async def get_listeners(request: Request, instance_id: Optional[str] = None, since: Optional[int] = None):
     """
     获取所有监听对象
 
@@ -1206,6 +1457,8 @@ async def get_listeners(instance_id: Optional[str] = None, since: Optional[int] 
         since: 可选的时间戳，如果提供则只返回自该时间戳以来更新的监听对象
     """
     try:
+        # 验证认证
+        await verify_request_auth(request)
         # 记录API调用
         logger.debug(f"获取监听对象列表 API 被调用，参数：instance_id={instance_id}, since={since}")
 
@@ -1277,6 +1530,7 @@ async def get_listeners(instance_id: Optional[str] = None, since: Optional[int] 
 # 消息列表API
 @api_router.get("/messages")
 async def get_messages(
+    request: Request,
     instance_id: Optional[str] = None,
     chat_name: Optional[str] = None,
     limit: int = 50,
@@ -1292,6 +1546,8 @@ async def get_messages(
         since: 可选的时间戳，如果提供则只返回自该时间戳以来的消息
     """
     try:
+        # 验证认证
+        await verify_request_auth(request)
         # 记录API调用
         logger.debug(f"获取消息列表 API 被调用，参数：instance_id={instance_id}, chat_name={chat_name}, limit={limit}, since={since}")
 
@@ -1329,7 +1585,7 @@ async def get_messages(
 
 # 日志API
 @api_router.get("/logs")
-async def get_logs(limit: int = 50, since: Optional[int] = None):
+async def get_logs(request: Request, limit: int = 50, since: Optional[int] = None):
     """
     获取最近的日志
 
@@ -1338,6 +1594,8 @@ async def get_logs(limit: int = 50, since: Optional[int] = None):
         since: 可选的时间戳，如果提供则只返回自该时间戳以来的日志
     """
     try:
+        # 验证认证
+        await verify_request_auth(request)
         # 记录API调用
         logger.debug(f"获取日志 API 被调用，参数：limit={limit}, since={since}")
 
@@ -1432,6 +1690,9 @@ async def get_logs(limit: int = 50, since: Optional[int] = None):
 async def create_zhiweijz_platform(request: Request):
     """创建只为记账平台"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -1478,6 +1739,7 @@ async def create_zhiweijz_platform(request: Request):
 
 @api_router.get("/accounting/records")
 async def get_accounting_records(
+    request: Request,
     platform_id: Optional[str] = None,
     instance_id: Optional[str] = None,
     limit: int = 50,
@@ -1486,6 +1748,9 @@ async def get_accounting_records(
 ):
     """获取记账记录"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -1548,9 +1813,12 @@ async def get_accounting_records(
         raise HTTPException(status_code=500, detail=f"获取记账记录失败: {str(e)}")
 
 @api_router.get("/accounting/stats")
-async def get_accounting_stats(platform_id: Optional[str] = None):
+async def get_accounting_stats(request: Request, platform_id: Optional[str] = None):
     """获取记账统计信息"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         # 确保管理器已初始化
         await initialize_managers()
 
@@ -1580,6 +1848,9 @@ async def get_accounting_stats(platform_id: Optional[str] = None):
 async def test_accounting_connection(request: Request):
     """测试记账平台连接"""
     try:
+        # 验证认证
+        await verify_request_auth(request)
+
         data = await request.json()
 
         # 验证必需字段

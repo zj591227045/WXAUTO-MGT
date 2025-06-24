@@ -133,6 +133,19 @@
                         </a>
                     </li>
                 </ul>
+                <!-- 用户菜单 -->
+                <ul class="navbar-nav ms-auto" id="userMenu" style="display: none;">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-user"></i> 用户
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="#" onclick="logout()">
+                                <i class="fas fa-sign-out-alt"></i> 退出登录
+                            </a></li>
+                        </ul>
+                    </li>
+                </ul>
             </div>
         </div>
     </nav>
@@ -159,6 +172,106 @@
     <script src="{{ url_for('static', path='/js/common.js') }}"></script>
     <!-- 轮询刷新 -->
     <script src="{{ url_for('static', path='/js/polling.js') }}"></script>
+
+    <!-- 认证处理 -->
+    <script>
+        // 全局认证处理
+        window.AuthManager = {
+            // 获取存储的token
+            getToken: function() {
+                return localStorage.getItem('auth_token');
+            },
+
+            // 设置token
+            setToken: function(token) {
+                if (token) {
+                    localStorage.setItem('auth_token', token);
+                } else {
+                    localStorage.removeItem('auth_token');
+                }
+            },
+
+            // 清除token
+            clearToken: function() {
+                localStorage.removeItem('auth_token');
+            },
+
+            // 检查是否需要认证
+            checkAuthRequired: async function() {
+                try {
+                    const response = await fetch('/api/auth/status');
+                    const data = await response.json();
+                    return data.code === 0 && data.data.password_required;
+                } catch (error) {
+                    console.error('检查认证状态失败:', error);
+                    return false;
+                }
+            },
+
+            // 重定向到登录页面
+            redirectToLogin: function() {
+                window.location.href = '/login';
+            },
+
+            // 为fetch请求添加认证头
+            addAuthHeader: function(headers = {}) {
+                const token = this.getToken();
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+                return headers;
+            },
+
+            // 处理认证错误
+            handleAuthError: function(response) {
+                if (response.status === 401) {
+                    this.clearToken();
+                    this.redirectToLogin();
+                    return true;
+                }
+                return false;
+            }
+        };
+
+        // 重写fetch函数，自动添加认证头
+        const originalFetch = window.fetch;
+        window.fetch = function(url, options = {}) {
+            // 只为API请求添加认证头
+            if (url.startsWith('/api/') && !url.includes('/api/auth/')) {
+                options.headers = AuthManager.addAuthHeader(options.headers || {});
+            }
+
+            return originalFetch(url, options).then(response => {
+                // 处理认证错误
+                if (response.status === 401 && url.startsWith('/api/') && !url.includes('/api/auth/')) {
+                    AuthManager.handleAuthError(response);
+                }
+                return response;
+            });
+        };
+
+        // 登出函数
+        function logout() {
+            AuthManager.clearToken();
+            window.location.href = '/login';
+        }
+
+        // 页面加载时检查认证状态
+        document.addEventListener('DOMContentLoaded', async function() {
+            // 如果当前页面不是登录页面，检查认证状态
+            if (!window.location.pathname.includes('/login')) {
+                const authRequired = await AuthManager.checkAuthRequired();
+                if (authRequired) {
+                    if (!AuthManager.getToken()) {
+                        AuthManager.redirectToLogin();
+                        return;
+                    }
+                    // 显示用户菜单
+                    document.getElementById('userMenu').style.display = 'block';
+                }
+            }
+        });
+    </script>
 
     <!-- 导航栏交互效果 -->
     <script>

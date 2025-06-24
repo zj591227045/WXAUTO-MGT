@@ -5,6 +5,7 @@ Web服务器实现
 """
 
 import os
+import sys
 import signal
 import threading
 import uvicorn
@@ -19,6 +20,18 @@ from wxauto_mgt.utils.logging import logger
 # 全局变量
 _shutdown_requested = False
 _server = None
+
+
+def get_resource_path(relative_path):
+    """获取资源文件的绝对路径，兼容开发环境和打包后的exe"""
+    try:
+        # PyInstaller打包后的临时目录
+        base_path = sys._MEIPASS
+    except AttributeError:
+        # 开发环境
+        base_path = os.path.dirname(__file__)
+
+    return os.path.join(base_path, relative_path)
 _server_should_exit = threading.Event()
 
 def create_app():
@@ -44,15 +57,55 @@ def create_app():
         allow_headers=["*"],
     )
 
-    # 配置静态文件
-    app.mount(
-        "/static",
-        StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")),
-        name="static"
-    )
+    # 配置静态文件路径（兼容打包后的exe）
+    static_dir = get_resource_path("static")
+    if not os.path.exists(static_dir):
+        # 如果在打包环境中找不到，尝试从wxauto_mgt/web/static查找
+        static_dir = get_resource_path(os.path.join("wxauto_mgt", "web", "static"))
 
-    # 配置模板
-    templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+    if os.path.exists(static_dir):
+        app.mount(
+            "/static",
+            StaticFiles(directory=static_dir),
+            name="static"
+        )
+        logger.info(f"静态文件目录: {static_dir}")
+    else:
+        logger.warning(f"静态文件目录不存在: {static_dir}")
+
+    # 配置模板路径（兼容打包后的exe）
+    templates_dir = get_resource_path("templates")
+    if not os.path.exists(templates_dir):
+        # 如果在打包环境中找不到，尝试从wxauto_mgt/web/templates查找
+        templates_dir = get_resource_path(os.path.join("wxauto_mgt", "web", "templates"))
+
+    if os.path.exists(templates_dir):
+        templates = Jinja2Templates(directory=templates_dir)
+        logger.info(f"模板文件目录: {templates_dir}")
+    else:
+        logger.error(f"模板文件目录不存在: {templates_dir}")
+        # 创建一个空的模板对象以避免错误
+        templates = None
+
+    # 初始化安全模块
+    @app.on_event("startup")
+    async def startup_event():
+        """应用启动时的初始化"""
+        try:
+            # 首先初始化Web服务配置
+            from .config import get_web_service_config
+            web_config = get_web_service_config()
+            await web_config.initialize()
+            logger.info("Web服务配置初始化完成")
+
+            # 然后初始化安全模块
+            from .security import initialize_security
+            await initialize_security()
+            logger.info("安全模块初始化完成")
+        except Exception as e:
+            logger.error(f"启动初始化失败: {e}")
+            import traceback
+            traceback.print_exc()
 
     # 注册API路由
     from .api import api_router
@@ -80,10 +133,16 @@ def create_app():
                     content={"detail": "API端点未找到"}
                 )
         # 否则返回HTML错误页面
-        return templates.TemplateResponse(
-            "error.html",
-            {"request": request, "error": "页面未找到"}
-        )
+        if templates:
+            return templates.TemplateResponse(
+                "error.html",
+                {"request": request, "error": "页面未找到"}
+            )
+        else:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "页面未找到"}
+            )
 
     @app.exception_handler(500)
     async def server_error_exception_handler(request: Request, exc: HTTPException):
@@ -94,10 +153,16 @@ def create_app():
                 content={"detail": "服务器内部错误"}
             )
         # 否则返回HTML错误页面
-        return templates.TemplateResponse(
-            "error.html",
-            {"request": request, "error": "服务器内部错误"}
-        )
+        if templates:
+            return templates.TemplateResponse(
+                "error.html",
+                {"request": request, "error": "服务器内部错误"}
+            )
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "服务器内部错误"}
+            )
 
     return app
 

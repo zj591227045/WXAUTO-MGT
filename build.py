@@ -301,6 +301,8 @@ SSL_DATAS, SSL_BINARIES = get_ssl_files()
 # 需要包含的数据文件
 DATAS = [
     (str(ROOT_DIR / "wxauto_mgt" / "config"), os.path.join("wxauto_mgt", "config")),
+    (str(ROOT_DIR / "wxauto_mgt" / "web" / "static"), os.path.join("wxauto_mgt", "web", "static")),
+    (str(ROOT_DIR / "wxauto_mgt" / "web" / "templates"), os.path.join("wxauto_mgt", "web", "templates")),
     (str(ROOT_DIR / "wxauto_mgt" / "requirements.txt"), os.path.join("wxauto_mgt", "web"))
 ] + SSL_DATAS
 

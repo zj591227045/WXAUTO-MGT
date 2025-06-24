@@ -14,19 +14,16 @@ from wxauto_mgt.utils.logging import logger
 # 全局变量
 _web_server_thread = None
 _web_service_running = False
-_web_service_config = {
-    'port': 8080,
-    'host': '0.0.0.0'
-}
 
 def get_web_service_config():
     """获取Web服务配置"""
-    return _web_service_config.copy()
+    from .config import get_web_service_config_dict
+    return get_web_service_config_dict()
 
 def set_web_service_config(config):
     """设置Web服务配置"""
-    global _web_service_config
-    _web_service_config.update(config)
+    from .config import set_web_service_config_dict
+    set_web_service_config_dict(config)
 
 def is_web_service_running():
     """检查Web服务是否运行"""
@@ -42,13 +39,24 @@ async def start_web_service(config=None):
     Returns:
         bool: 是否成功启动
     """
-    global _web_server_thread, _web_service_running, _web_service_config
+    global _web_server_thread, _web_service_running
 
     if _web_service_running:
         return True
 
+    # 获取配置并初始化
+    from .config import get_web_service_config
+    web_config = get_web_service_config()
+    await web_config.initialize()
+
+    # 如果传入了配置，更新配置（但不覆盖密码）
     if config:
-        _web_service_config.update(config)
+        await web_config.save_config(
+            host=config.get('host'),
+            port=config.get('port'),
+            auto_start=config.get('auto_start')
+            # 注意：不传递password参数，避免覆盖现有密码
+        )
 
     # 确保数据库已初始化
     from wxauto_mgt.data.db_manager import db_manager
@@ -76,7 +84,7 @@ async def start_web_service(config=None):
         # 创建新线程运行FastAPI服务器
         _web_server_thread = threading.Thread(
             target=run_server,
-            args=(app, _web_service_config['host'], _web_service_config['port']),
+            args=(app, web_config.host, web_config.port),
             daemon=True
         )
         _web_server_thread.start()
@@ -85,7 +93,7 @@ async def start_web_service(config=None):
         time.sleep(1)
 
         _web_service_running = True
-        logger.info(f"Web服务已启动，地址: http://{_web_service_config['host']}:{_web_service_config['port']}")
+        logger.info(f"Web服务已启动，地址: http://{web_config.host}:{web_config.port}")
         return True
     except Exception as e:
         import traceback

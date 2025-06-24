@@ -465,6 +465,17 @@ class SettingsDialog(QDialog):
         port_layout.addStretch()
         form_layout.addRow("端口号:", port_layout)
 
+        # 访问密码
+        password_layout = QHBoxLayout()
+        self.web_password_edit = QLineEdit()
+        self.web_password_edit.setEchoMode(QLineEdit.Password)
+        self.web_password_edit.setToolTip("Web服务访问密码，留空表示不需要密码验证")
+        self.web_password_edit.setFixedWidth(200)
+        self.web_password_edit.setPlaceholderText("留空表示不需要密码")
+        password_layout.addWidget(self.web_password_edit)
+        password_layout.addStretch()
+        form_layout.addRow("访问密码:", password_layout)
+
         # 自动启动
         auto_start_layout = QHBoxLayout()
         self.web_auto_start_check = QCheckBox("程序启动时自动启动Web服务")
@@ -595,6 +606,12 @@ class SettingsDialog(QDialog):
                 else:
                     self.web_auto_start_check.setChecked(False)
 
+                # 设置密码（不显示实际密码，只显示是否已设置）
+                if 'password' in web_config and web_config['password']:
+                    self.web_password_edit.setPlaceholderText("已设置密码（输入新密码可修改）")
+                else:
+                    self.web_password_edit.setPlaceholderText("留空表示不需要密码")
+
                 logger.debug(f"已加载Web服务配置: {web_config}")
             else:
                 # 使用默认值
@@ -630,26 +647,30 @@ class SettingsDialog(QDialog):
         except Exception as e:
             logger.error(f"自动保存auto_start设置失败: {e}")
 
-    async def _save_web_service_config_async(self, host, port, auto_start):
+    async def _save_web_service_config_async(self, host, port, auto_start, password):
         """异步保存Web服务配置"""
         try:
-            from wxauto_mgt.data.config_store import config_store
-            from wxauto_mgt.web import set_web_service_config, get_web_service_config
+            from wxauto_mgt.web.config import get_web_service_config
+            web_config = get_web_service_config()
 
-            # 保存到config_store
-            await config_store.set_config('system', 'web_service', {
-                'host': host,
-                'port': port,
-                'auto_start': auto_start
-            })
+            # 保存配置
+            success = await web_config.save_config(
+                host=host,
+                port=port,
+                auto_start=auto_start,
+                password=password if password else None
+            )
 
-            # 同步更新Web服务配置
-            config = get_web_service_config()
-            config['host'] = host
-            config['port'] = port
-            set_web_service_config(config)
+            if success:
+                if password:
+                    logger.info("已更新Web服务访问密码")
+                    # 清空密码输入框
+                    self.web_password_edit.clear()
+                    self.web_password_edit.setPlaceholderText("已设置密码（输入新密码可修改）")
+                logger.debug(f"已保存Web服务配置: host={host}, port={port}, auto_start={auto_start}")
+            else:
+                logger.error("保存Web服务配置失败")
 
-            logger.debug(f"已保存Web服务配置: host={host}, port={port}, auto_start={auto_start}")
         except Exception as e:
             logger.error(f"异步保存Web服务配置失败: {e}")
 
@@ -765,9 +786,10 @@ class SettingsDialog(QDialog):
             web_host = self.web_host_edit.text().strip() or '0.0.0.0'
             web_port = self.web_port_spin.value()
             web_auto_start = self.web_auto_start_check.isChecked()
+            web_password = self.web_password_edit.text().strip()
 
             # 保存到config_store（与Web服务面板同步）
-            asyncio.create_task(self._save_web_service_config_async(web_host, web_port, web_auto_start))
+            asyncio.create_task(self._save_web_service_config_async(web_host, web_port, web_auto_start, web_password))
 
             logger.info(f"保存Web服务设置: host={web_host}, port={web_port}, auto_start={web_auto_start}")
         except Exception as e:
