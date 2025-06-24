@@ -259,13 +259,38 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self):
         """打开设置对话框"""
-        # 导入设置对话框
-        from wxauto_mgt.ui.components.dialogs import SettingsDialog
+        try:
+            # 直接从dialogs.py文件导入设置对话框
+            import sys
+            import os
+            import importlib.util
 
-        dialog = SettingsDialog(self)
-        if dialog.exec():
-            # 应用设置...
-            self.status_changed.emit("设置已更新", 3000)
+            # 获取dialogs.py文件的完整路径
+            dialogs_file = os.path.join(os.path.dirname(__file__), 'components', 'dialogs.py')
+
+            if not os.path.exists(dialogs_file):
+                raise FileNotFoundError(f"dialogs.py文件不存在: {dialogs_file}")
+
+            # 使用importlib直接加载dialogs.py文件
+            spec = importlib.util.spec_from_file_location("dialogs_module", dialogs_file)
+            dialogs_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(dialogs_module)
+
+            # 获取SettingsDialog类
+            SettingsDialog = dialogs_module.SettingsDialog
+
+            # 验证类是否有效
+            if not hasattr(SettingsDialog, '__init__'):
+                raise ImportError("SettingsDialog类无效")
+
+            dialog = SettingsDialog(self)
+            if dialog.exec():
+                # 应用设置...
+                self.status_changed.emit("设置已更新", 3000)
+
+        except Exception as e:
+            logger.error(f"打开设置对话框失败: {e}")
+            QMessageBox.critical(self, "错误", f"无法打开设置对话框: {str(e)}\n\n请检查dialogs.py文件是否存在且格式正确。")
 
     def _show_about(self):
         """显示关于对话框"""

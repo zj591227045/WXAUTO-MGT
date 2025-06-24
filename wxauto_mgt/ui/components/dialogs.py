@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QLabel, QCheckBox, QFormLayout, QComboBox, QSpinBox,
     QDialogButtonBox, QMessageBox, QTextEdit, QTabWidget,
-    QGroupBox, QRadioButton
+    QGroupBox, QRadioButton, QWidget, QFileDialog
 )
 
 from wxauto_mgt.core.api_client import instance_manager
@@ -471,6 +471,36 @@ class SettingsDialog(QDialog):
 
         self.tab_widget.addTab(self.integration_tab, "集成")
 
+        # Web服务设置选项卡
+        self.web_service_tab = QWidget()
+        web_service_layout = QFormLayout(self.web_service_tab)
+
+        # Web服务启用
+        self.web_service_enable_check = QCheckBox("启用Web管理服务")
+        web_service_layout.addRow("", self.web_service_enable_check)
+
+        # 服务器地址
+        self.web_host_edit = QLineEdit()
+        self.web_host_edit.setPlaceholderText("127.0.0.1")
+        web_service_layout.addRow("服务器地址:", self.web_host_edit)
+
+        # 服务器端口
+        self.web_port_spin = QSpinBox()
+        self.web_port_spin.setRange(1024, 65535)
+        self.web_port_spin.setValue(8443)
+        web_service_layout.addRow("服务器端口:", self.web_port_spin)
+
+        # 自动启动Web服务
+        self.web_auto_start_check = QCheckBox("程序启动时自动启动Web服务")
+        web_service_layout.addRow("", self.web_auto_start_check)
+
+        # 调试模式
+        self.web_debug_check = QCheckBox("启用调试模式")
+        self.web_debug_check.setToolTip("启用后会显示详细的调试信息")
+        web_service_layout.addRow("", self.web_debug_check)
+
+        self.tab_widget.addTab(self.web_service_tab, "Web服务")
+
         main_layout.addWidget(self.tab_widget)
 
         # 按钮布局
@@ -527,7 +557,7 @@ class SettingsDialog(QDialog):
 
             # 监听超时时间
             listener_timeout = config_manager.get('message_listener.listener_timeout_minutes', 30)
-            self.listener_timeout_spin.setValue(listener_timeout)
+            self.timeout_spin.setValue(listener_timeout)
         except Exception as e:
             logger.error(f"加载消息监听设置失败: {e}")
 
@@ -538,6 +568,30 @@ class SettingsDialog(QDialog):
             self.db_path_edit.setText(db_path)
         except Exception as e:
             logger.error(f"加载数据库设置失败: {e}")
+
+        # 加载Web服务设置
+        try:
+            # Web服务启用
+            web_service_enabled = config_manager.get('web_service.enabled', False)
+            self.web_service_enable_check.setChecked(web_service_enabled)
+
+            # 服务器地址
+            web_host = config_manager.get('web_service.host', '127.0.0.1')
+            self.web_host_edit.setText(web_host)
+
+            # 服务器端口
+            web_port = config_manager.get('web_service.port', 8443)
+            self.web_port_spin.setValue(web_port)
+
+            # 自动启动Web服务
+            web_auto_start = config_manager.get('web_service.auto_start', False)
+            self.web_auto_start_check.setChecked(web_auto_start)
+
+            # 调试模式
+            web_debug = config_manager.get('web_service.debug', False)
+            self.web_debug_check.setChecked(web_debug)
+        except Exception as e:
+            logger.error(f"加载Web服务设置失败: {e}")
 
         # 加载集成设置
         # TODO: 实现集成设置加载逻辑
@@ -596,7 +650,7 @@ class SettingsDialog(QDialog):
             config_manager.set('message_listener.max_listeners', max_listeners)
 
             # 监听超时时间
-            listener_timeout = self.listener_timeout_spin.value()
+            listener_timeout = self.timeout_spin.value()
             config_manager.set('message_listener.listener_timeout_minutes', listener_timeout)
 
             # 更新消息监听器设置
@@ -614,6 +668,32 @@ class SettingsDialog(QDialog):
             config_manager.set('db.path', db_path)
         except Exception as e:
             logger.error(f"保存数据库设置失败: {e}")
+
+        # 保存Web服务设置
+        try:
+            # Web服务启用
+            web_service_enabled = self.web_service_enable_check.isChecked()
+            config_manager.set('web_service.enabled', web_service_enabled)
+
+            # 服务器地址
+            web_host = self.web_host_edit.text().strip() or '127.0.0.1'
+            config_manager.set('web_service.host', web_host)
+
+            # 服务器端口
+            web_port = self.web_port_spin.value()
+            config_manager.set('web_service.port', web_port)
+
+            # 自动启动Web服务
+            web_auto_start = self.web_auto_start_check.isChecked()
+            config_manager.set('web_service.auto_start', web_auto_start)
+
+            # 调试模式
+            web_debug = self.web_debug_check.isChecked()
+            config_manager.set('web_service.debug', web_debug)
+
+            logger.info(f"保存Web服务设置: enabled={web_service_enabled}, host={web_host}, port={web_port}, auto_start={web_auto_start}, debug={web_debug}")
+        except Exception as e:
+            logger.error(f"保存Web服务设置失败: {e}")
 
         # 保存集成设置
         # TODO: 实现集成设置保存逻辑
