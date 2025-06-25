@@ -1,0 +1,306 @@
+name: 🔌 插件提交申请
+description: 提交新插件到WXAUTO-MGT插件市场
+title: "[插件提交] "
+labels: ["plugin-submission", "needs-review"]
+assignees:
+  - zj591227045
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 📋 插件提交申请
+
+        感谢您为WXAUTO-MGT生态贡献插件！请仔细填写以下信息，我们将尽快审核您的插件。
+
+        ### 📝 提交前检查清单
+        - [ ] 插件代码已完成并经过测试
+        - [ ] 插件遵循WXAUTO-MGT插件开发规范
+        - [ ] 提供了完整的文档和使用说明
+        - [ ] 插件具有明确的许可证
+        - [ ] 代码仓库是公开的
+
+  - type: input
+    id: plugin_name
+    attributes:
+      label: 🏷️ 插件名称
+      description: 插件的显示名称（中文）
+      placeholder: 例如：智能客服助手
+    validations:
+      required: true
+
+  - type: input
+    id: plugin_id
+    attributes:
+      label: 🆔 插件唯一标识符
+      description: 插件的唯一ID，只能包含字母、数字、下划线和连字符
+      placeholder: 例如：smart_customer_service
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 📦 版本号
+      description: 遵循语义化版本规范（如：1.0.0）
+      placeholder: 例如：1.0.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 📖 功能描述
+      description: 详细描述插件的功能和特性
+      placeholder: |
+        请详细描述：
+        - 插件的主要功能
+        - 解决的问题
+        - 适用场景
+        - 核心特性
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: 📂 插件分类
+      description: 选择最适合的插件分类
+      options:
+        - ai_platform (AI平台)
+        - automation (自动化)
+        - integration (系统集成)
+        - utility (实用工具)
+        - entertainment (娱乐功能)
+        - other (其他)
+    validations:
+      required: true
+
+  - type: input
+    id: github_repo
+    attributes:
+      label: 🐙 GitHub仓库地址
+      description: 插件的GitHub仓库地址（必需）
+      placeholder: https://github.com/username/plugin-name
+    validations:
+      required: true
+
+  - type: input
+    id: gitee_repo
+    attributes:
+      label: 🦄 Gitee仓库地址
+      description: 插件的Gitee镜像仓库地址（可选，用于国内加速）
+      placeholder: https://gitee.com/username/plugin-name
+
+  - type: input
+    id: homepage
+    attributes:
+      label: 🏠 项目主页
+      description: 插件的官方网站或详细介绍页面
+      placeholder: https://your-plugin-website.com
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 📸 插件截图
+      description: 提供插件界面截图的URL链接（支持多个）
+      placeholder: |
+        https://raw.githubusercontent.com/username/plugin-name/main/docs/screenshot1.png
+        https://raw.githubusercontent.com/username/plugin-name/main/docs/screenshot2.png
+
+  - type: input
+    id: demo_video
+    attributes:
+      label: 🎥 演示视频
+      description: 插件演示视频链接（可选）
+      placeholder: https://www.youtube.com/watch?v=example
+
+  - type: input
+    id: author_name
+    attributes:
+      label: 👤 开发者姓名
+      description: 您的真实姓名或昵称
+      placeholder: 张三
+    validations:
+      required: true
+
+  - type: input
+    id: author_github
+    attributes:
+      label: 🐙 GitHub用户名
+      description: 您的GitHub用户名
+      placeholder: zhangsan
+    validations:
+      required: true
+
+  - type: input
+    id: author_email
+    attributes:
+      label: 📧 联系邮箱
+      description: 用于联系的邮箱地址
+      placeholder: zhangsan@example.com
+    validations:
+      required: true
+
+  - type: input
+    id: author_website
+    attributes:
+      label: 🌐 个人网站
+      description: 您的个人网站或博客（可选）
+      placeholder: https://zhangsan.dev
+
+  - type: dropdown
+    id: license
+    attributes:
+      label: 📄 许可证
+      description: 插件使用的开源许可证
+      options:
+        - MIT
+        - Apache-2.0
+        - GPL-3.0
+        - BSD-3-Clause
+        - ISC
+        - Commercial (商业许可)
+        - Other (其他)
+    validations:
+      required: true
+
+  - type: input
+    id: min_wxauto_version
+    attributes:
+      label: 🔧 最低WXAUTO-MGT版本
+      description: 插件支持的最低WXAUTO-MGT版本
+      placeholder: 例如：1.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: python_version
+    attributes:
+      label: 🐍 Python版本要求
+      description: 插件支持的Python版本
+      placeholder: 例如：>=3.8
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: supported_os
+    attributes:
+      label: 💻 支持的操作系统
+      description: 选择插件支持的操作系统
+      options:
+        - label: Windows
+        - label: Linux
+        - label: macOS (Darwin)
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 📦 依赖包
+      description: 列出插件需要的Python依赖包
+      placeholder: |
+        aiohttp>=3.8.0
+        requests>=2.28.0
+        pydantic>=1.10.0
+
+  - type: checkboxes
+    id: permissions
+    attributes:
+      label: 🔐 所需权限
+      description: 选择插件需要的权限
+      options:
+        - label: network.http (HTTP网络访问)
+        - label: network.https (HTTPS网络访问)
+        - label: file.read (文件读取)
+        - label: file.write (文件写入)
+        - label: config.read (配置读取)
+        - label: config.write (配置写入)
+        - label: database.read (数据库读取)
+        - label: database.write (数据库写入)
+        - label: message.process (消息处理)
+        - label: message.send (消息发送)
+        - label: system.command (系统命令)
+
+  - type: textarea
+    id: features
+    attributes:
+      label: ✨ 核心特性
+      description: 列出插件的核心特性和亮点
+      placeholder: |
+        - 智能对话处理
+        - 多平台支持
+        - 实时数据同步
+        - 可视化配置界面
+
+  - type: textarea
+    id: testing
+    attributes:
+      label: 🧪 测试情况
+      description: 描述插件的测试情况
+      placeholder: |
+        - 单元测试覆盖率：90%
+        - 集成测试：已完成
+        - 性能测试：已通过
+        - 兼容性测试：Windows 10/11, Ubuntu 20.04
+
+  - type: textarea
+    id: documentation
+    attributes:
+      label: 📚 文档完整性
+      description: 确认文档的完整性
+      placeholder: |
+        - [ ] README.md 包含详细的安装和使用说明
+        - [ ] 提供了配置示例
+        - [ ] 包含API文档
+        - [ ] 有故障排除指南
+
+  - type: checkboxes
+    id: code_quality
+    attributes:
+      label: 🏆 代码质量
+      description: 确认代码质量标准
+      options:
+        - label: 代码遵循PEP 8规范
+        - label: 包含适当的注释和文档字符串
+        - label: 错误处理完善
+        - label: 日志记录规范
+        - label: 安全性考虑充分
+
+  - type: textarea
+    id: additional_info
+    attributes:
+      label: 📝 补充信息
+      description: 其他需要说明的信息
+      placeholder: |
+        - 插件的特殊配置要求
+        - 已知限制或问题
+        - 未来开发计划
+        - 其他相关信息
+
+  - type: checkboxes
+    id: submission_checklist
+    attributes:
+      label: ✅ 提交确认
+      description: 请确认以下事项
+      options:
+        - label: 我确认插件代码是原创的或已获得适当授权
+        - label: 我同意插件被包含在WXAUTO-MGT插件市场中
+        - label: 我承诺及时响应审核反馈和维护插件
+        - label: 我了解插件可能因安全或质量问题被移除
+        - label: 我提供的信息真实准确
+
+  - type: markdown
+    attributes:
+      value: |
+        ## 📋 下一步
+
+        提交后，项目维护者将：
+        1. 审核插件代码和文档
+        2. 进行安全性检查
+        3. 测试插件功能
+        4. 提供审核反馈
+        5. 审核通过后添加到插件市场
+
+        预计审核时间：3-7个工作日
+
+        感谢您的贡献！🎉

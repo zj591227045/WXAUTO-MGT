@@ -31,11 +31,25 @@ except ImportError:
     class EditInstanceDialog:
         pass
 
+# 导入插件相关对话框
+try:
+    from wxauto_mgt.ui.components.dialogs.plugin_update_dialog import PluginUpdateDialog
+    from wxauto_mgt.ui.components.dialogs.plugin_config_dialog import PluginConfigDialog
+except ImportError:
+    # 如果插件对话框组件不存在，使用占位符
+    class PluginUpdateDialog:
+        pass
+
+    class PluginConfigDialog:
+        pass
+
 # 导出所有对话框组件
 __all__ = [
     'AddEditPlatformDialog',
     'AddEditRuleDialog',
     'AddInstanceDialog',
     'EditInstanceDialog',
-    'SettingsDialog'
+    'SettingsDialog',
+    'PluginUpdateDialog',
+    'PluginConfigDialog'
 ]

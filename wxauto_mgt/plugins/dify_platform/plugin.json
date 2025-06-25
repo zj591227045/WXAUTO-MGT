@@ -1,0 +1,71 @@
+{
+  "plugin_id": "dify_platform",
+  "name": "Dify平台插件",
+  "version": "1.0.0",
+  "description": "Dify平台集成插件，支持与Dify API的消息交互",
+  "author": "WXAUTO-MGT Team",
+  "homepage": "https://github.com/zj591227045/WXAUTO-MGT",
+  "license": "MIT",
+  "entry_point": "main.py",
+  "class_name": "DifyPlatformPlugin",
+  "dependencies": [
+    "aiohttp"
+  ],
+  "min_wxauto_version": "1.0.0",
+  "permissions": [
+    "network.http",
+    "config.read",
+    "config.write",
+    "message.process"
+  ],
+  "tags": [
+    "ai",
+    "chat",
+    "dify"
+  ],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "api_base": {
+        "type": "string",
+        "title": "API基础URL",
+        "description": "Dify API的基础URL",
+        "default": ""
+      },
+      "api_key": {
+        "type": "string",
+        "title": "API密钥",
+        "description": "Dify API密钥",
+        "format": "password"
+      },
+      "conversation_id": {
+        "type": "string",
+        "title": "会话ID",
+        "description": "Dify会话ID（可选）",
+        "default": ""
+      },
+      "user_id": {
+        "type": "string",
+        "title": "用户ID",
+        "description": "Dify用户ID",
+        "default": "default_user"
+      },
+      "message_send_mode": {
+        "type": "string",
+        "title": "消息发送模式",
+        "description": "消息发送模式",
+        "enum": ["direct", "queue"],
+        "default": "direct"
+      },
+      "timeout": {
+        "type": "integer",
+        "title": "请求超时时间",
+        "description": "API请求超时时间（秒）",
+        "default": 30,
+        "minimum": 5,
+        "maximum": 300
+      }
+    },
+    "required": ["api_base", "api_key"]
+  }
+}

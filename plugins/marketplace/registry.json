@@ -1,0 +1,296 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2024-01-15T10:30:00Z",
+  "registry_url": "https://raw.githubusercontent.com/zj591227045/WXAUTO-MGT/main/plugins/marketplace/registry.json",
+  "mirror_urls": [
+    "https://gitee.com/zj591227045/WXAUTO-MGT/raw/main/plugins/marketplace/registry.json"
+  ],
+  "plugins": [
+    {
+      "plugin_id": "advanced_dify_platform",
+      "name": "高级Dify平台插件",
+      "short_description": "增强版Dify平台集成，支持多模型切换和高级配置",
+      "description": "这是一个增强版的Dify平台插件，提供了比内置版本更丰富的功能，包括多模型切换、对话历史管理、自定义提示词模板等高级特性。",
+      "category": "ai_platform",
+      "tags": ["ai", "dify", "chat", "llm", "enhanced"],
+      "author": {
+        "name": "张三",
+        "github": "zhangsan",
+        "email": "zhangsan@example.com",
+        "website": "https://zhangsan.dev"
+      },
+      "license": "MIT",
+      "homepage": "https://github.com/zhangsan/wxauto-dify-advanced",
+      "repository": {
+        "type": "git",
+        "primary": {
+          "url": "https://github.com/zhangsan/wxauto-dify-advanced",
+          "api_url": "https://api.github.com/repos/zhangsan/wxauto-dify-advanced",
+          "releases_url": "https://api.github.com/repos/zhangsan/wxauto-dify-advanced/releases"
+        },
+        "mirror": {
+          "url": "https://gitee.com/zhangsan/wxauto-dify-advanced",
+          "api_url": "https://gitee.com/api/v5/repos/zhangsan/wxauto-dify-advanced",
+          "releases_url": "https://gitee.com/api/v5/repos/zhangsan/wxauto-dify-advanced/releases"
+        }
+      },
+      "versions": {
+        "latest": "2.1.0",
+        "stable": "2.0.5",
+        "minimum_supported": "1.0.0"
+      },
+      "compatibility": {
+        "min_wxauto_version": "1.0.0",
+        "max_wxauto_version": "2.0.0",
+        "python_version": ">=3.8",
+        "supported_os": ["Windows", "Linux", "Darwin"]
+      },
+      "dependencies": [
+        "aiohttp>=3.8.0",
+        "pydantic>=1.10.0"
+      ],
+      "permissions": [
+        "network.http",
+        "network.https",
+        "config.read",
+        "config.write",
+        "message.process"
+      ],
+      "features": [
+        "多模型支持",
+        "对话历史管理",
+        "自定义提示词",
+        "批量处理",
+        "性能监控"
+      ],
+      "screenshots": [
+        "https://raw.githubusercontent.com/zhangsan/wxauto-dify-advanced/main/docs/images/screenshot1.png",
+        "https://raw.githubusercontent.com/zhangsan/wxauto-dify-advanced/main/docs/images/screenshot2.png"
+      ],
+      "demo_video": "https://www.youtube.com/watch?v=example123",
+      "documentation": "https://github.com/zhangsan/wxauto-dify-advanced/blob/main/README.md",
+      "issue_tracker": "https://github.com/zhangsan/wxauto-dify-advanced/issues",
+      "stats": {
+        "downloads": 1250,
+        "stars": 89,
+        "forks": 23,
+        "rating": 4.7,
+        "rating_count": 45
+      },
+      "status": "active",
+      "verified": true,
+      "featured": true,
+      "created_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-15T08:30:00Z",
+      "review": {
+        "reviewer": "project_maintainer",
+        "review_date": "2024-01-02T10:00:00Z",
+        "security_score": 95,
+        "quality_score": 92,
+        "comments": "代码质量优秀，功能完整，文档详细"
+      }
+    },
+    {
+      "plugin_id": "smart_keyword_matcher",
+      "name": "智能关键词匹配器",
+      "short_description": "基于AI的智能关键词匹配和回复系统",
+      "description": "使用自然语言处理技术的智能关键词匹配插件，支持语义匹配、情感分析、上下文理解等高级功能。",
+      "category": "automation",
+      "tags": ["keyword", "ai", "nlp", "automation", "smart"],
+      "author": {
+        "name": "李四",
+        "github": "lisi",
+        "email": "lisi@example.com"
+      },
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/lisi/smart-keyword-matcher",
+      "repository": {
+        "type": "git",
+        "primary": {
+          "url": "https://github.com/lisi/smart-keyword-matcher",
+          "api_url": "https://api.github.com/repos/lisi/smart-keyword-matcher",
+          "releases_url": "https://api.github.com/repos/lisi/smart-keyword-matcher/releases"
+        },
+        "mirror": {
+          "url": "https://gitee.com/lisi/smart-keyword-matcher",
+          "api_url": "https://gitee.com/api/v5/repos/lisi/smart-keyword-matcher",
+          "releases_url": "https://gitee.com/api/v5/repos/lisi/smart-keyword-matcher/releases"
+        }
+      },
+      "versions": {
+        "latest": "1.5.2",
+        "stable": "1.5.0",
+        "minimum_supported": "1.0.0"
+      },
+      "compatibility": {
+        "min_wxauto_version": "1.0.0",
+        "python_version": ">=3.9",
+        "supported_os": ["Windows", "Linux", "Darwin"]
+      },
+      "dependencies": [
+        "transformers>=4.20.0",
+        "torch>=1.12.0",
+        "jieba>=0.42.1"
+      ],
+      "permissions": [
+        "config.read",
+        "config.write",
+        "message.process",
+        "file.read"
+      ],
+      "features": [
+        "语义匹配",
+        "情感分析",
+        "上下文理解",
+        "学习能力",
+        "多语言支持"
+      ],
+      "screenshots": [
+        "https://raw.githubusercontent.com/lisi/smart-keyword-matcher/main/docs/demo.png"
+      ],
+      "documentation": "https://github.com/lisi/smart-keyword-matcher/wiki",
+      "issue_tracker": "https://github.com/lisi/smart-keyword-matcher/issues",
+      "stats": {
+        "downloads": 856,
+        "stars": 67,
+        "forks": 15,
+        "rating": 4.5,
+        "rating_count": 28
+      },
+      "status": "active",
+      "verified": true,
+      "featured": false,
+      "created_at": "2024-01-05T00:00:00Z",
+      "updated_at": "2024-01-12T15:20:00Z",
+      "review": {
+        "reviewer": "project_maintainer",
+        "review_date": "2024-01-06T14:30:00Z",
+        "security_score": 88,
+        "quality_score": 85,
+        "comments": "功能创新，但需要优化性能"
+      }
+    },
+    {
+      "plugin_id": "wechat_work_integration",
+      "name": "企业微信集成插件",
+      "short_description": "企业微信机器人API集成，支持消息推送和群管理",
+      "description": "专为企业用户设计的企业微信集成插件，支持企业微信机器人API，可以实现消息推送、群管理、文件传输等企业级功能。",
+      "category": "integration",
+      "tags": ["wechat", "enterprise", "bot", "api", "business"],
+      "author": {
+        "name": "王五",
+        "github": "wangwu",
+        "email": "wangwu@company.com",
+        "website": "https://company.com"
+      },
+      "license": "Commercial",
+      "homepage": "https://github.com/wangwu/wechat-work-plugin",
+      "repository": {
+        "type": "git",
+        "primary": {
+          "url": "https://github.com/wangwu/wechat-work-plugin",
+          "api_url": "https://api.github.com/repos/wangwu/wechat-work-plugin",
+          "releases_url": "https://api.github.com/repos/wangwu/wechat-work-plugin/releases"
+        },
+        "mirror": {
+          "url": "https://gitee.com/wangwu/wechat-work-plugin",
+          "api_url": "https://gitee.com/api/v5/repos/wangwu/wechat-work-plugin",
+          "releases_url": "https://gitee.com/api/v5/repos/wangwu/wechat-work-plugin/releases"
+        }
+      },
+      "versions": {
+        "latest": "3.0.1",
+        "stable": "2.8.5",
+        "minimum_supported": "2.0.0"
+      },
+      "compatibility": {
+        "min_wxauto_version": "1.2.0",
+        "python_version": ">=3.8",
+        "supported_os": ["Windows", "Linux"]
+      },
+      "dependencies": [
+        "requests>=2.28.0",
+        "cryptography>=3.4.0"
+      ],
+      "permissions": [
+        "network.https",
+        "config.read",
+        "config.write",
+        "message.process",
+        "message.send",
+        "file.read",
+        "file.write"
+      ],
+      "features": [
+        "企业微信API集成",
+        "群消息推送",
+        "文件传输",
+        "成员管理",
+        "审批流程"
+      ],
+      "screenshots": [
+        "https://raw.githubusercontent.com/wangwu/wechat-work-plugin/main/docs/enterprise-demo.png"
+      ],
+      "documentation": "https://github.com/wangwu/wechat-work-plugin/blob/main/docs/README.md",
+      "issue_tracker": "https://github.com/wangwu/wechat-work-plugin/issues",
+      "stats": {
+        "downloads": 432,
+        "stars": 34,
+        "forks": 8,
+        "rating": 4.3,
+        "rating_count": 12
+      },
+      "status": "active",
+      "verified": true,
+      "featured": false,
+      "created_at": "2024-01-08T00:00:00Z",
+      "updated_at": "2024-01-14T11:45:00Z",
+      "review": {
+        "reviewer": "project_maintainer",
+        "review_date": "2024-01-09T16:20:00Z",
+        "security_score": 92,
+        "quality_score": 88,
+        "comments": "企业级功能完善，安全性良好"
+      }
+    }
+  ],
+  "categories": [
+    {
+      "id": "ai_platform",
+      "name": "AI平台",
+      "description": "AI服务平台集成插件",
+      "icon": "🤖"
+    },
+    {
+      "id": "automation",
+      "name": "自动化",
+      "description": "消息自动化处理插件",
+      "icon": "⚡"
+    },
+    {
+      "id": "integration",
+      "name": "系统集成",
+      "description": "第三方系统集成插件",
+      "icon": "🔗"
+    },
+    {
+      "id": "utility",
+      "name": "实用工具",
+      "description": "实用工具类插件",
+      "icon": "🛠️"
+    },
+    {
+      "id": "entertainment",
+      "name": "娱乐功能",
+      "description": "娱乐和趣味功能插件",
+      "icon": "🎮"
+    }
+  ],
+  "metadata": {
+    "total_plugins": 3,
+    "total_downloads": 2538,
+    "featured_plugins": 1,
+    "verified_plugins": 3,
+    "last_review_date": "2024-01-15T10:00:00Z"
+  }
+}

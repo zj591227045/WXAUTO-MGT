@@ -1,0 +1,96 @@
+{
+  "plugin_id": "keyword_platform",
+  "name": "关键词匹配插件",
+  "version": "1.0.0",
+  "description": "关键词匹配回复插件，支持自定义关键词规则和回复内容",
+  "author": "WXAUTO-MGT Team",
+  "homepage": "https://github.com/zj591227045/WXAUTO-MGT",
+  "license": "MIT",
+  "entry_point": "main.py",
+  "class_name": "KeywordPlatformPlugin",
+  "dependencies": [],
+  "min_wxauto_version": "1.0.0",
+  "permissions": [
+    "config.read",
+    "config.write",
+    "message.process"
+  ],
+  "tags": [
+    "keyword",
+    "auto-reply",
+    "rule-based"
+  ],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "rules": {
+        "type": "array",
+        "title": "关键词规则",
+        "description": "关键词匹配规则列表",
+        "items": {
+          "type": "object",
+          "properties": {
+            "keywords": {
+              "type": "array",
+              "title": "关键词列表",
+              "description": "触发回复的关键词",
+              "items": {
+                "type": "string"
+              }
+            },
+            "match_type": {
+              "type": "string",
+              "title": "匹配类型",
+              "description": "关键词匹配方式",
+              "enum": ["exact", "contains", "regex"],
+              "default": "exact"
+            },
+            "replies": {
+              "type": "array",
+              "title": "回复内容",
+              "description": "匹配后的回复内容列表",
+              "items": {
+                "type": "string"
+              }
+            },
+            "is_random_reply": {
+              "type": "boolean",
+              "title": "随机回复",
+              "description": "是否随机选择回复内容",
+              "default": false
+            },
+            "min_reply_time": {
+              "type": "integer",
+              "title": "最小回复时间",
+              "description": "回复延迟最小时间（秒）",
+              "default": 1,
+              "minimum": 0
+            },
+            "max_reply_time": {
+              "type": "integer",
+              "title": "最大回复时间",
+              "description": "回复延迟最大时间（秒）",
+              "default": 3,
+              "minimum": 0
+            }
+          },
+          "required": ["keywords", "replies"]
+        },
+        "default": []
+      },
+      "case_sensitive": {
+        "type": "boolean",
+        "title": "区分大小写",
+        "description": "关键词匹配是否区分大小写",
+        "default": false
+      },
+      "enable_delay": {
+        "type": "boolean",
+        "title": "启用回复延迟",
+        "description": "是否启用随机回复延迟",
+        "default": true
+      }
+    },
+    "required": []
+  }
+}

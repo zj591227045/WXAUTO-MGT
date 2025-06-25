@@ -1,0 +1,92 @@
+{
+  "plugin_id": "accounting_platform",
+  "name": "智能记账插件",
+  "version": "1.0.0",
+  "description": "只为记账平台集成插件，支持智能记账和账本管理",
+  "author": "WXAUTO-MGT Team",
+  "homepage": "https://github.com/zj591227045/WXAUTO-MGT",
+  "license": "MIT",
+  "entry_point": "main.py",
+  "class_name": "AccountingPlatformPlugin",
+  "dependencies": [
+    "aiohttp"
+  ],
+  "min_wxauto_version": "1.0.0",
+  "permissions": [
+    "network.http",
+    "config.read",
+    "config.write",
+    "message.process"
+  ],
+  "tags": [
+    "accounting",
+    "finance",
+    "zhiweijz"
+  ],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "server_url": {
+        "type": "string",
+        "title": "服务器地址",
+        "description": "只为记账服务器地址",
+        "default": "https://api.zhiweijz.com"
+      },
+      "username": {
+        "type": "string",
+        "title": "用户名",
+        "description": "只为记账账号用户名"
+      },
+      "password": {
+        "type": "string",
+        "title": "密码",
+        "description": "只为记账账号密码",
+        "format": "password"
+      },
+      "account_book_id": {
+        "type": "string",
+        "title": "账本ID",
+        "description": "默认账本ID"
+      },
+      "account_book_name": {
+        "type": "string",
+        "title": "账本名称",
+        "description": "默认账本名称",
+        "default": "个人账本"
+      },
+      "auto_login": {
+        "type": "boolean",
+        "title": "自动登录",
+        "description": "是否自动登录",
+        "default": true
+      },
+      "timeout": {
+        "type": "integer",
+        "title": "请求超时时间",
+        "description": "API请求超时时间（秒）",
+        "default": 30,
+        "minimum": 5,
+        "maximum": 300
+      },
+      "enable_smart_accounting": {
+        "type": "boolean",
+        "title": "启用智能记账",
+        "description": "是否启用智能记账功能",
+        "default": true
+      },
+      "reply_format": {
+        "type": "string",
+        "title": "回复格式",
+        "description": "记账成功后的回复格式",
+        "default": "记账成功：{amount}元 - {description}",
+        "enum": [
+          "记账成功：{amount}元 - {description}",
+          "✅ 已记录：{description} {amount}元",
+          "记账完成",
+          "自定义格式"
+        ]
+      }
+    },
+    "required": ["server_url", "username", "password", "account_book_id"]
+  }
+}
