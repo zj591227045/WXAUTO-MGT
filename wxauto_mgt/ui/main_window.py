@@ -52,11 +52,7 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(2000, start_delayed_save)
 
-        # 初始化插件市场（延迟启动）
-        def start_marketplace_init():
-            asyncio.create_task(self._init_marketplace())
-
-        QTimer.singleShot(3000, start_marketplace_init)
+        # 插件市场将在首次使用时初始化
 
         logger.info("主窗口已初始化")
 
@@ -533,6 +529,7 @@ class MainWindow(QMainWindow):
 
             # 如果市场面板不存在，创建新的
             if not hasattr(self, 'marketplace_panel') or self.marketplace_panel is None:
+                self.status_changed.emit("正在初始化插件市场...", 0)
                 self.marketplace_panel = SimpleMarketplacePanel(self)
 
             # 显示市场面板
@@ -544,6 +541,7 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             logger.error(f"打开插件市场失败: {e}")
+            self.status_changed.emit("打开插件市场失败", 3000)
             QMessageBox.warning(self, "错误", f"打开插件市场失败: {str(e)}")
 
     def _open_plugin_manager(self):
