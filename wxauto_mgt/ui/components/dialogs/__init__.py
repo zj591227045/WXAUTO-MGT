@@ -10,14 +10,14 @@ from wxauto_mgt.ui.components.dialogs.rule_dialog import AddEditRuleDialog
 
 # 导入设置对话框
 try:
-    # 从父级目录的dialogs.py文件导入
-    from ..dialogs import SettingsDialog
+    # 从同级目录的settings_dialog.py文件导入
+    from .settings_dialog import SettingsDialog
 except ImportError as e:
     print(f"导入SettingsDialog失败: {e}")
     # 如果仍然无法导入，使用占位符
     class SettingsDialog:
         def __init__(self, parent=None):
-            raise NotImplementedError("SettingsDialog导入失败，请检查dialogs.py文件")
+            raise NotImplementedError("SettingsDialog导入失败，请检查settings_dialog.py文件")
 
 # 导入现有的对话框组件
 try:
