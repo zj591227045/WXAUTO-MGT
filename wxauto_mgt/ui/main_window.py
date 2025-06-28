@@ -22,6 +22,7 @@ from wxauto_mgt.data.config_store import config_store
 from wxauto_mgt.utils.logging import logger
 from wxauto_mgt.web import is_web_service_running
 from wxauto_mgt.core.service_platform_manager import platform_manager, rule_manager
+from wxauto_mgt.ui.utils.ui_monitor import start_ui_monitoring, stop_ui_monitoring
 
 # 延迟导入UI组件，避免循环导入
 # 实际使用时在方法内导入
@@ -50,6 +51,9 @@ class MainWindow(QMainWindow):
             asyncio.create_task(self._delayed_config_save())
 
         QTimer.singleShot(2000, start_delayed_save)
+
+        # 启动UI响应性监控
+        start_ui_monitoring()
 
         logger.info("主窗口已初始化")
 
@@ -337,6 +341,9 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     logger.error(f"应用程序关闭时停止Web服务失败: {e}")
                     # 不阻止程序关闭
+
+            # 停止UI监控
+            stop_ui_monitoring()
 
             # 执行清理操作
             event.accept()

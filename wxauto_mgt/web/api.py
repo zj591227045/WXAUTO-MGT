@@ -15,6 +15,8 @@ import os
 import sys
 import logging
 import traceback
+import aiohttp
+import asyncio
 
 from wxauto_mgt.utils.logging import logger
 from wxauto_mgt.core.api_client import instance_manager
@@ -780,23 +782,29 @@ async def get_instance_status_cached(instance_id: str, base_url: str, api_key: s
         async def fetch_health():
             try:
                 health_url = f"{base_url}/api/health"
-                health_response = requests.get(health_url, headers=headers, timeout=2)
-                return health_response.json() if health_response.status_code == 200 else None
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(health_url, headers=headers, timeout=aiohttp.ClientTimeout(total=2)) as response:
+                        if response.status == 200:
+                            return await response.json()
+                        return None
             except:
                 return None
 
         async def fetch_resources():
             try:
                 resources_url = f"{base_url}/api/system/resources"
-                resources_response = requests.get(resources_url, headers=headers, timeout=2)
-                return resources_response.json() if resources_response.status_code == 200 else None
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(resources_url, headers=headers, timeout=aiohttp.ClientTimeout(total=2)) as response:
+                        if response.status == 200:
+                            return await response.json()
+                        return None
             except:
                 return None
 
         # 并发执行请求
         health_data, resources_data = await asyncio.gather(
-            asyncio.to_thread(fetch_health),
-            asyncio.to_thread(fetch_resources),
+            fetch_health(),
+            fetch_resources(),
             return_exceptions=True
         )
 
@@ -1575,7 +1583,7 @@ async def get_messages(
 
         # 执行查询
         messages = await db_manager.fetchall(query, tuple(params))
-        logger.debug(f"查询到 {len(messages)} 条消息")
+        # logger.debug(f"查询到 {len(messages)} 条消息")  # 避免循环日志
 
         return messages
     except Exception as e:
@@ -1597,7 +1605,7 @@ async def get_logs(request: Request, limit: int = 50, since: Optional[int] = Non
         # 验证认证
         await verify_request_auth(request)
         # 记录API调用
-        logger.debug(f"获取日志 API 被调用，参数：limit={limit}, since={since}")
+        # logger.debug(f"获取日志 API 被调用，参数：limit={limit}, since={since}")  # 避免循环日志
 
         # 尝试从日志文件中读取日志
         logs = []
@@ -1608,18 +1616,18 @@ async def get_logs(request: Request, limit: int = 50, since: Optional[int] = Non
             from wxauto_mgt.utils.logging import get_log_file_path
 
             log_file = get_log_file_path()
-            logger.debug(f"日志文件路径: {log_file}")
+            # logger.debug(f"日志文件路径: {log_file}")  # 避免循环日志
 
             if os.path.exists(log_file):
                 # 读取日志文件的最后几行
                 with open(log_file, 'r', encoding='utf-8') as f:
                     # 读取所有行
                     lines = f.readlines()
-                    logger.debug(f"日志文件共有 {len(lines)} 行")
+                    # logger.debug(f"日志文件共有 {len(lines)} 行")  # 避免循环日志
 
                     # 获取最后limit行
                     last_lines = lines[-limit*2:] if len(lines) > limit*2 else lines
-                    logger.debug(f"读取了最后 {len(last_lines)} 行进行解析")
+                    # logger.debug(f"读取了最后 {len(last_lines)} 行进行解析")  # 避免循环日志
 
                     # 解析日志行
                     for line in last_lines:
@@ -1667,7 +1675,7 @@ async def get_logs(request: Request, limit: int = 50, since: Optional[int] = Non
                                 "message": line.strip()
                             })
 
-                    logger.debug(f"成功解析了 {len(logs)} 条日志")
+                    # logger.debug(f"成功解析了 {len(logs)} 条日志")  # 避免循环日志
         except Exception as e:
             logger.warning(f"从日志文件读取日志失败: {e}")
 
@@ -1676,7 +1684,7 @@ async def get_logs(request: Request, limit: int = 50, since: Optional[int] = Non
 
         # 限制数量
         logs = logs[:limit]
-        logger.debug(f"返回 {len(logs)} 条日志")
+        # logger.debug(f"返回 {len(logs)} 条日志")  # 避免循环日志
 
         return logs
     except Exception as e:
@@ -1921,7 +1929,7 @@ async def test_accounting_connection(request: Request):
 # ==================== 固定监听配置API ====================
 
 @api_router.get("/fixed-listeners")
-async def get_fixed_listeners(current_user: dict = Depends(get_current_user)):
+async def get_fixed_listeners():
     """获取所有固定监听配置"""
     try:
         fixed_listeners = await message_listener.get_fixed_listeners()
@@ -1939,10 +1947,7 @@ async def get_fixed_listeners(current_user: dict = Depends(get_current_user)):
         }
 
 @api_router.post("/fixed-listeners")
-async def add_fixed_listener(
-    request: Request,
-    current_user: dict = Depends(get_current_user)
-):
+async def add_fixed_listener(request: Request):
     """添加固定监听配置"""
     try:
         data = await request.json()
@@ -1983,11 +1988,7 @@ async def add_fixed_listener(
         }
 
 @api_router.put("/fixed-listeners/{listener_id}")
-async def update_fixed_listener(
-    listener_id: int,
-    request: Request,
-    current_user: dict = Depends(get_current_user)
-):
+async def update_fixed_listener(listener_id: int, request: Request):
     """更新固定监听配置"""
     try:
         data = await request.json()
@@ -2036,10 +2037,7 @@ async def update_fixed_listener(
         }
 
 @api_router.delete("/fixed-listeners/{listener_id}")
-async def delete_fixed_listener(
-    listener_id: int,
-    current_user: dict = Depends(get_current_user)
-):
+async def delete_fixed_listener(listener_id: int):
     """删除固定监听配置"""
     try:
         success = await message_listener.delete_fixed_listener(listener_id)

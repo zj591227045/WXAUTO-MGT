@@ -380,6 +380,23 @@ class DBManager:
                 conn.execute("UPDATE listeners SET status = 'active' WHERE status IS NULL")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_listeners_status ON listeners(status)")
 
+            # 检查并创建fixed_listeners表
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='fixed_listeners'")
+            if not cursor.fetchone():
+                logger.info("创建fixed_listeners表")
+                conn.execute("""
+                CREATE TABLE fixed_listeners (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_name TEXT NOT NULL UNIQUE,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    description TEXT DEFAULT '',
+                    create_time INTEGER NOT NULL,
+                    update_time INTEGER NOT NULL
+                )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_fixed_listeners_enabled ON fixed_listeners(enabled)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_fixed_listeners_session_name ON fixed_listeners(session_name)")
+
             logger.debug("表结构升级完成")
         except Exception as e:
             logger.error(f"升级表结构时出错: {e}")

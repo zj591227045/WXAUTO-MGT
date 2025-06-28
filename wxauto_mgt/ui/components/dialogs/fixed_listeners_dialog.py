@@ -245,6 +245,13 @@ class FixedListenersDialog(QDialog):
             config = self.current_item.data(Qt.UserRole)
             config['session_name'] = self.session_name_edit.text().strip()
             self._update_item_display()
+        else:
+            # 如果没有选中项，可能是新添加的配置，需要找到对应的配置对象
+            # 这种情况下，我们需要更新最后一个配置（新添加的）
+            if self.fixed_listeners:
+                last_config = self.fixed_listeners[-1]
+                if last_config.get('id') is None:  # 确认是新配置
+                    last_config['session_name'] = self.session_name_edit.text().strip()
 
     def _on_enabled_changed(self):
         """启用状态变化处理"""
@@ -252,12 +259,24 @@ class FixedListenersDialog(QDialog):
             config = self.current_item.data(Qt.UserRole)
             config['enabled'] = 1 if self.enabled_checkbox.isChecked() else 0
             self._update_item_display()
+        else:
+            # 如果没有选中项，可能是新添加的配置
+            if self.fixed_listeners:
+                last_config = self.fixed_listeners[-1]
+                if last_config.get('id') is None:  # 确认是新配置
+                    last_config['enabled'] = 1 if self.enabled_checkbox.isChecked() else 0
 
     def _on_description_changed(self):
         """描述变化处理"""
         if self.current_item:
             config = self.current_item.data(Qt.UserRole)
             config['description'] = self.description_edit.toPlainText().strip()
+        else:
+            # 如果没有选中项，可能是新添加的配置
+            if self.fixed_listeners:
+                last_config = self.fixed_listeners[-1]
+                if last_config.get('id') is None:  # 确认是新配置
+                    last_config['description'] = self.description_edit.toPlainText().strip()
 
     def _update_item_display(self):
         """更新列表项显示"""
@@ -375,11 +394,30 @@ class FixedListenersDialog(QDialog):
     @asyncSlot()
     async def _save_current_item(self):
         """保存当前编辑的项目"""
-        if not self.current_item:
+        # 获取当前配置
+        config = None
+        if self.current_item:
+            config = self.current_item.data(Qt.UserRole)
+        else:
+            # 如果没有选中项，可能是新添加的配置
+            if self.fixed_listeners:
+                last_config = self.fixed_listeners[-1]
+                if last_config.get('id') is None:  # 确认是新配置
+                    config = last_config
+
+        if not config:
+            QMessageBox.warning(self, "错误", "没有可保存的配置")
             return
 
-        config = self.current_item.data(Qt.UserRole)
-        session_name = config.get('session_name', '').strip()
+        # 从表单获取最新的值
+        session_name = self.session_name_edit.text().strip()
+        enabled = self.enabled_checkbox.isChecked()
+        description = self.description_edit.toPlainText().strip()
+
+        # 更新配置对象
+        config['session_name'] = session_name
+        config['enabled'] = 1 if enabled else 0
+        config['description'] = description
 
         # 验证输入
         if not session_name:
@@ -397,8 +435,6 @@ class FixedListenersDialog(QDialog):
 
         try:
             config_id = config.get('id')
-            enabled = bool(config.get('enabled', 1))
-            description = config.get('description', '').strip()
 
             if config_id:
                 # 更新现有配置

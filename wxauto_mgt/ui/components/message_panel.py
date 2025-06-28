@@ -1686,10 +1686,20 @@ class MessageListenerPanel(QWidget):
 
                 # 检查实例是否存在
                 from wxauto_mgt.data.db_manager import db_manager
-                instance_exists = await db_manager.fetchone(
-                    "SELECT 1 FROM instances WHERE instance_id = ?",
-                    (instance_id,)
-                )
+                try:
+                    instance_exists = await asyncio.wait_for(
+                        db_manager.fetchone(
+                            "SELECT 1 FROM instances WHERE instance_id = ?",
+                            (instance_id,)
+                        ),
+                        timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("检查实例存在性超时")
+                    instance_exists = None
+                except asyncio.CancelledError:
+                    logger.warning("检查实例存在性被取消")
+                    return
 
                 if instance_exists:
                     try:
@@ -2733,6 +2743,14 @@ class MessageListenerPanel(QWidget):
         # 检查是否已标记为不活跃
         if hasattr(listener_info, 'active') and not listener_info.active:
             return "将移除"
+
+        # 检查是否为固定监听对象（不受超时限制）
+        if hasattr(listener_info, 'fixed_listener') and listener_info.fixed_listener:
+            return "长期监听"
+
+        # 检查是否为手动添加的监听对象（不受超时限制）
+        if hasattr(listener_info, 'manual_added') and listener_info.manual_added:
+            return "长期监听"
 
         # 检查是否在启动宽限期内
         from wxauto_mgt.core.message_listener import message_listener

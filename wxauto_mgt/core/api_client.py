@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 # 导入文件处理专用日志记录器
 from wxauto_mgt.utils import file_logger
+from wxauto_mgt.utils.performance_monitor import monitor_performance
 
 class ApiError(Exception):
     """API错误"""
@@ -105,23 +106,19 @@ class WxAutoApiClient:
             logger.error(f"POST请求失败: {e}")
             raise ApiError(str(e))
 
+    @monitor_performance("api_initialize")
     async def initialize(self) -> bool:
         """初始化微信实例"""
         try:
-            response = requests.post(
-                f"{self.base_url}/api/wechat/initialize",
-                headers={'X-API-Key': self.api_key}
-            )
-            response.raise_for_status()
-            data = response.json()
-            if data.get('code') != 0:
-                raise ApiError(data.get('message', '未知错误'), data.get('code', -1))
+            # 使用异步POST请求替代同步requests
+            data = await self._post('/api/wechat/initialize')
             self._initialized = True
             return True
         except Exception as e:
             logger.error(f"初始化失败: {e}")
             return False
 
+    @monitor_performance("api_get_status")
     async def get_status(self) -> Dict:
         """获取微信状态"""
         try:

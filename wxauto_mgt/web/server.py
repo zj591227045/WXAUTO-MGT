@@ -20,6 +20,7 @@ from wxauto_mgt.utils.logging import logger
 # 全局变量
 _shutdown_requested = False
 _server = None
+_server_should_exit = threading.Event()
 
 
 def get_resource_path(relative_path):
@@ -175,7 +176,7 @@ def run_server(app, host, port):
         host: 主机地址
         port: 端口号
     """
-    global _server_should_exit
+    global _server_should_exit, _server
 
     # 重置退出事件
     _server_should_exit.clear()
@@ -191,6 +192,7 @@ def run_server(app, host, port):
 
     # 创建服务器
     server = uvicorn.Server(config)
+    _server = server  # 保存服务器实例以便停止
 
     try:
         logger.info(f"Web服务器启动中，地址: http://{host}:{port}")
@@ -200,9 +202,32 @@ def run_server(app, host, port):
         import traceback
         logger.error(f"Web服务器运行失败: {e}\n{traceback.format_exc()}")
     finally:
+        # 清理全局变量
+        _server = None
         logger.info("Web服务器已停止")
 
 def stop_server():
     """停止服务器"""
-    # 在这里我们不需要做任何事情，因为服务器将在线程终止时自动停止
+    global _server, _server_should_exit, _shutdown_requested
+
     logger.info("正在停止Web服务器...")
+
+    try:
+        # 设置停止标志
+        _shutdown_requested = True
+        _server_should_exit.set()
+
+        # 如果服务器实例存在，尝试停止它
+        if _server:
+            # 停止服务器
+            _server.should_exit = True
+            if hasattr(_server, 'force_exit'):
+                _server.force_exit = True
+            logger.info("已发送停止信号给Web服务器")
+        else:
+            logger.warning("Web服务器实例不存在")
+
+    except Exception as e:
+        logger.error(f"停止Web服务器时出错: {e}")
+        import traceback
+        logger.error(traceback.format_exc())

@@ -99,7 +99,9 @@ class MessageListener:
         await self._load_listeners_from_db()
 
         # 加载固定监听配置并自动添加到监听列表
+        logger.info("🔧 准备加载固定监听配置...")
         await self._load_and_apply_fixed_listeners()
+        logger.info("🔧 固定监听配置加载完成")
 
         # 加载完成后，暂时锁定超时处理
         # 设置一个标志，防止UI线程同时处理超时对象
@@ -1390,12 +1392,70 @@ class MessageListener:
             total = sum(len(listeners) for listeners in self.listeners.values())
             logger.info(f"从数据库加载了 {total} 个监听对象")
 
+            # 重新添加监听对象到API
+            await self._reapply_listeners_to_api()
+
             # 注意：超时对象的处理已移至start方法的_refresh_all_listeners中
 
         except Exception as e:
             logger.error(f"从数据库加载监听对象时出错: {e}")
             logger.exception(e)
             # 出错时也要确保监听器字典被初始化
+
+    async def _reapply_listeners_to_api(self):
+        """重新将监听对象添加到API"""
+        try:
+            logger.info("🔧 重新将监听对象添加到API...")
+
+            total_reapplied = 0
+            total_failed = 0
+
+            for instance_id, listeners_dict in self.listeners.items():
+                # 获取API客户端
+                api_client = instance_manager.get_instance(instance_id)
+                if not api_client:
+                    logger.warning(f"找不到实例 {instance_id} 的API客户端，跳过重新添加监听")
+                    continue
+
+                logger.info(f"为实例 {instance_id} 重新添加 {len(listeners_dict)} 个监听对象")
+
+                for who, listener_info in listeners_dict.items():
+                    try:
+                        # 只重新添加活跃的监听对象
+                        if not listener_info.active:
+                            logger.debug(f"跳过非活跃监听对象: {instance_id} - {who}")
+                            continue
+
+                        # 调用API重新添加监听
+                        api_success = await api_client.add_listener(
+                            who,
+                            save_pic=True,
+                            save_file=True,
+                            save_voice=True,
+                            parse_url=True
+                        )
+
+                        if api_success:
+                            total_reapplied += 1
+                            if listener_info.fixed_listener:
+                                logger.info(f"成功重新添加固定监听对象: {instance_id} - {who}")
+                            elif listener_info.manual_added:
+                                logger.info(f"成功重新添加手动监听对象: {instance_id} - {who}")
+                            else:
+                                logger.debug(f"成功重新添加监听对象: {instance_id} - {who}")
+                        else:
+                            total_failed += 1
+                            logger.warning(f"重新添加监听对象失败: {instance_id} - {who}")
+
+                    except Exception as e:
+                        total_failed += 1
+                        logger.error(f"重新添加监听对象 {instance_id} - {who} 时出错: {e}")
+
+            logger.info(f"🔧 监听对象重新添加完成: 成功 {total_reapplied} 个，失败 {total_failed} 个")
+
+        except Exception as e:
+            logger.error(f"重新添加监听对象到API时出错: {e}")
+            logger.exception(e)
             self.listeners = {}
 
     async def _refresh_potentially_expired_listeners(self, potentially_expired):
@@ -2041,12 +2101,19 @@ class MessageListener:
     async def _load_and_apply_fixed_listeners(self):
         """加载固定监听配置并自动添加到监听列表"""
         try:
-            logger.info("加载固定监听配置...")
+            logger.info("🔧 开始加载固定监听配置...")
+
+            # 检查数据库管理器是否已初始化
+            if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+                logger.error("数据库管理器未初始化，无法加载固定监听配置")
+                return
 
             # 从数据库获取启用的固定监听配置
+            logger.debug("查询数据库中的固定监听配置...")
             fixed_listeners = await db_manager.fetchall(
                 "SELECT session_name, description FROM fixed_listeners WHERE enabled = 1"
             )
+            logger.debug(f"数据库查询结果: {fixed_listeners}")
 
             if not fixed_listeners:
                 logger.info("没有启用的固定监听配置")
@@ -2055,10 +2122,15 @@ class MessageListener:
             logger.info(f"找到 {len(fixed_listeners)} 个启用的固定监听配置")
 
             # 获取所有可用的实例
+            logger.debug("获取可用的微信实例...")
             available_instances = instance_manager.get_all_instances()
+            logger.debug(f"可用实例: {available_instances}")
+
             if not available_instances:
                 logger.warning("没有可用的微信实例，无法应用固定监听配置")
                 return
+
+            logger.info(f"找到 {len(available_instances)} 个可用的微信实例")
 
             # 为每个固定监听会话在所有实例中添加监听对象
             for fixed_listener in fixed_listeners:
@@ -2099,8 +2171,10 @@ class MessageListener:
                         logger.error(f"为实例 {instance_id} 添加固定监听对象 {session_name} 时出错: {e}")
 
         except Exception as e:
-            logger.error(f"加载和应用固定监听配置时出错: {e}")
+            logger.error(f"🚨 加载和应用固定监听配置时出错: {e}")
             logger.exception(e)
+            import traceback
+            logger.error(f"详细错误信息: {traceback.format_exc()}")
 
     async def get_fixed_listeners(self) -> List[Dict]:
         """获取所有固定监听配置"""

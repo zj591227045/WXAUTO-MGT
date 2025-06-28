@@ -9,7 +9,69 @@ let lastMessageTimestamp = 0;
 // 最后一条日志的时间戳
 let lastLogTimestamp = 0;
 
+// ==================== 固定监听功能（全局函数） ====================
+
+/**
+ * 显示固定监听配置模态框
+ */
+function showFixedListenersModal() {
+    console.log('固定监听按钮被点击');
+
+    try {
+        // 显示模态框
+        const modalElement = document.getElementById('fixedListenersModal');
+        if (!modalElement) {
+            console.error('找不到固定监听模态框元素');
+            if (typeof showAlert === 'function') {
+                showAlert('找不到固定监听模态框', 'danger');
+            }
+            return;
+        }
+
+        // 确保之前的模态框实例被正确清理
+        const existingModal = bootstrap.Modal.getInstance(modalElement);
+        if (existingModal) {
+            existingModal.dispose();
+        }
+
+        // 创建新的模态框实例
+        const modal = new bootstrap.Modal(modalElement, {
+            backdrop: true,
+            keyboard: true,
+            focus: true
+        });
+
+        // 添加模态框关闭事件监听
+        modalElement.addEventListener('hidden.bs.modal', function () {
+            console.log('固定监听模态框已关闭');
+            // 确保背景遮罩被移除
+            const backdrops = document.querySelectorAll('.modal-backdrop');
+            backdrops.forEach(backdrop => backdrop.remove());
+        }, { once: true });
+
+        modal.show();
+        console.log('模态框已显示');
+
+        // 加载固定监听配置列表
+        if (typeof loadFixedListeners === 'function') {
+            loadFixedListeners();
+        }
+
+        // 绑定模态框内的事件（如果还没有绑定）
+        if (typeof bindFixedListenersEvents === 'function') {
+            bindFixedListenersEvents();
+        }
+    } catch (error) {
+        console.error('显示固定监听模态框失败:', error);
+        if (typeof showAlert === 'function') {
+            showAlert('显示固定监听模态框失败: ' + error.message, 'danger');
+        }
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM内容已加载，开始初始化消息页面');
+
     // 初始化页面
     initMessagesPage();
 
@@ -31,7 +93,13 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('delete-listener').addEventListener('click', deleteListener);
 
     // 绑定固定监听按钮事件
-    document.getElementById('fixed-listeners').addEventListener('click', showFixedListenersModal);
+    const fixedListenersBtn = document.getElementById('fixed-listeners');
+    if (fixedListenersBtn) {
+        fixedListenersBtn.addEventListener('click', showFixedListenersModal);
+        console.log('固定监听按钮事件已绑定');
+    } else {
+        console.error('找不到固定监听按钮元素');
+    }
 
     // 绑定保存监听对象按钮事件
     document.getElementById('save-listener').addEventListener('click', saveListener);
@@ -894,20 +962,7 @@ function bindLogFilterEvents() {
 // 当前选中的固定监听配置
 let currentFixedListener = null;
 
-/**
- * 显示固定监听配置模态框
- */
-function showFixedListenersModal() {
-    // 显示模态框
-    const modal = new bootstrap.Modal(document.getElementById('fixedListenersModal'));
-    modal.show();
 
-    // 加载固定监听配置列表
-    loadFixedListeners();
-
-    // 绑定模态框内的事件（如果还没有绑定）
-    bindFixedListenersEvents();
-}
 
 /**
  * 绑定固定监听模态框内的事件
@@ -940,6 +995,7 @@ function bindFixedListenersEvents() {
  * 加载固定监听配置列表
  */
 async function loadFixedListeners() {
+    console.log('开始加载固定监听配置列表');
     try {
         const response = await fetch('/api/fixed-listeners', {
             method: 'GET',
@@ -949,9 +1005,12 @@ async function loadFixedListeners() {
         });
 
         const result = await response.json();
+        console.log('API响应:', result);
 
         if (result.code === 0) {
+            console.log('开始显示固定监听列表，数据条数:', result.data.length);
             displayFixedListeners(result.data);
+            console.log('固定监听列表显示完成');
         } else {
             console.error('加载固定监听配置失败:', result.message);
             showAlert('加载固定监听配置失败: ' + result.message, 'danger');
@@ -966,7 +1025,17 @@ async function loadFixedListeners() {
  * 显示固定监听配置列表
  */
 function displayFixedListeners(fixedListeners) {
+    console.log('显示固定监听列表，接收到的数据:', fixedListeners);
     const listContainer = document.getElementById('fixed-listeners-list');
+
+    if (!listContainer) {
+        console.error('找不到固定监听列表容器元素');
+        return;
+    }
+
+    // 强制清空容器
+    listContainer.innerHTML = '';
+    console.log('已清空列表容器');
 
     if (!fixedListeners || fixedListeners.length === 0) {
         listContainer.innerHTML = `
@@ -1008,7 +1077,10 @@ function displayFixedListeners(fixedListeners) {
         listItem.dataset.configId = config.id;
 
         listContainer.appendChild(listItem);
+        console.log(`已添加列表项: ${config.session_name}`);
     });
+
+    console.log(`固定监听列表显示完成，共 ${fixedListeners.length} 项`);
 }
 
 /**
@@ -1112,8 +1184,12 @@ async function saveFixedListener() {
 
         if (result.code === 0) {
             showAlert('保存固定监听配置成功', 'success');
+            console.log('保存成功，开始重新加载列表');
             // 重新加载列表
-            loadFixedListeners();
+            await loadFixedListeners();
+            console.log('固定监听列表已重新加载');
+            // 清空表单并重置状态
+            clearFixedListenerForm();
             // 刷新监听对象列表
             loadListeners();
         } else {
@@ -1152,8 +1228,10 @@ async function deleteFixedListener() {
 
         if (result.code === 0) {
             showAlert('删除固定监听配置成功', 'success');
+            console.log('删除成功，开始重新加载列表');
             // 重新加载列表
-            loadFixedListeners();
+            await loadFixedListeners();
+            console.log('固定监听列表已重新加载');
             // 清空表单
             clearFixedListenerForm();
             // 刷新监听对象列表

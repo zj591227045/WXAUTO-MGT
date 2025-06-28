@@ -135,9 +135,9 @@ def verify_token(token: str) -> Optional[Dict[str, Any]]:
         Optional[Dict[str, Any]]: 解码后的数据，如果验证失败则返回None
     """
     try:
-        logger.debug(f"JWT验证: token={token[:50] if token else 'None'}...")
-        logger.debug(f"JWT验证: 使用密钥={JWT_SECRET_KEY[:20] if JWT_SECRET_KEY else 'None'}...")
-        logger.debug(f"JWT验证: 算法={JWT_ALGORITHM}")
+        # logger.debug(f"JWT验证: token={token[:50] if token else 'None'}...")  # 避免循环日志
+        # logger.debug(f"JWT验证: 使用密钥={JWT_SECRET_KEY[:20] if JWT_SECRET_KEY else 'None'}...")  # 避免循环日志
+        # logger.debug(f"JWT验证: 算法={JWT_ALGORITHM}")  # 避免循环日志
 
         if not JWT_SECRET_KEY:
             logger.error("JWT验证失败: JWT密钥未设置")
