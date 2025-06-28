@@ -618,6 +618,34 @@ class MessageListener:
                                 logger.debug(f"监听消息保存成功，ID: {message_id}")
                                 # 记录消息处理统计
                                 service_monitor.record_message_processed()
+
+                                # 直接处理消息投递和回复 - 与主窗口保持一致
+                                try:
+                                    # 导入消息投递服务
+                                    from wxauto_mgt.core.message_delivery_service import message_delivery_service
+
+                                    # 获取保存的消息
+                                    from wxauto_mgt.data.db_manager import db_manager
+                                    saved_message = await db_manager.fetchone(
+                                        "SELECT * FROM messages WHERE message_id = ?",
+                                        (processed_msg.get('id'),)
+                                    )
+
+                                    if saved_message:
+                                        # 直接处理消息投递
+                                        logger.info(f"监听窗口消息直接投递处理: {processed_msg.get('id')}")
+                                        # 直接等待处理完成，确保回复能发送回微信
+                                        try:
+                                            delivery_result = await message_delivery_service.process_message(saved_message)
+                                            logger.info(f"监听窗口消息投递处理完成: {processed_msg.get('id')}, 结果: {delivery_result}")
+                                        except Exception as delivery_e:
+                                            logger.error(f"监听窗口消息投递处理异常: {delivery_e}")
+                                            logger.exception(delivery_e)
+                                    else:
+                                        logger.error(f"无法找到保存的消息: {processed_msg.get('id')}")
+                                except Exception as e:
+                                    logger.error(f"监听窗口消息投递处理失败: {e}")
+                                    logger.exception(e)
                     else:
                         logger.debug(f"实例 {instance_id} 监听对象 {who} 没有新消息")
 
@@ -980,6 +1008,34 @@ class MessageListener:
                                     message_id = await self._save_message(save_data)
                                     if message_id:
                                         logger.debug(f"超时检查消息保存成功，ID: {message_id}")
+
+                                        # 直接处理消息投递和回复 - 与主窗口保持一致
+                                        try:
+                                            # 导入消息投递服务
+                                            from wxauto_mgt.core.message_delivery_service import message_delivery_service
+
+                                            # 获取保存的消息
+                                            from wxauto_mgt.data.db_manager import db_manager
+                                            saved_message = await db_manager.fetchone(
+                                                "SELECT * FROM messages WHERE message_id = ?",
+                                                (processed_msg.get('id'),)
+                                            )
+
+                                            if saved_message:
+                                                # 直接处理消息投递
+                                                logger.info(f"超时检查消息直接投递处理: {processed_msg.get('id')}")
+                                                # 直接等待处理完成，确保回复能发送回微信
+                                                try:
+                                                    delivery_result = await message_delivery_service.process_message(saved_message)
+                                                    logger.info(f"超时检查消息投递处理完成: {processed_msg.get('id')}, 结果: {delivery_result}")
+                                                except Exception as delivery_e:
+                                                    logger.error(f"超时检查消息投递处理异常: {delivery_e}")
+                                                    logger.exception(delivery_e)
+                                            else:
+                                                logger.error(f"无法找到保存的消息: {processed_msg.get('id')}")
+                                        except Exception as e:
+                                            logger.error(f"超时检查消息投递处理失败: {e}")
+                                            logger.exception(e)
 
                         continue  # 跳过移除步骤
 
@@ -1725,7 +1781,37 @@ class MessageListener:
                                     continue
 
                                 # 保存到数据库
-                                await self._save_message(save_data)
+                                message_id = await self._save_message(save_data)
+                                if message_id:
+                                    logger.debug(f"启动时消息保存成功，ID: {message_id}")
+
+                                    # 直接处理消息投递和回复 - 与主窗口保持一致
+                                    try:
+                                        # 导入消息投递服务
+                                        from wxauto_mgt.core.message_delivery_service import message_delivery_service
+
+                                        # 获取保存的消息
+                                        from wxauto_mgt.data.db_manager import db_manager
+                                        saved_message = await db_manager.fetchone(
+                                            "SELECT * FROM messages WHERE message_id = ?",
+                                            (processed_msg.get('id'),)
+                                        )
+
+                                        if saved_message:
+                                            # 直接处理消息投递
+                                            logger.info(f"启动时消息直接投递处理: {processed_msg.get('id')}")
+                                            # 直接等待处理完成，确保回复能发送回微信
+                                            try:
+                                                delivery_result = await message_delivery_service.process_message(saved_message)
+                                                logger.info(f"启动时消息投递处理完成: {processed_msg.get('id')}, 结果: {delivery_result}")
+                                            except Exception as delivery_e:
+                                                logger.error(f"启动时消息投递处理异常: {delivery_e}")
+                                                logger.exception(delivery_e)
+                                        else:
+                                            logger.error(f"无法找到保存的消息: {processed_msg.get('id')}")
+                                    except Exception as e:
+                                        logger.error(f"启动时消息投递处理失败: {e}")
+                                        logger.exception(e)
                 else:
                     # 无消息时，尝试重置监听对象
                     logger.info(f"监听对象 {who} 没有新消息，尝试重置")
