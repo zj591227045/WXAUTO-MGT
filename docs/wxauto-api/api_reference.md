@@ -276,12 +276,7 @@ POST /api/message/listen/add
 **请求体**:
 ```json
 {
-  "who": "聊天对象名称",
-  "savepic": true,     // 可选
-  "savefile": true,    // 可选
-  "savevoice": true,   // 可选
-  "savevideo": true,   // 可选，仅 wxautox 支持
-  "parseurl": true     // 可选，仅 wxautox 支持
+  "nickname": "聊天对象名称"
 }
 ```
 
@@ -328,7 +323,7 @@ POST /api/message/listen/remove
 **请求体**:
 ```json
 {
-  "who": "聊天对象名称"
+  "nickname": "聊天对象名称"
 }
 ```
 

@@ -460,14 +460,26 @@ class MessageListener:
             if instance_id not in self.listeners:
                 return
 
-            for who, info in list(self.listeners[instance_id].items()):
-                if not info.active:
-                    continue
+            try:
+                # 获取所有监听对象的新消息
+                logger.debug(f"开始获取实例 {instance_id} 所有监听对象的新消息")
+                all_messages = await api_client.get_all_listener_messages()
 
-                try:
-                    # 获取该监听对象的新消息
-                    logger.debug(f"开始获取实例 {instance_id} 监听对象 {who} 的新消息")
-                    messages = await api_client.get_listener_messages(who)
+                if not all_messages:
+                    logger.debug(f"实例 {instance_id} 没有任何监听对象的新消息")
+                    return
+
+                # 处理每个监听对象的消息
+                for who, messages in all_messages.items():
+                    # 检查这个监听对象是否在我们的监听列表中
+                    if who not in self.listeners[instance_id]:
+                        logger.debug(f"收到未监听对象 {who} 的消息，跳过处理")
+                        continue
+
+                    info = self.listeners[instance_id][who]
+                    if not info.active:
+                        logger.debug(f"监听对象 {who} 不活跃，跳过处理")
+                        continue
 
                     if messages:
                         # 更新最后消息时间
@@ -475,7 +487,7 @@ class MessageListener:
 
                         # 处理消息：筛选掉"以下为新消息"及之前的消息
                         filtered_messages = self._filter_messages(messages)
-                        logger.debug(f"过滤后剩余 {len(filtered_messages)} 条新消息")
+                        logger.debug(f"监听对象 {who} 过滤后剩余 {len(filtered_messages)} 条新消息")
 
                         # 记录详细的消息信息，包括会话名称、发送人和内容
                         # 只记录第一条过滤后的消息，避免日志过多
@@ -612,13 +624,18 @@ class MessageListener:
                     # 更新检查时间
                     info.last_check_time = time.time()
 
-                except Exception as e:
-                    logger.error(f"检查实例 {instance_id} 监听对象 {who} 的消息时出错: {e}")
-                    logger.debug(f"错误详情", exc_info=True)
+                # 更新所有监听对象的检查时间
+                for who, info in self.listeners[instance_id].items():
+                    if info.active:
+                        info.last_check_time = time.time()
+
+            except Exception as e:
+                logger.error(f"检查实例 {instance_id} 所有监听对象的消息时出错: {e}")
+                logger.debug(f"错误详情", exc_info=True)
 
     def _filter_messages(self, messages: List[dict]) -> List[dict]:
         """
-        过滤消息列表，处理"以下为新消息"分隔符，并过滤掉self发送的消息和time类型的消息
+        过滤消息列表，处理"以下为新消息"分隔符，并过滤掉self发送的消息、time类型的消息和base类型的消息
 
         Args:
             messages: 原始消息列表
@@ -1007,10 +1024,10 @@ class MessageListener:
                 logger.info(f"_save_message直接过滤掉self发送的消息: {message_id}")
                 return ""  # 返回空字符串表示消息被过滤
 
-            # 直接检查消息类型是否为self（不区分大小写）
+            # 直接检查消息类型是否为self或base（不区分大小写）
             msg_type = message_data.get('message_type', '')
-            if msg_type and (msg_type.lower() == 'self' or msg_type == 'Self'):
-                logger.info(f"_save_message直接过滤掉self类型的消息: {message_id}")
+            if msg_type and (msg_type.lower() in ['self', 'base'] or msg_type in ['Self', 'Base']):
+                logger.info(f"_save_message直接过滤掉{msg_type}类型的消息: {message_id}")
                 return ""  # 返回空字符串表示消息被过滤
 
             # 使用统一的消息过滤模块进行二次检查

@@ -129,15 +129,15 @@ class MessageFilter:
         is_self_sender = sender == 'self' or original_sender == 'Self'
         is_sys_sender = sender == 'sys' or original_sender == 'SYS'
 
-        # 2. 检查消息类型是否为self、time或sys（不区分大小写）
+        # 2. 检查消息类型是否为self、time、sys或base（不区分大小写）
         # 检查所有可能的类型字段
         message_type = message.get('message_type', '').lower() if isinstance(message.get('message_type'), str) else ''
 
-        # 添加对SYS类型消息的过滤
+        # 添加对SYS和base类型消息的过滤
         is_filtered_type = (
-            msg_type in ['self', 'time', 'sys'] or
-            message_type in ['self', 'time', 'sys'] or
-            original_type in ['self', 'Self', 'time', 'Time', 'sys', 'SYS']
+            msg_type in ['self', 'time', 'sys', 'base'] or
+            message_type in ['self', 'time', 'sys', 'base'] or
+            original_type in ['self', 'Self', 'time', 'Time', 'sys', 'SYS', 'base', 'Base']
         )
 
         # 3. 检查消息对象中是否有明确标记为self、time或sys的字段
@@ -155,6 +155,11 @@ class MessageFilter:
         has_sys_field = any(message.get(field) == 'SYS' or
                            (isinstance(message.get(field), str) and message.get(field).lower() == 'sys')
                            for field in possible_fields if message.get(field) is not None)
+
+        # 添加对base字段的检查
+        has_base_field = any(message.get(field) == 'Base' or
+                            (isinstance(message.get(field), str) and message.get(field).lower() == 'base')
+                            for field in possible_fields if message.get(field) is not None)
 
         # 4. 检查内容中是否包含特定标记
         has_self_content = False
@@ -184,6 +189,7 @@ class MessageFilter:
             f"has_self_field={has_self_field}, "
             f"has_time_field={has_time_field}, "
             f"has_sys_field={has_sys_field}, "
+            f"has_base_field={has_base_field}, "
             f"has_self_content={has_self_content}, "
             f"has_self_id={has_self_id}, "
             f"has_time_id={has_time_id}, "
@@ -199,6 +205,7 @@ class MessageFilter:
             has_self_field or
             has_time_field or
             has_sys_field or  # 添加对SYS字段的过滤
+            has_base_field or  # 添加对base字段的过滤
             has_self_id or
             has_time_id or
             is_marked_as_self or

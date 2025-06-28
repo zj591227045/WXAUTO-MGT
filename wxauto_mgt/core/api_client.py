@@ -286,17 +286,10 @@ class WxAutoApiClient:
             import json
             import asyncio
 
+            # 新的API只需要nickname参数，移除其他多余参数
             api_params = {
-                'who': who,
-                'savepic': kwargs.get('save_pic', False),
-                'savevideo': kwargs.get('save_video', False),
-                'savefile': kwargs.get('save_file', False),
-                'savevoice': kwargs.get('save_voice', False),
-                'parseurl': kwargs.get('parse_url', False),
-                'exact': kwargs.get('exact', False)
+                'nickname': who
             }
-
-            api_params = {k: v for k, v in api_params.items() if v is not None}
 
             # 构建完整的API URL和请求头
             url = f"{self.base_url}/api/message/listen/add"
@@ -357,7 +350,7 @@ class WxAutoApiClient:
             import requests
             import json
             import asyncio
-            data = {'who': who}
+            data = {'nickname': who}
 
             # 构建完整的API URL和请求头
             url = f"{self.base_url}/api/message/listen/remove"
@@ -561,27 +554,26 @@ class WxAutoApiClient:
             logger.error(f"下载文件失败: {e}")
             return None
 
-    async def get_listener_messages(self, who: str) -> List[Dict]:
-        """获取监听对象的消息"""
+    async def get_all_listener_messages(self) -> Dict[str, List[Dict]]:
+        """获取所有监听对象的消息"""
         try:
             import requests
-            params = {'who': who}
 
-            # 使用requests执行请求，模拟curl方式
+            # 使用requests执行请求，不带who参数获取所有监听对象的消息
             url = f"{self.base_url}/api/message/listen/get"
             headers = {'X-API-Key': self.api_key}
 
             # 记录完整的curl命令，方便调试
-            curl_cmd = f"curl -X GET '{url}?who={who}' -H 'X-API-Key: {self.api_key}'"
+            curl_cmd = f"curl -X GET '{url}' -H 'X-API-Key: {self.api_key}'"
             logger.debug(f"执行API请求，等效curl命令: {curl_cmd}")
 
             # 执行请求
-            response = requests.get(url, params=params, headers=headers)
+            response = requests.get(url, headers=headers)
             status_code = response.status_code
 
             if status_code != 200:
                 logger.error(f"获取监听消息请求失败，状态码: {status_code}, 响应: {response.text}")
-                return []
+                return {}
 
             # 解析JSON响应
             data = response.json()
@@ -590,64 +582,61 @@ class WxAutoApiClient:
             # 检查API响应状态码
             if data.get('code') != 0:
                 logger.error(f"获取监听消息API错误: [{data.get('code', -1)}] {data.get('message', '未知错误')}")
-                return []
+                return {}
 
             # 获取消息数据
             result_data = data.get('data', {})
             messages_data = result_data.get('messages', {})
 
             # 处理空消息情况 - 这是正常的，表示没有新消息
-            if not messages_data or (isinstance(messages_data, dict) and not messages_data.get(who)):
-                logger.debug(f"监听对象[{who}]没有新消息")
-                # 返回空列表，但这是正常情况，不是错误
-                return []
+            if not messages_data:
+                logger.debug(f"没有任何监听对象的新消息")
+                return {}
 
-            # 兼容处理不同响应格式
-            # 如果messages是字典，根据who获取对应消息
-            if isinstance(messages_data, dict):
-                messages = messages_data.get(who, [])
-            # 如果messages是列表，直接使用
-            elif isinstance(messages_data, list):
-                messages = messages_data
-            else:
+            # 确保messages_data是字典格式
+            if not isinstance(messages_data, dict):
                 logger.warning(f"未知的消息数据格式: {type(messages_data)}")
-                return []
+                return {}
 
-            if messages:
-                logger.info(f"获取到监听对象[{who}]的 {len(messages)} 条消息")
-                # 记录每条消息的详细信息，便于调试
-                for i, msg in enumerate(messages):
-                    original_sender = msg.get('sender', '')
-                    original_type = msg.get('type', '')
-                    sender = original_sender.lower() if original_sender else ''
-                    msg_type = original_type.lower() if original_type else ''
-                    logger.info(f"消息[{i+1}]: 原始发送者={original_sender}, 小写={sender}, 原始类型={original_type}, 小写={msg_type}")
+            # 过滤掉type为base或sender为self的消息
+            filtered_messages_data = {}
+            for chat_name, messages in messages_data.items():
+                if not isinstance(messages, list):
+                    continue
 
-                    # 检查是否是Self或time类型的消息，或者类型为self的消息
-                    if (sender and sender == 'self') or (msg_type and (msg_type == 'time' or msg_type == 'self')):
-                        logger.info(f"API返回了应该过滤的消息: 类型={msg_type}, 发送者={sender}, 内容={msg.get('content', '')[:30]}")
+                filtered_messages = []
+                for msg in messages:
+                    # 获取消息类型和发送者
+                    msg_type = msg.get('type', '').lower()
+                    sender = msg.get('sender', '').lower()
 
-                # 使用统一的消息过滤模块过滤消息
-                from wxauto_mgt.core.message_filter import message_filter
-                filtered_messages = message_filter.filter_messages(messages, log_prefix="API层")
+                    # 忽略type为base或sender为self的消息
+                    if msg_type == 'base' or sender == 'self':
+                        logger.debug(f"过滤掉消息: 聊天={chat_name}, 类型={msg_type}, 发送者={sender}")
+                        continue
 
-                if len(messages) != len(filtered_messages):
-                    logger.info(f"API层过滤前消息数量: {len(messages)}, 过滤后: {len(filtered_messages)}")
+                    filtered_messages.append(msg)
 
-                # 使用过滤后的消息列表
-                messages = filtered_messages
-            else:
-                logger.debug(f"监听对象[{who}]没有新消息")
+                # 只有当有过滤后的消息时才添加到结果中
+                if filtered_messages:
+                    filtered_messages_data[chat_name] = filtered_messages
+                    logger.info(f"获取到监听对象[{chat_name}]的 {len(filtered_messages)} 条有效消息")
 
-            return messages
+            return filtered_messages_data
+
         except requests.RequestException as e:
             logger.error(f"获取监听消息网络错误: {e}")
             logger.exception(e)
-            return []
+            return {}
         except Exception as e:
             logger.error(f"获取监听消息失败: {e}")
             logger.exception(e)
-            return []
+            return {}
+
+    async def get_listener_messages(self, who: str) -> List[Dict]:
+        """获取指定监听对象的消息（向后兼容方法）"""
+        all_messages = await self.get_all_listener_messages()
+        return all_messages.get(who, [])
 
     @property
     def initialized(self) -> bool:

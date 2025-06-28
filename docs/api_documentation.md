@@ -405,26 +405,14 @@ curl -X POST http://10.255.0.90:5000/api/message/listen/add \
   -H "X-API-Key: test-key-2" \
   -H "Content-Type: application/json" \
   -d '{
-    "who": "张杰",
-    "savepic": true,
-    "savevideo": false,
-    "savefile": true,
-    "savevoice": true,
-    "parseurl": true,
-    "exact": false
+    "nickname": "张杰"
   }'
 ```
 
 请求体：
 ```json
 {
-    "who": "张杰",
-    "savepic": true,
-    "savevideo": false,
-    "savefile": true,
-    "savevoice": true,
-    "parseurl": true,
-    "exact": false
+    "nickname": "张杰"
   }
 ```
 
@@ -486,14 +474,14 @@ curl -X POST http://10.255.0.90:5000/api/message/listen/remove \
   -H "X-API-Key: test-key-2" \
   -H "Content-Type: application/json" \
   -d '{
-    "who": "测试群"
+    "nickname": "测试群"
   }'
 ```
 
 请求体：
 ```json
 {
-    "who": "测试群"
+    "nickname": "测试群"
 }
 ```
 
@@ -921,8 +909,8 @@ class WxAutoAPI:
         )
         return response.json()
     
-    def add_listen(self, who, **kwargs):
-        data = {'who': who, **kwargs}
+    def add_listen(self, nickname):
+        data = {'nickname': nickname}
         response = requests.post(
             f"{self.base_url}/api/message/listen/add",
             headers=self.headers,
@@ -949,7 +937,7 @@ api.initialize()
 api.send_message('文件传输助手', '测试消息')
 
 # 添加监听
-api.add_listen('测试群', savepic=True)
+api.add_listen('测试群')
 
 # 获取消息
 messages = api.get_messages('测试群')
@@ -989,13 +977,12 @@ class WxAutoAPI {
         return response.json();
     }
 
-    async addListen(who, options = {}) {
+    async addListen(nickname) {
         const response = await fetch(`${this.baseUrl}/api/message/listen/add`, {
             method: 'POST',
             headers: this.headers,
             body: JSON.stringify({
-                who,
-                ...options
+                nickname
             })
         });
         return response.json();
@@ -1023,7 +1010,7 @@ async function demo() {
     await api.sendMessage('文件传输助手', '测试消息');
 
     // 添加监听
-    await api.addListen('测试群', { savepic: true });
+    await api.addListen('测试群');
 
     // 获取消息
     const messages = await api.getMessages('测试群');
