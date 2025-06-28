@@ -303,15 +303,40 @@ class MainWindow(QMainWindow):
             # 如果Web服务正在运行，停止它
             if is_web_service_running():
                 try:
-                    # 创建一个事件循环来运行异步函数
                     from wxauto_mgt.web import stop_web_service
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(stop_web_service())
-                    loop.close()
-                    logger.info("应用程序关闭时停止Web服务")
+
+                    # 检查是否已有运行中的事件循环
+                    try:
+                        loop = asyncio.get_running_loop()
+                        # 如果有运行中的循环，使用create_task
+                        asyncio.create_task(stop_web_service())
+                        logger.info("应用程序关闭时停止Web服务（使用现有循环）")
+                    except RuntimeError:
+                        # 没有运行中的循环，创建新的
+                        try:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            loop.run_until_complete(stop_web_service())
+                            loop.close()
+                            logger.info("应用程序关闭时停止Web服务（创建新循环）")
+                        except Exception as loop_e:
+                            logger.warning(f"无法创建新事件循环停止Web服务: {loop_e}")
+                            # 尝试直接调用同步停止方法
+                            try:
+                                import psutil
+                                # 查找并终止Web服务进程
+                                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                                    try:
+                                        if proc.info['cmdline'] and any('uvicorn' in cmd or 'web' in cmd for cmd in proc.info['cmdline']):
+                                            proc.terminate()
+                                            logger.info(f"强制终止Web服务进程: {proc.info['pid']}")
+                                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                        pass
+                            except Exception as kill_e:
+                                logger.warning(f"强制终止Web服务进程失败: {kill_e}")
                 except Exception as e:
                     logger.error(f"应用程序关闭时停止Web服务失败: {e}")
+                    # 不阻止程序关闭
 
             # 执行清理操作
             event.accept()

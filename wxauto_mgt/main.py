@@ -329,7 +329,15 @@ def main():
         # 运行事件循环
         with loop:
             logger.info("程序已启动")
-            loop.run_forever()
+            try:
+                loop.run_forever()
+            finally:
+                # 在事件循环关闭前执行清理
+                logger.info("正在清理服务...")
+                try:
+                    loop.run_until_complete(cleanup_services())
+                except Exception as cleanup_e:
+                    logger.error(f"服务清理失败: {cleanup_e}")
 
         return 0
 
@@ -339,10 +347,6 @@ def main():
         logger.error(f"程序启动失败: {str(e)}\n{error_details}")
         print(f"程序启动失败详细信息: {str(e)}\n{error_details}")
         return 1
-    finally:
-        # 执行清理
-        if 'loop' in locals():
-            loop.run_until_complete(cleanup_services())
 
 if __name__ == "__main__":
     try:
