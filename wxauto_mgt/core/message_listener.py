@@ -41,6 +41,7 @@ class ListenerInfo:
     reset_attempts: int = 0  # 重置尝试次数
     conversation_id: str = ""  # Dify会话ID
     manual_added: bool = False  # 是否为手动添加的监听对象（不受超时限制）
+    fixed_listener: bool = False  # 是否为固定监听对象（不受超时限制且自动添加）
 
 class MessageListener:
     def __init__(
@@ -96,6 +97,9 @@ class MessageListener:
 
         # 从数据库加载监听对象
         await self._load_listeners_from_db()
+
+        # 加载固定监听配置并自动添加到监听列表
+        await self._load_and_apply_fixed_listeners()
 
         # 加载完成后，暂时锁定超时处理
         # 设置一个标志，防止UI线程同时处理超时对象
@@ -710,7 +714,7 @@ class MessageListener:
                 logger.error(f"检查监听对象是否存在时出错: {e}")
                 return False
 
-    async def add_listener(self, instance_id: str, who: str, conversation_id: str = "", manual_added: bool = False, **kwargs) -> bool:
+    async def add_listener(self, instance_id: str, who: str, conversation_id: str = "", manual_added: bool = False, fixed_listener: bool = False, **kwargs) -> bool:
         """
         添加监听对象
 
@@ -719,6 +723,7 @@ class MessageListener:
             who: 监听对象的标识
             conversation_id: Dify会话ID，默认为空字符串
             manual_added: 是否为手动添加的监听对象（不受超时限制）
+            fixed_listener: 是否为固定监听对象（不受超时限制且自动添加）
             **kwargs: 其他参数
 
         Returns:
@@ -738,6 +743,11 @@ class MessageListener:
                 if manual_added:
                     self.listeners[instance_id][who].manual_added = True
                     logger.info(f"监听对象 {who} 已标记为手动添加（不受超时限制）")
+
+                # 更新固定监听标识
+                if fixed_listener:
+                    self.listeners[instance_id][who].fixed_listener = True
+                    logger.info(f"监听对象 {who} 已标记为固定监听（不受超时限制）")
 
                 # 如果提供了新的会话ID，更新会话ID
                 if conversation_id:
@@ -774,13 +784,16 @@ class MessageListener:
                 last_message_time=time.time(),
                 last_check_time=time.time(),
                 conversation_id=conversation_id,
-                manual_added=manual_added
+                manual_added=manual_added,
+                fixed_listener=fixed_listener
             )
 
             # 添加到数据库
             await self._save_listener(instance_id, who, conversation_id, manual_added)
 
-            if manual_added:
+            if fixed_listener:
+                logger.info(f"成功添加固定监听对象（不受超时限制）: {instance_id} - {who}")
+            elif manual_added:
                 logger.info(f"成功添加手动监听对象（不受超时限制）: {instance_id} - {who}")
             else:
                 logger.info(f"成功添加实例 {instance_id} 的监听对象: {who}")
@@ -869,6 +882,11 @@ class MessageListener:
                     # 检查是否为手动添加的监听对象（不受超时限制）
                     if getattr(info, 'manual_added', False):
                         logger.debug(f"跳过手动添加的监听对象（不受超时限制）: {instance_id} - {who}")
+                        continue
+
+                    # 检查是否为固定监听对象（不受超时限制）
+                    if getattr(info, 'fixed_listener', False):
+                        logger.debug(f"跳过固定监听对象（不受超时限制）: {instance_id} - {who}")
                         continue
 
                     # 检查是否超时
@@ -1644,6 +1662,11 @@ class MessageListener:
         async with self._lock:
             for instance_id, listeners_dict in self.listeners.items():
                 for who, info in listeners_dict.items():
+                    # 检查是否为手动添加或固定监听对象（不受超时限制）
+                    if getattr(info, 'manual_added', False) or getattr(info, 'fixed_listener', False):
+                        logger.debug(f"跳过手动添加或固定监听对象（不受超时限制）: {instance_id} - {who}")
+                        continue
+
                     # 检查最后消息时间
                     if current_time - info.last_message_time > timeout:
                         logger.info(f"启动时发现可能超时的监听对象: {instance_id} - {who}, 最后消息时间: {datetime.fromtimestamp(info.last_message_time).strftime('%Y-%m-%d %H:%M:%S')}")
@@ -2011,6 +2034,272 @@ class MessageListener:
         except Exception as e:
             logger.error(f"检查实例 {instance_id} API客户端健康状态时出错: {e}")
             logger.exception(e)
+            return False
+
+    # ==================== 固定监听功能 ====================
+
+    async def _load_and_apply_fixed_listeners(self):
+        """加载固定监听配置并自动添加到监听列表"""
+        try:
+            logger.info("加载固定监听配置...")
+
+            # 从数据库获取启用的固定监听配置
+            fixed_listeners = await db_manager.fetchall(
+                "SELECT session_name, description FROM fixed_listeners WHERE enabled = 1"
+            )
+
+            if not fixed_listeners:
+                logger.info("没有启用的固定监听配置")
+                return
+
+            logger.info(f"找到 {len(fixed_listeners)} 个启用的固定监听配置")
+
+            # 获取所有可用的实例
+            available_instances = instance_manager.get_all_instances()
+            if not available_instances:
+                logger.warning("没有可用的微信实例，无法应用固定监听配置")
+                return
+
+            # 为每个固定监听会话在所有实例中添加监听对象
+            for fixed_listener in fixed_listeners:
+                session_name = fixed_listener['session_name']
+                description = fixed_listener.get('description', '')
+
+                logger.info(f"应用固定监听配置: {session_name} ({description})")
+
+                # 为每个实例添加此固定监听对象
+                for instance_id in available_instances:
+                    try:
+                        # 检查是否已经存在此监听对象
+                        if (instance_id in self.listeners and
+                            session_name in self.listeners[instance_id]):
+                            # 如果已存在，标记为固定监听对象
+                            self.listeners[instance_id][session_name].fixed_listener = True
+                            logger.debug(f"已存在的监听对象标记为固定监听: {instance_id} - {session_name}")
+                        else:
+                            # 添加新的固定监听对象
+                            success = await self.add_listener(
+                                instance_id=instance_id,
+                                who=session_name,
+                                conversation_id="",
+                                save_pic=True,
+                                save_file=True,
+                                save_voice=True,
+                                parse_url=True,
+                                manual_added=True,  # 标记为手动添加，不受超时限制
+                                fixed_listener=True  # 标记为固定监听对象
+                            )
+
+                            if success:
+                                logger.info(f"成功添加固定监听对象: {instance_id} - {session_name}")
+                            else:
+                                logger.warning(f"添加固定监听对象失败: {instance_id} - {session_name}")
+
+                    except Exception as e:
+                        logger.error(f"为实例 {instance_id} 添加固定监听对象 {session_name} 时出错: {e}")
+
+        except Exception as e:
+            logger.error(f"加载和应用固定监听配置时出错: {e}")
+            logger.exception(e)
+
+    async def get_fixed_listeners(self) -> List[Dict]:
+        """获取所有固定监听配置"""
+        try:
+            fixed_listeners = await db_manager.fetchall(
+                "SELECT id, session_name, enabled, description, create_time, update_time FROM fixed_listeners ORDER BY session_name"
+            )
+            return [dict(row) for row in fixed_listeners]
+        except Exception as e:
+            logger.error(f"获取固定监听配置失败: {e}")
+            return []
+
+    async def add_fixed_listener(self, session_name: str, description: str = "", enabled: bool = True) -> bool:
+        """添加固定监听配置"""
+        try:
+            current_time = int(time.time())
+
+            # 检查是否已存在
+            existing = await db_manager.fetchone(
+                "SELECT id FROM fixed_listeners WHERE session_name = ?",
+                (session_name,)
+            )
+
+            if existing:
+                logger.warning(f"固定监听配置已存在: {session_name}")
+                return False
+
+            # 插入新配置
+            await db_manager.execute(
+                """INSERT INTO fixed_listeners
+                   (session_name, enabled, description, create_time, update_time)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (session_name, 1 if enabled else 0, description, current_time, current_time)
+            )
+
+            logger.info(f"成功添加固定监听配置: {session_name}")
+
+            # 如果启用，立即应用到所有实例
+            if enabled:
+                await self._apply_single_fixed_listener(session_name, description)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"添加固定监听配置失败: {e}")
+            return False
+
+    async def update_fixed_listener(self, listener_id: int, session_name: str = None,
+                                  description: str = None, enabled: bool = None) -> bool:
+        """更新固定监听配置"""
+        try:
+            # 获取当前配置
+            current = await db_manager.fetchone(
+                "SELECT session_name, enabled, description FROM fixed_listeners WHERE id = ?",
+                (listener_id,)
+            )
+
+            if not current:
+                logger.warning(f"固定监听配置不存在: ID {listener_id}")
+                return False
+
+            # 准备更新数据
+            update_data = {}
+            if session_name is not None:
+                update_data['session_name'] = session_name
+            if description is not None:
+                update_data['description'] = description
+            if enabled is not None:
+                update_data['enabled'] = 1 if enabled else 0
+
+            if not update_data:
+                return True  # 没有需要更新的数据
+
+            update_data['update_time'] = int(time.time())
+
+            # 构建更新SQL
+            set_clause = ', '.join([f"{key} = ?" for key in update_data.keys()])
+            values = list(update_data.values()) + [listener_id]
+
+            await db_manager.execute(
+                f"UPDATE fixed_listeners SET {set_clause} WHERE id = ?",
+                values
+            )
+
+            logger.info(f"成功更新固定监听配置: ID {listener_id}")
+
+            # 如果会话名称或启用状态发生变化，需要重新应用配置
+            old_session_name = current['session_name']
+            old_enabled = bool(current['enabled'])
+            new_session_name = session_name if session_name is not None else old_session_name
+            new_enabled = enabled if enabled is not None else old_enabled
+
+            if session_name is not None or enabled is not None:
+                # 移除旧的监听对象（如果会话名称改变或被禁用）
+                if session_name is not None or not new_enabled:
+                    await self._remove_fixed_listener_from_instances(old_session_name)
+
+                # 添加新的监听对象（如果启用）
+                if new_enabled:
+                    new_description = description if description is not None else current['description']
+                    await self._apply_single_fixed_listener(new_session_name, new_description)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"更新固定监听配置失败: {e}")
+            return False
+
+    async def delete_fixed_listener(self, listener_id: int) -> bool:
+        """删除固定监听配置"""
+        try:
+            # 获取配置信息
+            config = await db_manager.fetchone(
+                "SELECT session_name FROM fixed_listeners WHERE id = ?",
+                (listener_id,)
+            )
+
+            if not config:
+                logger.warning(f"固定监听配置不存在: ID {listener_id}")
+                return False
+
+            session_name = config['session_name']
+
+            # 从所有实例中移除此固定监听对象
+            await self._remove_fixed_listener_from_instances(session_name)
+
+            # 删除配置
+            await db_manager.execute(
+                "DELETE FROM fixed_listeners WHERE id = ?",
+                (listener_id,)
+            )
+
+            logger.info(f"成功删除固定监听配置: {session_name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"删除固定监听配置失败: {e}")
+            return False
+
+    async def _apply_single_fixed_listener(self, session_name: str, description: str = ""):
+        """为所有实例应用单个固定监听配置"""
+        try:
+            available_instances = instance_manager.get_all_instances()
+
+            for instance_id in available_instances:
+                try:
+                    # 检查是否已经存在此监听对象
+                    if (instance_id in self.listeners and
+                        session_name in self.listeners[instance_id]):
+                        # 如果已存在，标记为固定监听对象
+                        self.listeners[instance_id][session_name].fixed_listener = True
+                        logger.debug(f"已存在的监听对象标记为固定监听: {instance_id} - {session_name}")
+                    else:
+                        # 添加新的固定监听对象
+                        success = await self.add_listener(
+                            instance_id=instance_id,
+                            who=session_name,
+                            conversation_id="",
+                            save_pic=True,
+                            save_file=True,
+                            save_voice=True,
+                            parse_url=True,
+                            manual_added=True,
+                            fixed_listener=True
+                        )
+
+                        if success:
+                            logger.info(f"成功添加固定监听对象: {instance_id} - {session_name}")
+                        else:
+                            logger.warning(f"添加固定监听对象失败: {instance_id} - {session_name}")
+
+                except Exception as e:
+                    logger.error(f"为实例 {instance_id} 应用固定监听对象 {session_name} 时出错: {e}")
+
+        except Exception as e:
+            logger.error(f"应用固定监听配置时出错: {e}")
+
+    async def _remove_fixed_listener_from_instances(self, session_name: str):
+        """从所有实例中移除固定监听对象"""
+        try:
+            for instance_id in list(self.listeners.keys()):
+                if session_name in self.listeners[instance_id]:
+                    listener_info = self.listeners[instance_id][session_name]
+                    if listener_info.fixed_listener:
+                        # 移除固定监听对象
+                        await self.remove_listener(instance_id, session_name)
+                        logger.info(f"移除固定监听对象: {instance_id} - {session_name}")
+
+        except Exception as e:
+            logger.error(f"移除固定监听对象时出错: {e}")
+
+    def is_fixed_listener(self, instance_id: str, who: str) -> bool:
+        """检查是否为固定监听对象"""
+        try:
+            if (instance_id in self.listeners and
+                who in self.listeners[instance_id]):
+                return self.listeners[instance_id][who].fixed_listener
+            return False
+        except Exception:
             return False
 
 # 创建全局实例

@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
     QTableWidgetItem, QLabel, QHeaderView, QMessageBox, QMenu,
     QToolBar, QLineEdit, QComboBox, QSplitter, QTextEdit, QCheckBox,
-    QGroupBox, QTabWidget, QFileDialog
+    QGroupBox, QTabWidget, QFileDialog, QDialog
 )
 from qasync import asyncSlot
 
@@ -915,6 +915,12 @@ class MessageListenerPanel(QWidget):
         self.stats_btn = QPushButton("消息统计")
         self.stats_btn.clicked.connect(self._show_message_stats)
         settings_layout.addWidget(self.stats_btn)
+
+        # 固定监听按钮
+        self.fixed_listeners_btn = QPushButton("固定监听")
+        self.fixed_listeners_btn.clicked.connect(self._show_fixed_listeners_dialog)
+        self.fixed_listeners_btn.setToolTip("配置固定监听的会话名称")
+        settings_layout.addWidget(self.fixed_listeners_btn)
 
         # 实例过滤下拉框
         self.instance_filter = QComboBox()
@@ -3012,3 +3018,34 @@ class MessageListenerPanel(QWidget):
         except Exception as e:
             logger.error(f"获取消息处理状态计数时出错: {e}")
             return (0, 0)
+
+    def _show_fixed_listeners_dialog(self):
+        """显示固定监听配置对话框"""
+        try:
+            from wxauto_mgt.ui.components.dialogs.fixed_listeners_dialog import FixedListenersDialog
+
+            dialog = FixedListenersDialog(self)
+
+            # 连接配置变化信号
+            dialog.config_changed.connect(self._on_fixed_listeners_changed)
+
+            # 显示对话框
+            result = dialog.exec()
+
+            if result == QDialog.Accepted:
+                logger.info("固定监听配置对话框已确认")
+            else:
+                logger.info("固定监听配置对话框已取消")
+
+        except Exception as e:
+            logger.error(f"显示固定监听配置对话框失败: {e}")
+            QMessageBox.warning(self, "错误", f"显示固定监听配置对话框失败: {str(e)}")
+
+    def _on_fixed_listeners_changed(self):
+        """固定监听配置发生变化时的处理"""
+        try:
+            logger.info("固定监听配置已更改，刷新监听对象列表")
+            # 刷新监听对象列表以反映固定监听配置的变化
+            self.refresh_listeners()
+        except Exception as e:
+            logger.error(f"处理固定监听配置变化时出错: {e}")

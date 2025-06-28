@@ -442,7 +442,7 @@ def build_executable():
 
     # 使用spec文件构建
     cmd = [
-        "pyinstaller",
+        sys.executable, "-m", "PyInstaller",
         "--clean",  # 清理临时文件
         "--noconfirm",  # 不确认覆盖
         spec_path

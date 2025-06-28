@@ -1918,6 +1918,153 @@ async def test_accounting_connection(request: Request):
             }
         }
 
+# ==================== 固定监听配置API ====================
+
+@api_router.get("/fixed-listeners")
+async def get_fixed_listeners(current_user: dict = Depends(get_current_user)):
+    """获取所有固定监听配置"""
+    try:
+        fixed_listeners = await message_listener.get_fixed_listeners()
+        return {
+            "code": 0,
+            "message": "获取固定监听配置成功",
+            "data": fixed_listeners
+        }
+    except Exception as e:
+        logger.error(f"获取固定监听配置失败: {e}")
+        return {
+            "code": 1,
+            "message": f"获取固定监听配置失败: {str(e)}",
+            "data": []
+        }
+
+@api_router.post("/fixed-listeners")
+async def add_fixed_listener(
+    request: Request,
+    current_user: dict = Depends(get_current_user)
+):
+    """添加固定监听配置"""
+    try:
+        data = await request.json()
+        session_name = data.get('session_name', '').strip()
+        description = data.get('description', '').strip()
+        enabled = bool(data.get('enabled', True))
+
+        # 验证输入
+        if not session_name:
+            return {
+                "code": 1,
+                "message": "会话名称不能为空",
+                "data": None
+            }
+
+        # 添加固定监听配置
+        success = await message_listener.add_fixed_listener(session_name, description, enabled)
+
+        if success:
+            return {
+                "code": 0,
+                "message": "添加固定监听配置成功",
+                "data": None
+            }
+        else:
+            return {
+                "code": 1,
+                "message": "添加固定监听配置失败，可能会话名称已存在",
+                "data": None
+            }
+
+    except Exception as e:
+        logger.error(f"添加固定监听配置失败: {e}")
+        return {
+            "code": 1,
+            "message": f"添加固定监听配置失败: {str(e)}",
+            "data": None
+        }
+
+@api_router.put("/fixed-listeners/{listener_id}")
+async def update_fixed_listener(
+    listener_id: int,
+    request: Request,
+    current_user: dict = Depends(get_current_user)
+):
+    """更新固定监听配置"""
+    try:
+        data = await request.json()
+        session_name = data.get('session_name')
+        description = data.get('description')
+        enabled = data.get('enabled')
+
+        # 验证会话名称（如果提供）
+        if session_name is not None:
+            session_name = session_name.strip()
+            if not session_name:
+                return {
+                    "code": 1,
+                    "message": "会话名称不能为空",
+                    "data": None
+                }
+
+        # 处理描述（如果提供）
+        if description is not None:
+            description = description.strip()
+
+        # 更新固定监听配置
+        success = await message_listener.update_fixed_listener(
+            listener_id, session_name, description, enabled
+        )
+
+        if success:
+            return {
+                "code": 0,
+                "message": "更新固定监听配置成功",
+                "data": None
+            }
+        else:
+            return {
+                "code": 1,
+                "message": "更新固定监听配置失败，可能配置不存在或会话名称已存在",
+                "data": None
+            }
+
+    except Exception as e:
+        logger.error(f"更新固定监听配置失败: {e}")
+        return {
+            "code": 1,
+            "message": f"更新固定监听配置失败: {str(e)}",
+            "data": None
+        }
+
+@api_router.delete("/fixed-listeners/{listener_id}")
+async def delete_fixed_listener(
+    listener_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """删除固定监听配置"""
+    try:
+        success = await message_listener.delete_fixed_listener(listener_id)
+
+        if success:
+            return {
+                "code": 0,
+                "message": "删除固定监听配置成功",
+                "data": None
+            }
+        else:
+            return {
+                "code": 1,
+                "message": "删除固定监听配置失败，可能配置不存在",
+                "data": None
+            }
+
+    except Exception as e:
+        logger.error(f"删除固定监听配置失败: {e}")
+        return {
+            "code": 1,
+            "message": f"删除固定监听配置失败: {str(e)}",
+            "data": None
+        }
+
 def register_api_routes(app: FastAPI):
     """
     注册API路由

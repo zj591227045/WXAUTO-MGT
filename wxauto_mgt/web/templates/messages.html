@@ -335,6 +335,9 @@
                     <button id="add-listener" class="btn btn-sm btn-primary w-100 mb-2">
                         <i class="fas fa-plus"></i> 添加监听对象
                     </button>
+                    <button id="fixed-listeners" class="btn btn-sm btn-success w-100 mb-2">
+                        <i class="fas fa-thumbtack"></i> 固定监听
+                    </button>
                     <button id="delete-listener" class="btn btn-sm btn-outline-danger w-100" disabled>
                         <i class="fas fa-trash-alt"></i> 删除监听对象
                     </button>
@@ -440,6 +443,84 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                 <button type="button" class="btn btn-primary" id="save-listener">添加</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 固定监听配置模态框 -->
+<div class="modal fade" id="fixedListenersModal" tabindex="-1" aria-labelledby="fixedListenersModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="fixedListenersModalLabel">固定监听配置</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <!-- 左侧：固定监听列表 -->
+                    <div class="col-md-6">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6 class="mb-0">固定监听列表</h6>
+                            <button type="button" class="btn btn-sm btn-primary" id="add-fixed-listener">
+                                <i class="fas fa-plus"></i> 添加
+                            </button>
+                        </div>
+                        <div class="list-group" id="fixed-listeners-list" style="max-height: 300px; overflow-y: auto;">
+                            <div class="text-center py-3">
+                                <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                    <span class="visually-hidden">加载中...</span>
+                                </div>
+                                <p class="mt-2 mb-0 text-muted">加载固定监听配置...</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 右侧：详情编辑 -->
+                    <div class="col-md-6">
+                        <h6 class="mb-3">详情编辑</h6>
+                        <form id="fixed-listener-form">
+                            <div class="mb-3">
+                                <label for="fixed-session-name" class="form-label">会话名称 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="fixed-session-name" placeholder="请输入会话名称" required>
+                                <div class="invalid-feedback">
+                                    会话名称不能为空
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="fixed-enabled" checked>
+                                    <label class="form-check-label" for="fixed-enabled">
+                                        启用此固定监听
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="fixed-description" class="form-label">描述</label>
+                                <textarea class="form-control" id="fixed-description" rows="3" placeholder="可选：输入描述信息"></textarea>
+                            </div>
+                            <div class="d-grid gap-2">
+                                <button type="button" class="btn btn-success" id="save-fixed-listener" disabled>
+                                    <i class="fas fa-save"></i> 保存更改
+                                </button>
+                                <button type="button" class="btn btn-outline-danger" id="delete-fixed-listener" disabled>
+                                    <i class="fas fa-trash-alt"></i> 删除配置
+                                </button>
+                            </div>
+                        </form>
+
+                        <!-- 说明信息 -->
+                        <div class="alert alert-info mt-3" role="alert">
+                            <small>
+                                <i class="fas fa-info-circle"></i>
+                                固定监听的会话将在服务启动时自动添加到所有实例的监听列表中，且不受超时机制影响。
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
             </div>
         </div>
     </div>

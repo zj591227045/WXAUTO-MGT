@@ -30,6 +30,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // 绑定删除监听对象按钮事件
     document.getElementById('delete-listener').addEventListener('click', deleteListener);
 
+    // 绑定固定监听按钮事件
+    document.getElementById('fixed-listeners').addEventListener('click', showFixedListenersModal);
+
     // 绑定保存监听对象按钮事件
     document.getElementById('save-listener').addEventListener('click', saveListener);
 
@@ -884,4 +887,314 @@ function bindLogFilterEvents() {
         });
         showErrorEl.setAttribute('data-event-bound', 'true');
     }
+}
+
+// ==================== 固定监听功能 ====================
+
+// 当前选中的固定监听配置
+let currentFixedListener = null;
+
+/**
+ * 显示固定监听配置模态框
+ */
+function showFixedListenersModal() {
+    // 显示模态框
+    const modal = new bootstrap.Modal(document.getElementById('fixedListenersModal'));
+    modal.show();
+
+    // 加载固定监听配置列表
+    loadFixedListeners();
+
+    // 绑定模态框内的事件（如果还没有绑定）
+    bindFixedListenersEvents();
+}
+
+/**
+ * 绑定固定监听模态框内的事件
+ */
+function bindFixedListenersEvents() {
+    // 避免重复绑定
+    if (document.getElementById('add-fixed-listener').hasAttribute('data-event-bound')) {
+        return;
+    }
+
+    // 添加固定监听配置按钮
+    document.getElementById('add-fixed-listener').addEventListener('click', addFixedListener);
+    document.getElementById('add-fixed-listener').setAttribute('data-event-bound', 'true');
+
+    // 保存固定监听配置按钮
+    document.getElementById('save-fixed-listener').addEventListener('click', saveFixedListener);
+    document.getElementById('save-fixed-listener').setAttribute('data-event-bound', 'true');
+
+    // 删除固定监听配置按钮
+    document.getElementById('delete-fixed-listener').addEventListener('click', deleteFixedListener);
+    document.getElementById('delete-fixed-listener').setAttribute('data-event-bound', 'true');
+
+    // 表单字段变化事件
+    document.getElementById('fixed-session-name').addEventListener('input', onFixedListenerFormChange);
+    document.getElementById('fixed-enabled').addEventListener('change', onFixedListenerFormChange);
+    document.getElementById('fixed-description').addEventListener('input', onFixedListenerFormChange);
+}
+
+/**
+ * 加载固定监听配置列表
+ */
+async function loadFixedListeners() {
+    try {
+        const response = await fetch('/api/fixed-listeners', {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.code === 0) {
+            displayFixedListeners(result.data);
+        } else {
+            console.error('加载固定监听配置失败:', result.message);
+            showAlert('加载固定监听配置失败: ' + result.message, 'danger');
+        }
+    } catch (error) {
+        console.error('加载固定监听配置失败:', error);
+        showAlert('加载固定监听配置失败: ' + error.message, 'danger');
+    }
+}
+
+/**
+ * 显示固定监听配置列表
+ */
+function displayFixedListeners(fixedListeners) {
+    const listContainer = document.getElementById('fixed-listeners-list');
+
+    if (!fixedListeners || fixedListeners.length === 0) {
+        listContainer.innerHTML = `
+            <div class="text-center py-3">
+                <i class="fas fa-inbox text-muted" style="font-size: 2rem;"></i>
+                <p class="mt-2 mb-0 text-muted">暂无固定监听配置</p>
+            </div>
+        `;
+        return;
+    }
+
+    listContainer.innerHTML = '';
+
+    fixedListeners.forEach(config => {
+        const listItem = document.createElement('div');
+        listItem.className = 'list-group-item list-group-item-action';
+        listItem.style.cursor = 'pointer';
+
+        const enabled = config.enabled;
+        const statusIcon = enabled ? 'fas fa-check-circle text-success' : 'fas fa-times-circle text-muted';
+        const statusText = enabled ? '启用' : '禁用';
+
+        listItem.innerHTML = `
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="flex-grow-1">
+                    <h6 class="mb-1 ${enabled ? '' : 'text-muted'}">${escapeHtml(config.session_name)}</h6>
+                    <p class="mb-1 small text-muted">${escapeHtml(config.description || '无描述')}</p>
+                    <small class="text-muted">
+                        <i class="${statusIcon}"></i> ${statusText}
+                    </small>
+                </div>
+            </div>
+        `;
+
+        // 绑定点击事件
+        listItem.addEventListener('click', () => selectFixedListener(config, listItem));
+
+        // 存储配置数据
+        listItem.dataset.configId = config.id;
+
+        listContainer.appendChild(listItem);
+    });
+}
+
+/**
+ * 选中固定监听配置
+ */
+function selectFixedListener(config, listItem) {
+    // 移除其他项的选中状态
+    document.querySelectorAll('#fixed-listeners-list .list-group-item').forEach(item => {
+        item.classList.remove('active');
+    });
+
+    // 添加当前项的选中状态
+    listItem.classList.add('active');
+
+    // 设置当前选中的配置
+    currentFixedListener = config;
+
+    // 填充表单
+    document.getElementById('fixed-session-name').value = config.session_name || '';
+    document.getElementById('fixed-enabled').checked = Boolean(config.enabled);
+    document.getElementById('fixed-description').value = config.description || '';
+
+    // 启用编辑按钮
+    document.getElementById('save-fixed-listener').disabled = false;
+    document.getElementById('delete-fixed-listener').disabled = false;
+}
+
+/**
+ * 添加新的固定监听配置
+ */
+function addFixedListener() {
+    // 清除选中状态
+    document.querySelectorAll('#fixed-listeners-list .list-group-item').forEach(item => {
+        item.classList.remove('active');
+    });
+
+    // 清空表单
+    document.getElementById('fixed-session-name').value = '新会话';
+    document.getElementById('fixed-enabled').checked = true;
+    document.getElementById('fixed-description').value = '';
+
+    // 设置为新配置模式
+    currentFixedListener = null;
+
+    // 启用保存按钮，禁用删除按钮
+    document.getElementById('save-fixed-listener').disabled = false;
+    document.getElementById('delete-fixed-listener').disabled = true;
+
+    // 聚焦到会话名称输入框
+    document.getElementById('fixed-session-name').focus();
+    document.getElementById('fixed-session-name').select();
+}
+
+/**
+ * 保存固定监听配置
+ */
+async function saveFixedListener() {
+    const sessionName = document.getElementById('fixed-session-name').value.trim();
+    const enabled = document.getElementById('fixed-enabled').checked;
+    const description = document.getElementById('fixed-description').value.trim();
+
+    // 验证输入
+    if (!sessionName) {
+        showAlert('会话名称不能为空', 'warning');
+        document.getElementById('fixed-session-name').focus();
+        return;
+    }
+
+    try {
+        let response;
+
+        if (currentFixedListener && currentFixedListener.id) {
+            // 更新现有配置
+            response = await fetch(`/api/fixed-listeners/${currentFixedListener.id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    session_name: sessionName,
+                    enabled: enabled,
+                    description: description
+                })
+            });
+        } else {
+            // 添加新配置
+            response = await fetch('/api/fixed-listeners', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    session_name: sessionName,
+                    enabled: enabled,
+                    description: description
+                })
+            });
+        }
+
+        const result = await response.json();
+
+        if (result.code === 0) {
+            showAlert('保存固定监听配置成功', 'success');
+            // 重新加载列表
+            loadFixedListeners();
+            // 刷新监听对象列表
+            loadListeners();
+        } else {
+            showAlert('保存固定监听配置失败: ' + result.message, 'danger');
+        }
+    } catch (error) {
+        console.error('保存固定监听配置失败:', error);
+        showAlert('保存固定监听配置失败: ' + error.message, 'danger');
+    }
+}
+
+/**
+ * 删除固定监听配置
+ */
+async function deleteFixedListener() {
+    if (!currentFixedListener || !currentFixedListener.id) {
+        return;
+    }
+
+    const sessionName = currentFixedListener.session_name;
+
+    // 确认删除
+    if (!confirm(`确定要删除固定监听配置 "${sessionName}" 吗？\n\n删除后，该会话将从所有实例的监听列表中移除。`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/fixed-listeners/${currentFixedListener.id}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.code === 0) {
+            showAlert('删除固定监听配置成功', 'success');
+            // 重新加载列表
+            loadFixedListeners();
+            // 清空表单
+            clearFixedListenerForm();
+            // 刷新监听对象列表
+            loadListeners();
+        } else {
+            showAlert('删除固定监听配置失败: ' + result.message, 'danger');
+        }
+    } catch (error) {
+        console.error('删除固定监听配置失败:', error);
+        showAlert('删除固定监听配置失败: ' + error.message, 'danger');
+    }
+}
+
+/**
+ * 表单字段变化处理
+ */
+function onFixedListenerFormChange() {
+    // 如果是新配置或者字段有变化，启用保存按钮
+    const saveButton = document.getElementById('save-fixed-listener');
+    saveButton.disabled = false;
+}
+
+/**
+ * 清空固定监听配置表单
+ */
+function clearFixedListenerForm() {
+    document.getElementById('fixed-session-name').value = '';
+    document.getElementById('fixed-enabled').checked = true;
+    document.getElementById('fixed-description').value = '';
+
+    currentFixedListener = null;
+
+    document.getElementById('save-fixed-listener').disabled = true;
+    document.getElementById('delete-fixed-listener').disabled = true;
+}
+
+/**
+ * HTML转义函数
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
