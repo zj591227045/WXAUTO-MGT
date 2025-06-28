@@ -263,31 +263,65 @@ async def init_services():
 
 async def cleanup_services():
     """清理各服务"""
+    cleanup_success = True
+
     try:
+        # 首先停止Web服务（如果正在运行）
+        try:
+            from wxauto_mgt.web import is_web_service_running, stop_web_service
+            if is_web_service_running():
+                logger.info("正在停止Web服务...")
+                await stop_web_service()
+        except Exception as web_e:
+            logger.error(f"停止Web服务失败: {web_e}")
+            cleanup_success = False
+
         # 停止消息投递服务
-        if message_delivery_service:
-            logger.info("正在停止消息投递服务...")
-            await message_delivery_service.stop()
+        try:
+            if message_delivery_service:
+                logger.info("正在停止消息投递服务...")
+                await message_delivery_service.stop()
+        except Exception as delivery_e:
+            logger.error(f"停止消息投递服务失败: {delivery_e}")
+            cleanup_success = False
 
         # 停止消息监听
-        if message_listener:
-            logger.info("正在停止消息监听...")
-            await message_listener.stop()
+        try:
+            if message_listener:
+                logger.info("正在停止消息监听...")
+                await message_listener.stop()
+        except Exception as listener_e:
+            logger.error(f"停止消息监听失败: {listener_e}")
+            cleanup_success = False
 
         # 关闭所有API客户端
-        if instance_manager:
-            logger.info("正在关闭API客户端...")
-            await instance_manager.close_all()
+        try:
+            if instance_manager:
+                logger.info("正在关闭API客户端...")
+                await instance_manager.close_all()
+        except Exception as api_e:
+            logger.error(f"关闭API客户端失败: {api_e}")
+            cleanup_success = False
 
         # 关闭数据库连接
-        if db_manager:
-            logger.info("正在关闭数据库连接...")
-            await db_manager.close()
+        try:
+            if db_manager:
+                logger.info("正在关闭数据库连接...")
+                await db_manager.close()
+        except Exception as db_e:
+            logger.error(f"关闭数据库连接失败: {db_e}")
+            cleanup_success = False
 
-        logger.info("服务清理完成")
-        return True
+        if cleanup_success:
+            logger.info("服务清理完成")
+        else:
+            logger.warning("服务清理完成，但部分服务停止时出现错误")
+
+        return cleanup_success
     except Exception as e:
-        logger.error(f"服务清理失败: {str(e)}")
+        logger.error(f"服务清理过程中出现未预期的错误: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False
 
 def main():
@@ -335,9 +369,40 @@ def main():
                 # 在事件循环关闭前执行清理
                 logger.info("正在清理服务...")
                 try:
-                    loop.run_until_complete(cleanup_services())
+                    # 确保事件循环仍然可用
+                    if not loop.is_closed():
+                        # 设置较短的超时时间，避免长时间阻塞
+                        cleanup_task = asyncio.create_task(cleanup_services())
+                        try:
+                            loop.run_until_complete(asyncio.wait_for(cleanup_task, timeout=15))
+                        except asyncio.TimeoutError:
+                            logger.warning("服务清理超时，强制继续退出")
+                            cleanup_task.cancel()
+                            try:
+                                loop.run_until_complete(cleanup_task)
+                            except asyncio.CancelledError:
+                                pass
+                    else:
+                        logger.warning("事件循环已关闭，跳过异步清理")
+
                 except Exception as cleanup_e:
                     logger.error(f"服务清理失败: {cleanup_e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                finally:
+                    # 确保取消所有剩余的任务
+                    try:
+                        pending = asyncio.all_tasks(loop)
+                        for task in pending:
+                            if not task.done():
+                                task.cancel()
+
+                        # 等待所有任务完成或被取消
+                        if pending and not loop.is_closed():
+                            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+                    except Exception as task_cleanup_e:
+                        logger.warning(f"清理剩余任务时出错: {task_cleanup_e}")
 
         return 0
 

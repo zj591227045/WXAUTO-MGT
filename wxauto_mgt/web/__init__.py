@@ -117,19 +117,30 @@ async def stop_web_service():
         from .server import stop_server
 
         # 设置停止标志
+        logger.info("发送停止信号给Web服务器...")
         stop_server()
 
         # 等待线程结束
         if _web_server_thread and _web_server_thread.is_alive():
             logger.info("等待Web服务线程正常结束...")
 
-            # 等待线程正常结束
-            _web_server_thread.join(timeout=10)
+            # 分阶段等待线程结束
+            # 第一阶段：等待5秒
+            _web_server_thread.join(timeout=5)
 
-            # 如果线程仍然存活，记录警告但不强制终止
             if _web_server_thread.is_alive():
-                logger.warning("Web服务线程未能在10秒内正常结束，但将继续等待其自然结束")
-                # 不使用强制终止，避免Segmentation fault
+                logger.info("Web服务线程仍在运行，继续等待...")
+                # 第二阶段：再等待5秒
+                _web_server_thread.join(timeout=5)
+
+                if _web_server_thread.is_alive():
+                    logger.warning("Web服务线程未能在10秒内正常结束")
+                    # 不强制终止线程，让它自然结束
+                    # 这样可以避免段错误和其他严重问题
+                else:
+                    logger.info("Web服务线程已正常结束")
+            else:
+                logger.info("Web服务线程已正常结束")
 
         _web_service_running = False
         _web_server_thread = None
@@ -137,4 +148,6 @@ async def stop_web_service():
         return True
     except Exception as e:
         logger.error(f"停止Web服务失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False
