@@ -255,6 +255,7 @@ class DBManager:
         # 创建listeners表索引
         conn.execute("CREATE INDEX IF NOT EXISTS idx_listeners_status ON listeners(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_listeners_manual_added ON listeners(manual_added)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_listeners_last_message_time ON listeners(last_message_time)")
         logger.debug("创建listeners表索引")
 
         # 消息表

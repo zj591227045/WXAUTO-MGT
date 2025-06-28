@@ -1336,6 +1336,46 @@ class MessageListener:
                 ]
         return result
 
+    def get_all_listeners_sorted(self, instance_id: str = None) -> Dict[str, List[Dict]]:
+        """
+        获取所有监听对象列表（包括非活跃的），按状态和最后活跃时间排序
+
+        Args:
+            instance_id: 可选的实例ID，如果提供则只返回该实例的监听对象
+
+        Returns:
+            Dict[str, List[Dict]]: 实例ID到监听对象详细信息列表的映射
+        """
+        result = {}
+
+        def sort_listeners(listeners_dict):
+            """排序监听器：活跃的在前，然后按最后消息时间降序"""
+            listener_list = []
+            for who, info in listeners_dict.items():
+                listener_list.append({
+                    'who': who,
+                    'active': info.active,
+                    'last_message_time': info.last_message_time,
+                    'last_check_time': info.last_check_time,
+                    'conversation_id': info.conversation_id,
+                    'manual_added': info.manual_added,
+                    'fixed_listener': info.fixed_listener,
+                    'status': 'active' if info.active else 'inactive'
+                })
+
+            # 排序：活跃状态在前，然后按最后消息时间降序
+            listener_list.sort(key=lambda x: (not x['active'], -x['last_message_time']))
+            return listener_list
+
+        if instance_id:
+            if instance_id in self.listeners:
+                result[instance_id] = sort_listeners(self.listeners[instance_id])
+        else:
+            for inst_id, listeners in self.listeners.items():
+                result[inst_id] = sort_listeners(listeners)
+
+        return result
+
     async def _load_listeners_from_db(self):
         """从数据库加载保存的监听对象"""
         try:

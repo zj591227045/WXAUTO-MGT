@@ -1473,7 +1473,7 @@ async def get_listeners(request: Request, instance_id: Optional[str] = None, sin
         # 尝试从数据库获取监听对象
         listeners = []
         try:
-            # 构建查询条件
+            # 构建查询条件，添加排序逻辑
             query = "SELECT * FROM listeners WHERE 1=1"
             params = []
 
@@ -1484,6 +1484,9 @@ async def get_listeners(request: Request, instance_id: Optional[str] = None, sin
             if since:
                 query += " AND update_time > ?"
                 params.append(since)
+
+            # 添加排序：按状态排序（活跃在前），然后按最后消息时间降序排序
+            query += " ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, last_message_time DESC"
 
             # 执行查询
             db_listeners = await db_manager.fetchall(query, tuple(params))
