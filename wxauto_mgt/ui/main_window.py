@@ -14,8 +14,7 @@ from PySide6.QtGui import QIcon, QAction, QPixmap
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar, QMenuBar, QMenu, QToolBar,
     QMessageBox, QLabel, QWidget, QApplication, QDockWidget, QVBoxLayout,
-    QHBoxLayout, QPushButton, QSpinBox, QCheckBox, QGroupBox, QLineEdit,
-    QSizePolicy
+    QHBoxLayout, QPushButton, QSpinBox, QCheckBox, QGroupBox, QLineEdit
 )
 
 from wxauto_mgt.core.api_client import instance_manager
@@ -51,8 +50,6 @@ class MainWindow(QMainWindow):
             asyncio.create_task(self._delayed_config_save())
 
         QTimer.singleShot(2000, start_delayed_save)
-
-        # 插件市场将在首次使用时初始化
 
         logger.info("主窗口已初始化")
 
@@ -120,26 +117,6 @@ class MainWindow(QMainWindow):
         manage_instances_action.triggered.connect(self._manage_instances)
         instance_menu.addAction(manage_instances_action)
 
-        # 插件菜单
-        plugin_menu = self.menuBar().addMenu("插件(&P)")
-
-        # 插件市场
-        marketplace_action = QAction("🔍 插件市场", self)
-        marketplace_action.triggered.connect(self._open_marketplace)
-        plugin_menu.addAction(marketplace_action)
-
-        # 插件管理
-        plugin_manager_action = QAction("📦 插件管理", self)
-        plugin_manager_action.triggered.connect(self._open_plugin_manager)
-        plugin_menu.addAction(plugin_manager_action)
-
-        plugin_menu.addSeparator()
-
-        # 检查更新
-        check_updates_action = QAction("🔄 检查插件更新", self)
-        check_updates_action.triggered.connect(lambda: asyncio.create_task(self._check_plugin_updates()))
-        plugin_menu.addAction(check_updates_action)
-
         # 工具菜单
         tools_menu = self.menuBar().addMenu("工具(&T)")
 
@@ -180,23 +157,6 @@ class MainWindow(QMainWindow):
         settings_action = QAction("设置", self)
         settings_action.triggered.connect(self._open_settings)
         self.toolbar.addAction(settings_action)
-
-        # 添加弹性空间，将后续按钮推到右侧
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.toolbar.addWidget(spacer)
-
-        # 添加插件市场按钮（右侧）
-        marketplace_action = QAction("🔍 插件市场", self)
-        marketplace_action.setToolTip("浏览和安装插件")
-        marketplace_action.triggered.connect(self._open_marketplace)
-        self.toolbar.addAction(marketplace_action)
-
-        # 添加插件管理按钮（右侧）
-        plugin_manager_action = QAction("📦 插件管理", self)
-        plugin_manager_action.setToolTip("管理已安装的插件")
-        plugin_manager_action.triggered.connect(self._open_plugin_manager)
-        self.toolbar.addAction(plugin_manager_action)
 
     def _create_tabs(self):
         """创建功能选项卡"""
@@ -520,126 +480,6 @@ class MainWindow(QMainWindow):
 
         # 初始化消息监听按钮状态
         self._update_message_listener_status()
-
-    def _open_marketplace(self):
-        """打开插件市场"""
-        try:
-            # 导入简化的插件市场面板
-            from wxauto_mgt.ui.components.simple_marketplace_panel import SimpleMarketplacePanel
-
-            # 如果市场面板不存在，创建新的
-            if not hasattr(self, 'marketplace_panel') or self.marketplace_panel is None:
-                self.status_changed.emit("正在初始化插件市场...", 0)
-                self.marketplace_panel = SimpleMarketplacePanel(self)
-
-            # 显示市场面板
-            self.marketplace_panel.show()
-            self.marketplace_panel.raise_()
-            self.marketplace_panel.activateWindow()
-
-            self.status_changed.emit("已打开插件市场", 3000)
-
-        except Exception as e:
-            logger.error(f"打开插件市场失败: {e}")
-            self.status_changed.emit("打开插件市场失败", 3000)
-            QMessageBox.warning(self, "错误", f"打开插件市场失败: {str(e)}")
-
-    def _open_plugin_manager(self):
-        """打开插件管理器"""
-        try:
-            # 导入插件管理面板
-            from wxauto_mgt.ui.components.plugin_management_panel import PluginManagementPanel
-
-            # 如果插件管理面板不存在，创建新的
-            if not hasattr(self, 'plugin_management_panel') or self.plugin_management_panel is None:
-                self.plugin_management_panel = PluginManagementPanel(self)
-
-            # 显示插件管理面板
-            self.plugin_management_panel.show()
-            self.plugin_management_panel.raise_()
-            self.plugin_management_panel.activateWindow()
-
-            self.status_changed.emit("已打开插件管理", 3000)
-
-        except Exception as e:
-            logger.error(f"打开插件管理失败: {e}")
-            QMessageBox.warning(self, "错误", f"打开插件管理失败: {str(e)}")
-
-    async def _check_plugin_updates(self):
-        """检查插件更新"""
-        try:
-            from wxauto_mgt.core.plugin_system import plugin_manager, decentralized_marketplace
-
-            # 获取已安装插件
-            installed_plugins = {}
-            for plugin_id, plugin in plugin_manager.get_all_plugins().items():
-                if plugin and hasattr(plugin, '_info'):
-                    installed_plugins[plugin_id] = plugin._info.version
-
-            if not installed_plugins:
-                QMessageBox.information(self, "提示", "没有已安装的插件")
-                return
-
-            # 检查更新
-            self.status_changed.emit("正在检查插件更新...", 0)
-            updates = await decentralized_marketplace.check_plugin_updates(installed_plugins)
-
-            if updates:
-                # 显示更新对话框
-                self._show_update_dialog(updates)
-            else:
-                QMessageBox.information(self, "更新检查", "所有插件都是最新版本")
-
-            self.status_changed.emit("插件更新检查完成", 3000)
-
-        except Exception as e:
-            logger.error(f"检查插件更新失败: {e}")
-            QMessageBox.warning(self, "错误", f"检查插件更新失败: {str(e)}")
-            self.status_changed.emit("插件更新检查失败", 3000)
-
-    def _show_update_dialog(self, updates):
-        """显示更新对话框"""
-        try:
-            from wxauto_mgt.ui.components.dialogs.plugin_update_dialog import PluginUpdateDialog
-
-            dialog = PluginUpdateDialog(self, updates)
-            dialog.exec()
-
-        except ImportError:
-            # 如果更新对话框不存在，显示简单的消息框
-            update_list = "\n".join([f"{plugin_id} → v{version}" for plugin_id, version in updates.items()])
-            reply = QMessageBox.question(
-                self, "插件更新",
-                f"发现 {len(updates)} 个插件更新:\n\n{update_list}\n\n是否打开插件市场进行更新？",
-                QMessageBox.Yes | QMessageBox.No
-            )
-
-            if reply == QMessageBox.Yes:
-                self._open_marketplace()
-
-        except Exception as e:
-            logger.error(f"显示更新对话框失败: {e}")
-            QMessageBox.warning(self, "错误", f"显示更新对话框失败: {str(e)}")
-
-    async def _init_marketplace(self):
-        """初始化插件市场"""
-        try:
-            from wxauto_mgt.core.plugin_system import decentralized_marketplace
-
-            # 刷新插件注册表
-            logger.info("正在初始化插件市场...")
-            success = await decentralized_marketplace.refresh_registry()
-
-            if success:
-                logger.info("插件市场初始化成功")
-                self.status_changed.emit("插件市场已就绪", 2000)
-            else:
-                logger.warning("插件市场初始化失败")
-                self.status_changed.emit("插件市场初始化失败", 3000)
-
-        except Exception as e:
-            logger.error(f"初始化插件市场失败: {e}")
-            self.status_changed.emit("插件市场初始化出错", 3000)
 
     def _update_web_service_status(self):
         """更新Web服务状态显示"""
