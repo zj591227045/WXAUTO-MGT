@@ -42,6 +42,7 @@ class ListenerInfo:
     conversation_id: str = ""  # Dify会话ID
     manual_added: bool = False  # 是否为手动添加的监听对象（不受超时限制）
     fixed_listener: bool = False  # 是否为固定监听对象（不受超时限制且自动添加）
+    api_connected: bool = False  # 是否已成功连接到微信实例API
 
 class MessageListener:
     def __init__(
@@ -80,6 +81,11 @@ class MessageListener:
 
         # 配置变更监听标志
         self._config_listeners_registered = False
+
+        # 连接状态监控
+        self._instance_connection_states = {}  # 实例连接状态跟踪 {instance_id: {"connected": bool, "last_check": float}}
+        self._connection_monitor_task = None  # 连接监控任务
+        self._connection_check_interval = 30  # 连接检查间隔（秒）
 
     async def start(self):
         """启动监听服务"""
@@ -121,8 +127,9 @@ class MessageListener:
         main_window_task = asyncio.create_task(self._main_window_check_loop())
         listeners_task = asyncio.create_task(self._listeners_check_loop())
         cleanup_task = asyncio.create_task(self._cleanup_loop())
+        connection_monitor_task = asyncio.create_task(self._connection_monitor_loop())
 
-        self._tasks.update({main_window_task, listeners_task, cleanup_task})
+        self._tasks.update({main_window_task, listeners_task, cleanup_task, connection_monitor_task})
 
     async def stop(self):
         """停止监听服务"""
@@ -142,6 +149,11 @@ class MessageListener:
         # 等待所有任务完成
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+
+        # 清理连接状态
+        self._instance_connection_states.clear()
+
+        logger.info("消息监听服务已停止")
 
     async def pause_listening(self):
         """暂停消息监听服务"""
@@ -787,7 +799,8 @@ class MessageListener:
                 last_check_time=time.time(),
                 conversation_id=conversation_id,
                 manual_added=manual_added,
-                fixed_listener=fixed_listener
+                fixed_listener=fixed_listener,
+                api_connected=api_success  # 根据API调用结果设置连接状态
             )
 
             # 添加到数据库
@@ -842,12 +855,12 @@ class MessageListener:
                         del self.listeners[instance_id][who]
                         logger.info(f"从内存中移除监听对象: {instance_id} - {who}")
 
-                    # 从数据库中移除
-                    db_success = await self._remove_listener_from_db(instance_id, who)
+                    # 将数据库中的记录标记为非活跃状态（不删除）
+                    db_success = await self._mark_listener_inactive(instance_id, who)
                     if db_success:
-                        logger.info(f"从数据库中移除监听对象: {instance_id} - {who}")
+                        logger.info(f"已将监听对象标记为非活跃状态: {instance_id} - {who}")
                     else:
-                        logger.error(f"从数据库中移除监听对象失败: {instance_id} - {who}")
+                        logger.error(f"标记监听对象为非活跃状态失败: {instance_id} - {who}")
                 except Exception as e:
                     logger.error(f"清理监听对象本地数据时出错: {e}")
                     logger.exception(e)
@@ -1311,6 +1324,40 @@ class MessageListener:
             logger.exception(e)  # 记录完整堆栈
             return False
 
+    async def _mark_listener_inactive(self, instance_id: str, who: str) -> bool:
+        """
+        将监听对象标记为非活跃状态（不删除记录）
+
+        Args:
+            instance_id: 实例ID
+            who: 监听对象的标识
+
+        Returns:
+            bool: 是否标记成功
+        """
+        try:
+            sql = "UPDATE listeners SET status = 'inactive' WHERE instance_id = ? AND who = ?"
+            logger.debug(f"执行SQL: {sql} 参数: ({instance_id}, {who})")
+
+            # 执行SQL
+            await db_manager.execute(sql, (instance_id, who))
+
+            # 验证是否更新成功
+            verify_sql = "SELECT status FROM listeners WHERE instance_id = ? AND who = ?"
+            verify_result = await db_manager.fetchone(verify_sql, (instance_id, who))
+
+            if verify_result and verify_result['status'] == 'inactive':
+                logger.debug(f"数据库状态更新验证成功: {instance_id} - {who} -> inactive")
+                return True
+            else:
+                logger.error(f"数据库状态更新验证失败: {instance_id} - {who}")
+                return False
+
+        except Exception as e:
+            logger.error(f"标记监听对象为非活跃状态失败: {e}")
+            logger.exception(e)
+            return False
+
     def get_active_listeners(self, instance_id: str = None) -> Dict[str, List[str]]:
         """
         获取活跃的监听对象列表
@@ -1376,17 +1423,77 @@ class MessageListener:
 
         return result
 
+    async def get_all_listeners_from_db(self, instance_id: str = None) -> Dict[str, List[Dict]]:
+        """
+        从数据库获取所有监听对象列表（包括inactive状态的），按状态和最后活跃时间排序
+
+        Args:
+            instance_id: 可选的实例ID，如果提供则只返回该实例的监听对象
+
+        Returns:
+            Dict[str, List[Dict]]: 实例ID到监听对象详细信息列表的映射
+        """
+        try:
+            # 构建查询条件
+            query = "SELECT instance_id, who, last_message_time, conversation_id, manual_added, status FROM listeners WHERE 1=1"
+            params = []
+
+            if instance_id:
+                query += " AND instance_id = ?"
+                params.append(instance_id)
+
+            # 添加排序：按状态排序（活跃在前），然后按最后消息时间降序排序
+            query += " ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, last_message_time DESC"
+
+            # 执行查询
+            db_listeners = await db_manager.fetchall(query, tuple(params))
+
+            # 组织结果
+            result = {}
+            for listener in db_listeners:
+                inst_id = listener['instance_id']
+                if inst_id not in result:
+                    result[inst_id] = []
+
+                # 检查是否在内存中存在（用于获取更多实时信息）
+                memory_info = None
+                if inst_id in self.listeners and listener['who'] in self.listeners[inst_id]:
+                    memory_info = self.listeners[inst_id][listener['who']]
+
+                listener_data = {
+                    'who': listener['who'],
+                    'active': listener['status'] == 'active',
+                    'last_message_time': listener['last_message_time'],
+                    'last_check_time': memory_info.last_check_time if memory_info else listener['last_message_time'],
+                    'conversation_id': listener.get('conversation_id', ''),
+                    'manual_added': bool(listener.get('manual_added', 0)),
+                    'fixed_listener': memory_info.fixed_listener if memory_info else False,
+                    'status': listener['status']
+                }
+
+                result[inst_id].append(listener_data)
+
+            logger.debug(f"从数据库获取到 {sum(len(listeners) for listeners in result.values())} 个监听对象")
+            return result
+
+        except Exception as e:
+            logger.error(f"从数据库获取监听对象列表失败: {e}")
+            logger.exception(e)
+            return {}
+
     async def _load_listeners_from_db(self):
         """从数据库加载保存的监听对象"""
         try:
             logger.info("从数据库加载监听对象")
 
-            # 查询所有监听对象，包括会话ID、手动添加标识和状态
-            query = "SELECT instance_id, who, last_message_time, conversation_id, manual_added, status FROM listeners"
+            # 只查询active状态的监听对象，包括会话ID、手动添加标识和状态
+            query = "SELECT instance_id, who, last_message_time, conversation_id, manual_added, status FROM listeners WHERE status = 'active'"
             listeners = await db_manager.fetchall(query)
 
+            logger.info(f"从数据库查询到 {len(listeners) if listeners else 0} 个active状态的监听对象")
+
             if not listeners:
-                logger.info("数据库中没有监听对象")
+                logger.info("数据库中没有active状态的监听对象")
                 return
 
             # 加载到内存
@@ -1414,7 +1521,8 @@ class MessageListener:
                         last_message_time=float(last_message_time),
                         last_check_time=time.time(),
                         conversation_id=conversation_id,
-                        manual_added=manual_added
+                        manual_added=manual_added,
+                        api_connected=False  # 从数据库加载时，API连接状态未知，设为False
                     )
                     # 设置活跃状态
                     listener_info.active = (status == 'active')
@@ -1430,7 +1538,7 @@ class MessageListener:
 
             # 计算加载的监听对象数量
             total = sum(len(listeners) for listeners in self.listeners.values())
-            logger.info(f"从数据库加载了 {total} 个监听对象")
+            logger.info(f"从数据库加载了 {total} 个active状态的监听对象到内存中")
 
             # 重新添加监听对象到API
             await self._reapply_listeners_to_api()
@@ -1449,15 +1557,43 @@ class MessageListener:
 
             total_reapplied = 0
             total_failed = 0
+            total_pending = 0  # 等待重试的数量
 
             for instance_id, listeners_dict in self.listeners.items():
                 # 获取API客户端
                 api_client = instance_manager.get_instance(instance_id)
                 if not api_client:
                     logger.warning(f"找不到实例 {instance_id} 的API客户端，跳过重新添加监听")
+                    # 标记这些监听对象为等待重试状态
+                    for who, listener_info in listeners_dict.items():
+                        if listener_info.active:
+                            listener_info.api_connected = False
+                            total_pending += 1
                     continue
 
                 logger.info(f"为实例 {instance_id} 重新添加 {len(listeners_dict)} 个监听对象")
+
+                # 首先检查API客户端连接状态
+                try:
+                    if not api_client.initialized:
+                        logger.info(f"初始化API客户端: {instance_id}")
+                        init_success = await api_client.initialize()
+                        if not init_success:
+                            logger.warning(f"API客户端初始化失败: {instance_id}")
+                            # 标记所有监听对象为等待重试状态
+                            for who, listener_info in listeners_dict.items():
+                                if listener_info.active:
+                                    listener_info.api_connected = False
+                                    total_pending += 1
+                            continue
+                except Exception as e:
+                    logger.warning(f"API客户端初始化异常: {instance_id} - {e}")
+                    # 标记所有监听对象为等待重试状态
+                    for who, listener_info in listeners_dict.items():
+                        if listener_info.active:
+                            listener_info.api_connected = False
+                            total_pending += 1
+                    continue
 
                 for who, listener_info in listeners_dict.items():
                     try:
@@ -1477,6 +1613,7 @@ class MessageListener:
 
                         if api_success:
                             total_reapplied += 1
+                            listener_info.api_connected = True  # 标记API连接成功
                             if listener_info.fixed_listener:
                                 logger.info(f"成功重新添加固定监听对象: {instance_id} - {who}")
                             elif listener_info.manual_added:
@@ -1485,18 +1622,244 @@ class MessageListener:
                                 logger.debug(f"成功重新添加监听对象: {instance_id} - {who}")
                         else:
                             total_failed += 1
+                            listener_info.api_connected = False  # 标记API连接失败
                             logger.warning(f"重新添加监听对象失败: {instance_id} - {who}")
 
                     except Exception as e:
                         total_failed += 1
+                        listener_info.api_connected = False  # 标记API连接失败
                         logger.error(f"重新添加监听对象 {instance_id} - {who} 时出错: {e}")
 
-            logger.info(f"🔧 监听对象重新添加完成: 成功 {total_reapplied} 个，失败 {total_failed} 个")
+            logger.info(f"🔧 监听对象重新添加完成: 成功 {total_reapplied} 个，失败 {total_failed} 个，等待重试 {total_pending} 个")
+
+            # 如果有失败或等待重试的监听对象，启动重试任务
+            if total_failed > 0 or total_pending > 0:
+                logger.info("🔄 将启动监听对象重试任务")
+                self._schedule_listener_retry()
 
         except Exception as e:
             logger.error(f"重新添加监听对象到API时出错: {e}")
             logger.exception(e)
-            self.listeners = {}
+            # 不要清空listeners，保留数据以便重试
+
+    def _schedule_listener_retry(self):
+        """安排监听对象重试任务"""
+        try:
+            # 创建重试任务
+            retry_task = asyncio.create_task(self._retry_failed_listeners())
+            self._tasks.add(retry_task)
+            logger.debug("已安排监听对象重试任务")
+        except Exception as e:
+            logger.error(f"安排监听对象重试任务失败: {e}")
+
+    async def _retry_failed_listeners(self):
+        """重试失败的监听对象"""
+        try:
+            # 等待一段时间后重试
+            await asyncio.sleep(30)  # 30秒后重试
+
+            logger.info("🔄 开始重试失败的监听对象...")
+
+            retry_count = 0
+            success_count = 0
+
+            for instance_id, listeners_dict in self.listeners.items():
+                # 获取API客户端
+                api_client = instance_manager.get_instance(instance_id)
+                if not api_client:
+                    continue
+
+                for who, listener_info in listeners_dict.items():
+                    # 只重试活跃但未连接API的监听对象
+                    if not listener_info.active or getattr(listener_info, 'api_connected', False):
+                        continue
+
+                    retry_count += 1
+
+                    try:
+                        # 尝试重新连接API
+                        if not api_client.initialized:
+                            init_success = await api_client.initialize()
+                            if not init_success:
+                                continue
+
+                        # 尝试添加监听对象
+                        api_success = await api_client.add_listener(
+                            who,
+                            save_pic=True,
+                            save_file=True,
+                            save_voice=True,
+                            parse_url=True
+                        )
+
+                        if api_success:
+                            listener_info.api_connected = True
+                            success_count += 1
+                            logger.info(f"重试成功: {instance_id} - {who}")
+                        else:
+                            logger.debug(f"重试失败: {instance_id} - {who}")
+
+                    except Exception as e:
+                        logger.debug(f"重试异常: {instance_id} - {who} - {e}")
+
+            logger.info(f"🔄 监听对象重试完成: 尝试 {retry_count} 个，成功 {success_count} 个")
+
+            # 如果还有失败的，安排下次重试
+            if success_count < retry_count:
+                logger.info("🔄 仍有失败的监听对象，将在60秒后再次重试")
+                await asyncio.sleep(60)
+                await self._retry_failed_listeners()
+
+        except asyncio.CancelledError:
+            logger.debug("监听对象重试任务被取消")
+        except Exception as e:
+            logger.error(f"重试失败的监听对象时出错: {e}")
+
+    async def _connection_monitor_loop(self):
+        """连接状态监控循环"""
+        logger.info("🔍 启动实例连接状态监控")
+
+        while self.running:
+            try:
+                await self._check_instance_connections()
+                await asyncio.sleep(self._connection_check_interval)
+            except asyncio.CancelledError:
+                logger.debug("连接监控任务被取消")
+                break
+            except Exception as e:
+                logger.error(f"连接监控循环出错: {e}")
+                await asyncio.sleep(self._connection_check_interval)
+
+        logger.info("🔍 连接状态监控已停止")
+
+    async def _check_instance_connections(self):
+        """检查所有实例的连接状态"""
+        try:
+            instances = instance_manager.get_all_instances()
+
+            for instance_id, api_client in instances.items():
+                await self._check_single_instance_connection(instance_id, api_client)
+
+        except Exception as e:
+            logger.error(f"检查实例连接状态时出错: {e}")
+
+    async def _check_single_instance_connection(self, instance_id: str, api_client):
+        """检查单个实例的连接状态"""
+        try:
+            current_time = time.time()
+
+            # 获取当前连接状态
+            is_connected = await self._test_instance_connection(api_client)
+
+            # 获取之前的连接状态
+            previous_state = self._instance_connection_states.get(instance_id, {})
+            was_connected = previous_state.get("connected", None)
+
+            # 更新连接状态
+            self._instance_connection_states[instance_id] = {
+                "connected": is_connected,
+                "last_check": current_time
+            }
+
+            # 检测连接状态变化
+            if was_connected is not None:  # 不是第一次检查
+                if not was_connected and is_connected:
+                    # 连接从中断恢复到正常
+                    logger.info(f"🔄 检测到实例 {instance_id} 连接恢复，开始重新添加监听对象")
+                    await self._handle_connection_recovery(instance_id, api_client)
+                elif was_connected and not is_connected:
+                    # 连接从正常变为中断
+                    logger.warning(f"⚠️ 检测到实例 {instance_id} 连接中断")
+                    await self._handle_connection_lost(instance_id)
+            else:
+                # 第一次检查，记录初始状态
+                status_text = "连接正常" if is_connected else "连接中断"
+                logger.debug(f"🔍 实例 {instance_id} 初始连接状态: {status_text}")
+
+        except Exception as e:
+            logger.error(f"检查实例 {instance_id} 连接状态时出错: {e}")
+
+    async def _test_instance_connection(self, api_client) -> bool:
+        """测试实例连接状态"""
+        try:
+            # 尝试获取健康状态
+            health_info = await api_client.get_health_info()
+
+            # 检查微信连接状态
+            wechat_status = health_info.get('wechat_status', 'disconnected')
+            return wechat_status == 'connected'
+
+        except Exception as e:
+            logger.debug(f"测试实例连接失败: {e}")
+            return False
+
+    async def _handle_connection_recovery(self, instance_id: str, api_client):
+        """处理连接恢复事件"""
+        try:
+            logger.info(f"🔄 实例 {instance_id} 连接已恢复，开始重新添加监听对象")
+
+            # 获取该实例的所有活跃监听对象
+            if instance_id not in self.listeners:
+                logger.debug(f"实例 {instance_id} 没有需要恢复的监听对象")
+                return
+
+            listeners_dict = self.listeners[instance_id]
+            recovery_count = 0
+            failed_count = 0
+
+            for who, listener_info in listeners_dict.items():
+                try:
+                    # 只处理活跃的监听对象
+                    if not listener_info.active:
+                        continue
+
+                    # 重新添加监听对象到API
+                    api_success = await api_client.add_listener(
+                        who,
+                        save_pic=True,
+                        save_file=True,
+                        save_voice=True,
+                        parse_url=True
+                    )
+
+                    if api_success:
+                        listener_info.api_connected = True
+                        recovery_count += 1
+                        logger.info(f"✅ 成功恢复监听对象: {instance_id} - {who}")
+                    else:
+                        listener_info.api_connected = False
+                        failed_count += 1
+                        logger.warning(f"❌ 恢复监听对象失败: {instance_id} - {who}")
+
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"恢复监听对象 {instance_id} - {who} 时出错: {e}")
+
+            logger.info(f"🔄 实例 {instance_id} 监听对象恢复完成: 成功 {recovery_count} 个，失败 {failed_count} 个")
+
+        except Exception as e:
+            logger.error(f"处理实例 {instance_id} 连接恢复时出错: {e}")
+
+    async def _handle_connection_lost(self, instance_id: str):
+        """处理连接丢失事件"""
+        try:
+            logger.warning(f"⚠️ 实例 {instance_id} 连接已丢失")
+
+            # 将该实例的所有监听对象标记为API未连接
+            if instance_id in self.listeners:
+                listeners_dict = self.listeners[instance_id]
+                disconnected_count = 0
+
+                for who, listener_info in listeners_dict.items():
+                    if listener_info.active and getattr(listener_info, 'api_connected', False):
+                        listener_info.api_connected = False
+                        disconnected_count += 1
+
+                if disconnected_count > 0:
+                    logger.warning(f"⚠️ 实例 {instance_id} 的 {disconnected_count} 个监听对象API连接已断开")
+
+        except Exception as e:
+            logger.error(f"处理实例 {instance_id} 连接丢失时出错: {e}")
 
     async def _refresh_potentially_expired_listeners(self, potentially_expired):
         """

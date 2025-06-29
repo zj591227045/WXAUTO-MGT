@@ -9,7 +9,7 @@ from typing import Dict, Optional, Any
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QFrame, QSizePolicy
+    QScrollArea, QFrame, QSizePolicy, QMessageBox
 )
 
 from wxauto_mgt.utils.logging import get_logger
@@ -296,6 +296,7 @@ class InstanceCardList(QWidget):
     edit_requested = Signal(str)  # 实例ID
     delete_requested = Signal(str)  # 实例ID
     initialize_requested = Signal(str)  # 实例ID
+    add_local_requested = Signal()  # 添加本机实例请求
 
     def __init__(self, parent=None):
         """初始化实例卡片列表"""
@@ -332,6 +333,23 @@ class InstanceCardList(QWidget):
         """)
         self.add_btn.clicked.connect(self._on_add_clicked)
         toolbar_layout.addWidget(self.add_btn)
+
+        # 添加本机按钮
+        self.add_local_btn = QPushButton("添加本机")
+        self.add_local_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #fa8c16;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #ffa940;
+            }
+        """)
+        self.add_local_btn.clicked.connect(self._on_add_local_clicked)
+        toolbar_layout.addWidget(self.add_local_btn)
 
         # 刷新按钮
         self.refresh_btn = QPushButton("刷新")
@@ -386,6 +404,37 @@ class InstanceCardList(QWidget):
         """添加实例按钮点击事件"""
         # 这个事件会被父组件捕获并处理
         # 不需要在这里实现，因为我们已经在 InstanceManagerPanel 中连接了这个按钮的点击事件
+
+    def _on_add_local_clicked(self):
+        """添加本机按钮点击事件"""
+        # 显示确认对话框
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("添加本机实例")
+        msg_box.setIcon(QMessageBox.Question)
+
+        # 设置详细信息
+        msg_text = "将要添加以下默认本机实例：\n\n"
+        msg_text += "• 实例名称：本机\n"
+        msg_text += "• API地址：http://localhost:5000\n"
+        msg_text += "• API密钥：test-key-2\n\n"
+        msg_text += "⚠️ 重要提醒：请勿修改默认的API密钥（test-key-2），\n"
+        msg_text += "以确保本机服务正常运行。\n\n"
+        msg_text += "确定要添加此实例吗？"
+
+        msg_box.setText(msg_text)
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.Yes)
+
+        # 设置按钮文本
+        yes_btn = msg_box.button(QMessageBox.Yes)
+        no_btn = msg_box.button(QMessageBox.No)
+        yes_btn.setText("确定添加")
+        no_btn.setText("取消")
+
+        # 显示对话框并处理结果
+        if msg_box.exec() == QMessageBox.Yes:
+            # 发送添加本机实例的信号
+            self.add_local_requested.emit()
 
     @asyncSlot()
     async def refresh_instances(self):

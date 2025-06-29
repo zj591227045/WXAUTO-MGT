@@ -11,6 +11,7 @@
 import logging
 import asyncio
 import json
+import uuid
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
@@ -301,6 +302,7 @@ class InstanceManagerPanel(QWidget):
         self.instance_list.edit_requested.connect(self._edit_instance)
         self.instance_list.delete_requested.connect(self._delete_instance)
         self.instance_list.initialize_requested.connect(self._initialize_instance)
+        self.instance_list.add_local_requested.connect(self._add_local_instance)
 
         # 连接添加实例按钮
         self.instance_list.add_btn.clicked.connect(self._add_instance)
@@ -435,8 +437,8 @@ class InstanceManagerPanel(QWidget):
                 dialog = EditInstanceDialog(self, instance_config)
                 if dialog.exec():
                     updated_data = dialog.get_instance_data()
-                    # 更新实例配置
-                    self._update_instance_async(instance_id, updated_data)
+                    # 更新实例配置 - 使用asyncio.create_task创建异步任务
+                    asyncio.create_task(self._update_instance_async(instance_id, updated_data))
 
             QTimer.singleShot(0, open_dialog)
 
@@ -701,6 +703,56 @@ class InstanceManagerPanel(QWidget):
                 import traceback
                 logger.error(f"异常堆栈: {traceback.format_exc()}")
                 QMessageBox.warning(self, "错误", f"添加实例失败: {str(e)}")
+
+    @asyncSlot()
+    async def _add_local_instance(self):
+        """添加本机实例"""
+        try:
+            # 生成本机实例ID
+            instance_id = f"wxauto_{uuid.uuid4().hex[:8]}"
+
+            # 预配置的本机实例数据
+            instance_data = {
+                "instance_id": instance_id,
+                "name": "本机",
+                "base_url": "http://localhost:5000",
+                "api_key": "test-key-2",
+                "enabled": True,
+                "config": {
+                    "timeout": 30,
+                    "retry_limit": 3,
+                    "poll_interval": 1,
+                    "timeout_minutes": 30
+                }
+            }
+
+            logger.info(f"开始添加本机实例: {instance_data}")
+
+            # 检查是否已存在相同配置的本机实例
+            from wxauto_mgt.data.db_manager import db_manager
+
+            existing = await db_manager.fetchone(
+                "SELECT instance_id FROM instances WHERE name = ? AND base_url = ? AND api_key = ?",
+                ("本机", "http://localhost:5000", "test-key-2")
+            )
+
+            if existing:
+                QMessageBox.information(
+                    self, "提示",
+                    f"已存在相同配置的本机实例：{existing['instance_id']}\n"
+                    "无需重复添加。"
+                )
+                return
+
+            # 添加实例
+            await self._add_instance_async(instance_data)
+            logger.info(f"本机实例添加完成: {instance_id}")
+
+        except Exception as e:
+            logger.error(f"添加本机实例失败: {e}")
+            import traceback
+            logger.error(f"异常堆栈: {traceback.format_exc()}")
+            QMessageBox.warning(self, "错误", f"添加本机实例失败: {str(e)}")
 
     def _create_status_monitor_area(self) -> QWidget:
         """创建状态监控区域"""

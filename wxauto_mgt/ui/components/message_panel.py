@@ -862,8 +862,10 @@ class MessageListenerPanel(QWidget):
         # 初始化实例下拉框
         self._init_instance_filter()
 
-        # 初始化
-        self.refresh_listeners()
+        # 初始化监听列表（延迟调用异步方法，给监听服务足够的启动时间）
+        QTimer.singleShot(1000, lambda: asyncio.ensure_future(self.refresh_listeners()))
+        # 再次刷新，确保显示最新状态
+        QTimer.singleShot(3000, lambda: asyncio.ensure_future(self.refresh_listeners()))
 
         # 初始化日志系统
         self._init_logging()
@@ -1266,8 +1268,8 @@ class MessageListenerPanel(QWidget):
             self.listener_table.setRowCount(0)
             self.listener_data = {}
 
-            # 获取所有监听对象
-            result = message_listener.get_active_listeners()
+            # 获取所有监听对象（包括inactive状态的）
+            result = await message_listener.get_all_listeners_from_db()
             if not result:
                 self.status_label.setText("共 0 个监听对象")
                 return
@@ -1283,13 +1285,12 @@ class MessageListenerPanel(QWidget):
                 if not api_client:
                     continue
 
-                for who in listeners:
+                for listener_data in listeners:
+                    who = listener_data['who']
                     self.listener_table.insertRow(row)
 
                     # 保存原始数据
-                    listener_info = message_listener.listeners.get(instance_id, {}).get(who)
-                    if listener_info:
-                        self.listener_data[(instance_id, who)] = listener_info
+                    self.listener_data[(instance_id, who)] = listener_data
 
                     # 实例ID
                     self.listener_table.setItem(row, 0, QTableWidgetItem(instance_id))
@@ -1299,7 +1300,7 @@ class MessageListenerPanel(QWidget):
 
                     # 活跃状态
                     status_item = QTableWidgetItem()
-                    if listener_info and listener_info.active:
+                    if listener_data['active']:
                         status_item.setText("🟢 活跃")
                         status_item.setForeground(QColor(0, 170, 0))  # 绿色
                     else:
@@ -1309,15 +1310,14 @@ class MessageListenerPanel(QWidget):
 
                     # 最后消息时间
                     time_str = "未知"
-                    if listener_info:
-                        last_time = listener_info.last_message_time
-                        if last_time > 0:
-                            dt = datetime.fromtimestamp(last_time)
-                            time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    last_time = listener_data.get('last_message_time', 0)
+                    if last_time > 0:
+                        dt = datetime.fromtimestamp(last_time)
+                        time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
                     self.listener_table.setItem(row, 3, QTableWidgetItem(time_str))
 
                     # 超时倒计时
-                    countdown = self._calculate_countdown(listener_info)
+                    countdown = self._calculate_countdown_from_data(listener_data)
                     self.listener_table.setItem(row, 4, QTableWidgetItem(countdown))
 
                     # 操作按钮
@@ -2778,28 +2778,66 @@ class MessageListenerPanel(QWidget):
 
         return f"{minutes}分{seconds}秒"
 
+    def _calculate_countdown_from_data(self, listener_data):
+        """从字典数据计算监听超时倒计时"""
+        if not listener_data:
+            return "未知"
+
+        # 检查是否已标记为不活跃
+        if not listener_data.get('active', True):
+            return "已超时"
+
+        # 检查是否为固定监听对象（不受超时限制）
+        if listener_data.get('fixed_listener', False):
+            return "长期监听"
+
+        # 检查是否为手动添加的监听对象（不受超时限制）
+        if listener_data.get('manual_added', False):
+            return "长期监听"
+
+        # 检查是否在启动宽限期内
+        from wxauto_mgt.core.message_listener import message_listener
+        current_time = time.time()
+        if hasattr(message_listener, 'startup_timestamp') and message_listener.startup_timestamp > 0:
+            grace_period = 10  # 10秒宽限期
+            time_since_startup = current_time - message_listener.startup_timestamp
+            if time_since_startup < grace_period:
+                return "初始化中"
+
+        last_message_time = listener_data.get('last_message_time', 0)
+        if not last_message_time:
+            return "未知"
+
+        # 计算剩余时间（秒）
+        remaining_seconds = (last_message_time + self.timeout_minutes * 60) - current_time
+
+        if remaining_seconds <= 0:
+            return "已超时"
+
+        # 格式化为分:秒
+        minutes = int(remaining_seconds // 60)
+        seconds = int(remaining_seconds % 60)
+
+        return f"{minutes}分{seconds}秒"
+
     def _update_listener_activity_status(self):
         """更新监听对象的活跃状态显示"""
         try:
-            from wxauto_mgt.core.message_listener import message_listener
-
             # 遍历表格中的所有监听对象
             for row in range(self.listener_table.rowCount()):
                 instance_id = self.listener_table.item(row, 0).text()
                 who = self.listener_table.item(row, 1).text()
 
-                # 获取监听对象信息
-                listener_info = None
-                if instance_id in message_listener.listeners:
-                    listener_info = message_listener.listeners[instance_id].get(who)
+                # 从存储的数据中获取监听对象信息
+                listener_data = self.listener_data.get((instance_id, who))
 
                 # 更新活跃状态显示
                 status_item = self.listener_table.item(row, 2)
-                if status_item:
-                    if listener_info and listener_info.active:
+                if status_item and listener_data:
+                    if listener_data.get('active', False):
                         # 检查是否最近有活动（5分钟内）
                         current_time = time.time()
-                        last_activity = listener_info.last_message_time
+                        last_activity = listener_data.get('last_message_time', 0)
                         if current_time - last_activity < 300:  # 5分钟内
                             status_item.setText("🟢 活跃")
                             status_item.setForeground(QColor(0, 170, 0))  # 绿色
@@ -2847,8 +2885,8 @@ class MessageListenerPanel(QWidget):
                             instance_id = self.listener_table.item(row, 0).text()
                             who = self.listener_table.item(row, 1).text()
 
-                            listener_info = self.listener_data.get((instance_id, who))
-                            if listener_info:
+                            listener_data = self.listener_data.get((instance_id, who))
+                            if listener_data:
                                 # 在宽限期内，所有倒计时都显示为"初始化中"
                                 self.listener_table.item(row, 4).setText("初始化中")
                         except Exception as e:
@@ -2868,18 +2906,17 @@ class MessageListenerPanel(QWidget):
                     instance_id = self.listener_table.item(row, 0).text()
                     who = self.listener_table.item(row, 1).text()
 
-                    listener_info = self.listener_data.get((instance_id, who))
-                    if listener_info:
-                        countdown = self._calculate_countdown(listener_info)
+                    listener_data = self.listener_data.get((instance_id, who))
+                    if listener_data:
+                        countdown = self._calculate_countdown_from_data(listener_data)
                         self.listener_table.item(row, 4).setText(countdown)
 
                         # 记录监听对象状态
                         listener_status[(instance_id, who)] = countdown
 
                         # 检查是否需要移除（已超时且未标记为已处理移除）
-                        if countdown == "已超时" and not getattr(listener_info, 'marked_for_removal', False):
-                            # 标记为已处理，避免重复移除
-                            listener_info.marked_for_removal = True
+                        # 对于非活跃状态的监听对象，不需要再次移除
+                        if countdown == "已超时" and listener_data.get('active', False):
                             # 添加到待移除列表
                             to_remove.append((instance_id, who))
                             # 只有当实际要移除时，才记录日志
@@ -3064,6 +3101,6 @@ class MessageListenerPanel(QWidget):
         try:
             logger.info("固定监听配置已更改，刷新监听对象列表")
             # 刷新监听对象列表以反映固定监听配置的变化
-            self.refresh_listeners()
+            asyncio.ensure_future(self.refresh_listeners())
         except Exception as e:
             logger.error(f"处理固定监听配置变化时出错: {e}")

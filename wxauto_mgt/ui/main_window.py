@@ -604,6 +604,9 @@ class MainWindow(QMainWindow):
                 # 隐藏暂停/继续监听按钮
                 self._update_pause_resume_buttons_visibility(False)
 
+                # 通知消息面板刷新监听列表
+                self._notify_message_panel_refresh()
+
             else:
                 # 开始监听
                 self.status_changed.emit("正在启动消息监听...", 0)
@@ -617,10 +620,35 @@ class MainWindow(QMainWindow):
                 # 显示暂停/继续监听按钮
                 self._update_pause_resume_buttons_visibility(True)
 
+                # 通知消息面板刷新监听列表
+                self._notify_message_panel_refresh()
+
         except Exception as e:
             error_msg = f"切换消息监听状态失败: {str(e)}"
             self.status_changed.emit(error_msg, 5000)
             logger.error(error_msg)
+
+    def _notify_message_panel_refresh(self):
+        """通知消息面板刷新监听列表"""
+        try:
+            # 延迟一段时间后刷新，确保监听服务完全启动
+            QTimer.singleShot(500, self._refresh_message_panel)
+        except Exception as e:
+            logger.error(f"通知消息面板刷新时出错: {e}")
+
+    def _refresh_message_panel(self):
+        """刷新消息面板的监听列表"""
+        try:
+            # 查找消息面板并刷新监听列表
+            for i in range(self.tab_widget.count()):
+                widget = self.tab_widget.widget(i)
+                if hasattr(widget, 'refresh_listeners'):
+                    # 异步调用刷新方法
+                    asyncio.ensure_future(widget.refresh_listeners())
+                    logger.debug("已通知消息面板刷新监听列表")
+                    break
+        except Exception as e:
+            logger.error(f"刷新消息面板时出错: {e}")
 
     def _update_message_listener_button(self, is_running: bool):
         """更新消息监听按钮状态"""
