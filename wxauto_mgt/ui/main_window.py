@@ -304,17 +304,9 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'web_status_timer'):
                 self.web_status_timer.stop()
 
-            # 如果Web服务正在运行，停止它 - 简化逻辑避免事件循环冲突
-            if is_web_service_running():
-                try:
-                    logger.info("应用程序关闭时停止Web服务")
-                    # 直接调用同步停止方法，避免异步事件循环问题
-                    from wxauto_mgt.web.server import stop_server
-                    stop_server()
-                    logger.info("已发送Web服务停止信号")
-                except Exception as e:
-                    logger.error(f"应用程序关闭时停止Web服务失败: {e}")
-                    # 不阻止程序关闭，让主程序的cleanup_services处理
+            # 标记正在关闭，让主程序的cleanup_services_sync处理所有清理工作
+            # 这样避免重复清理和事件循环冲突
+            logger.info("应用程序关闭，将由主程序统一清理服务")
 
             # 停止UI监控
             stop_ui_monitoring()

@@ -6,6 +6,7 @@ WxAuto API客户端模块
 import logging
 import requests
 import json
+import asyncio
 from typing import Dict, List, Optional, Any, Tuple
 import aiohttp
 
@@ -53,7 +54,9 @@ class WxAutoApiClient:
             url = f"{self.base_url}{endpoint}"
             headers = {'X-API-Key': self.api_key}
 
-            async with aiohttp.ClientSession() as session:
+            # 设置超时时间，避免长时间阻塞UI
+            timeout = aiohttp.ClientTimeout(total=3.0, connect=1.0)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url, params=params, headers=headers) as response:
                     if response.status != 200:
                         text = await response.text()
@@ -83,8 +86,9 @@ class WxAutoApiClient:
                 'Content-Type': 'application/json'
             }
 
-            # 使用aiohttp发送异步请求
-            async with aiohttp.ClientSession() as session:
+            # 使用aiohttp发送异步请求，设置超时时间
+            timeout = aiohttp.ClientTimeout(total=5.0, connect=1.0)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, json=json, headers=headers) as response:
                     if response.status != 200:
                         text = await response.text()
@@ -122,22 +126,35 @@ class WxAutoApiClient:
     async def get_status(self) -> Dict:
         """获取微信状态"""
         try:
-            data = await self._get('/api/wechat/status')
+            # 使用较短的超时时间，避免UI阻塞
+            data = await asyncio.wait_for(self._get('/api/wechat/status'), timeout=2.0)
             self._connected = data.get('isOnline', False)
             return data
+        except asyncio.TimeoutError:
+            logger.warning(f"获取微信状态超时: {self.instance_id}")
+            self._connected = False
+            return {"isOnline": False, "status": "timeout"}
         except Exception as e:
             logger.error(f"获取状态失败: {e}")
             self._connected = False
-            return {}
+            return {"isOnline": False, "status": "error"}
 
     async def get_health_info(self) -> Dict:
         """获取服务健康状态信息，包含启动时间和状态"""
         try:
-            data = await self._get('/api/health')
+            # 使用较短的超时时间，避免UI阻塞
+            data = await asyncio.wait_for(self._get('/api/health'), timeout=2.0)
             return {
                 "status": data.get('status', 'error'),
                 "uptime": data.get('uptime', 0),
                 "wechat_status": data.get('wechat_status', 'disconnected')
+            }
+        except asyncio.TimeoutError:
+            logger.warning(f"获取健康状态信息超时: {self.instance_id}")
+            return {
+                "status": "timeout",
+                "uptime": 0,
+                "wechat_status": "disconnected"
             }
         except Exception as e:
             logger.error(f"获取健康状态信息失败: {e}")
@@ -155,7 +172,8 @@ class WxAutoApiClient:
             Dict: 系统资源指标，包括CPU和内存使用率
         """
         try:
-            data = await self._get('/api/system/resources')
+            # 使用较短的超时时间，避免UI阻塞
+            data = await asyncio.wait_for(self._get('/api/system/resources'), timeout=2.0)
             cpu_data = data.get('cpu', {})
             memory_data = data.get('memory', {})
 
@@ -167,12 +185,21 @@ class WxAutoApiClient:
 
             logger.debug(f"获取系统资源指标: CPU={metrics['cpu_usage']}%, 内存={metrics['memory_usage']}MB")
             return metrics
+        except asyncio.TimeoutError:
+            logger.warning(f"获取系统资源指标超时: {self.instance_id}")
+            return {
+                'cpu_usage': 0,
+                'memory_usage': 0,
+                'instance_id': self.instance_id,
+                'status': 'timeout'
+            }
         except Exception as e:
             logger.error(f"获取系统资源指标失败: {e}")
             return {
                 'cpu_usage': 0,
                 'memory_usage': 0,
-                'instance_id': self.instance_id
+                'instance_id': self.instance_id,
+                'status': 'error'
             }
 
     async def send_message(self, receiver: str, message: str, at_list: List[str] = None) -> Dict:

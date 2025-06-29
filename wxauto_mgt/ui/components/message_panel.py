@@ -1345,6 +1345,11 @@ class MessageListenerPanel(QWidget):
             # 更新状态栏
             self.status_label.setText(f"共 {total_listeners} 个监听对象")
 
+        except asyncio.CancelledError:
+            # 任务被取消，通常发生在程序关闭或窗口关闭时
+            if not silent:
+                logger.debug("刷新监听对象任务被取消")
+            return
         except Exception as e:
             # 捕获并记录常见连接错误，但不输出详细堆栈，减少日志量
             if "Connection refused" in str(e) or "Not connected" in str(e):
@@ -1618,6 +1623,11 @@ class MessageListenerPanel(QWidget):
             # 使用QTimer在主线程中安全更新UI
             QTimer.singleShot(0, update_ui)
 
+        except asyncio.CancelledError:
+            # 任务被取消，通常发生在程序关闭或窗口关闭时
+            if not silent:
+                logger.debug("查看监听对象消息任务被取消")
+            return
         except Exception as e:
             # 区分常见连接错误和其他错误
             if "Connection refused" in str(e) or "Not connected" in str(e):
@@ -1794,6 +1804,10 @@ class MessageListenerPanel(QWidget):
             # 滚动到底部
             scrollbar = self.log_text.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
+        except asyncio.CancelledError:
+            # 任务被取消，通常发生在程序关闭或窗口关闭时
+            logger.debug("自动刷新任务被取消")
+            return
         except Exception as e:
             # 只记录严重错误，普通连接错误不记录
             if "Connection refused" not in str(e) and "Not connected" not in str(e):

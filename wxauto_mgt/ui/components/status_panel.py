@@ -428,7 +428,8 @@ class StatusMonitorPanel(QWidget):
         """获取刷新间隔（毫秒）"""
         text = self.refresh_interval.currentText()
         seconds = int(text.replace("秒", ""))
-        return seconds * 1000
+        # 最小间隔设为10秒，避免过于频繁的API调用
+        return max(seconds * 1000, 10000)
 
     def select_instance(self, instance_id):
         """选择指定实例"""

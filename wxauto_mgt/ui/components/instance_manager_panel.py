@@ -123,6 +123,9 @@ class StatusUpdater(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._monitor = StatusMonitor()
+        self._status_cache = {}  # 状态缓存
+        self._cache_timeout = 8  # 缓存超时时间（秒）
+        self._updating_instances = set()  # 正在更新的实例集合
 
     async def update_status(self, instance_id: str):
         """异步更新状态"""
@@ -131,87 +134,143 @@ class StatusUpdater(QObject):
                 self.update_failed.emit("实例ID为空")
                 return
 
-            logger.debug(f"开始更新实例状态: {instance_id}")
-
-            # 获取API客户端
-            from wxauto_mgt.core.api_client import instance_manager
-            client = instance_manager.get_instance(instance_id)
-
-            if not client:
-                self.update_failed.emit(f"找不到实例的API客户端: {instance_id}")
+            # 检查是否正在更新，避免重复请求
+            if instance_id in self._updating_instances:
+                logger.debug(f"实例 {instance_id} 正在更新中，跳过")
                 return
 
-            # 获取健康状态信息（包含启动时间和状态）
-            health_info = await client.get_health_info()
-            logger.debug(f"获取到健康状态信息: {health_info}")
+            # 检查缓存是否有效
+            import time
+            current_time = time.time()
+            if instance_id in self._status_cache:
+                cache_data = self._status_cache[instance_id]
+                if current_time - cache_data['timestamp'] < self._cache_timeout:
+                    logger.debug(f"使用缓存数据更新实例状态: {instance_id}")
+                    self.update_complete.emit(cache_data['data'])
+                    return
 
-            # 获取微信状态
-            status_data = await client.get_status() or {}
+            logger.debug(f"开始更新实例状态: {instance_id}")
+            self._updating_instances.add(instance_id)
 
-            # 合并状态信息
-            if health_info.get("wechat_status") == "connected":
-                status_data["isOnline"] = True
-            else:
-                status_data["isOnline"] = False
-
-            # 获取系统资源指标
-            metrics_data = await client.get_system_metrics() or {}
-
-            # 获取数据库中该实例的消息总数
-            message_count = 0
-            listener_count = 0
             try:
-                # 从数据库中查询该实例的消息总数和监听对象数量
-                from wxauto_mgt.data.db_manager import db_manager
+                # 获取API客户端
+                from wxauto_mgt.core.api_client import instance_manager
+                client = instance_manager.get_instance(instance_id)
 
-                # 查询消息总数
-                query = "SELECT COUNT(*) as count FROM messages WHERE instance_id = ?"
-                result = await db_manager.fetchone(query, (instance_id,))
+                if not client:
+                    self.update_failed.emit(f"找不到实例的API客户端: {instance_id}")
+                    return
 
-                if result and "count" in result:
-                    message_count = result["count"]
-                    logger.debug(f"状态面板检测到实例 {instance_id} 在数据库中有 {message_count} 条消息记录")
+                # 并发获取所有状态信息，设置总超时时间
+                try:
+                    health_info, status_data, metrics_data = await asyncio.wait_for(
+                        asyncio.gather(
+                            client.get_health_info(),
+                            client.get_status(),
+                            client.get_system_metrics(),
+                            return_exceptions=True
+                        ),
+                        timeout=5.0  # 总超时时间5秒
+                    )
+
+                    # 处理异常结果
+                    if isinstance(health_info, Exception):
+                        logger.warning(f"获取健康状态失败: {health_info}")
+                        health_info = {"status": "error", "uptime": 0, "wechat_status": "disconnected"}
+
+                    if isinstance(status_data, Exception):
+                        logger.warning(f"获取微信状态失败: {status_data}")
+                        status_data = {"isOnline": False}
+
+                    if isinstance(metrics_data, Exception):
+                        logger.warning(f"获取系统指标失败: {metrics_data}")
+                        metrics_data = {"cpu_usage": 0, "memory_usage": 0}
+
+                except asyncio.TimeoutError:
+                    logger.warning(f"更新实例状态超时: {instance_id}")
+                    self.update_failed.emit(f"更新状态超时: {instance_id}")
+                    return
+
+                # 确保数据不为None
+                health_info = health_info or {"status": "error", "uptime": 0, "wechat_status": "disconnected"}
+                status_data = status_data or {"isOnline": False}
+                metrics_data = metrics_data or {"cpu_usage": 0, "memory_usage": 0}
+
+                logger.debug(f"获取到健康状态信息: {health_info}")
+
+                # 合并状态信息
+                if health_info.get("wechat_status") == "connected":
+                    status_data["isOnline"] = True
                 else:
-                    logger.debug(f"状态面板未检测到实例 {instance_id} 的消息记录")
+                    status_data["isOnline"] = False
 
-                # 查询监听对象数量
-                listener_query = "SELECT COUNT(*) as count FROM listeners WHERE instance_id = ?"
-                listener_result = await db_manager.fetchone(listener_query, (instance_id,))
+                # 获取数据库中该实例的消息总数
+                message_count = 0
+                listener_count = 0
+                try:
+                    # 从数据库中查询该实例的消息总数和监听对象数量
+                    from wxauto_mgt.data.db_manager import db_manager
 
-                if listener_result and "count" in listener_result:
-                    listener_count = listener_result["count"]
-                    logger.debug(f"状态面板检测到实例 {instance_id} 有 {listener_count} 个监听对象")
-                else:
-                    logger.debug(f"状态面板未检测到实例 {instance_id} 的监听对象")
-            except Exception as e:
-                logger.error(f"获取数据库消息总数或监听对象数量失败: {e}")
+                    # 查询消息总数
+                    query = "SELECT COUNT(*) as count FROM messages WHERE instance_id = ?"
+                    result = await db_manager.fetchone(query, (instance_id,))
 
-            # 准备合并后的数据
-            metrics = {
-                "cpu_usage": metrics_data.get("cpu_usage", 0),
-                "memory_usage": metrics_data.get("memory_usage", 0),  # MB
-                "memory_total": self._get_system_memory_total(),  # 动态获取系统内存总量
-                "message_count": message_count,
-                "listener_count": listener_count,  # 添加监听对象数量
-                "uptime": health_info.get("uptime", 0)  # 从健康状态中获取运行时间
-            }
+                    if result and "count" in result:
+                        message_count = result["count"]
+                        logger.debug(f"状态面板检测到实例 {instance_id} 在数据库中有 {message_count} 条消息记录")
+                    else:
+                        logger.debug(f"状态面板未检测到实例 {instance_id} 的消息记录")
 
-            update_data = {
-                "instance_id": instance_id,
-                "status": status_data,
-                "metrics": metrics,
-                "health_info": health_info  # 添加健康状态信息
-            }
+                    # 查询监听对象数量
+                    listener_query = "SELECT COUNT(*) as count FROM listeners WHERE instance_id = ?"
+                    listener_result = await db_manager.fetchone(listener_query, (instance_id,))
 
-            # 发送更新完成信号
-            self.update_complete.emit(update_data)
-            logger.debug(f"成功更新实例状态: {instance_id}")
+                    if listener_result and "count" in listener_result:
+                        listener_count = listener_result["count"]
+                        logger.debug(f"状态面板检测到实例 {instance_id} 有 {listener_count} 个监听对象")
+                    else:
+                        logger.debug(f"状态面板未检测到实例 {instance_id} 的监听对象")
+                except Exception as e:
+                    logger.error(f"获取数据库消息总数或监听对象数量失败: {e}")
+
+                # 准备合并后的数据
+                metrics = {
+                    "cpu_usage": metrics_data.get("cpu_usage", 0),
+                    "memory_usage": metrics_data.get("memory_usage", 0),  # MB
+                    "memory_total": self._get_system_memory_total(),  # 动态获取系统内存总量
+                    "message_count": message_count,
+                    "listener_count": listener_count,  # 添加监听对象数量
+                    "uptime": health_info.get("uptime", 0)  # 从健康状态中获取运行时间
+                }
+
+                update_data = {
+                    "instance_id": instance_id,
+                    "status": status_data,
+                    "metrics": metrics,
+                    "health_info": health_info  # 添加健康状态信息
+                }
+
+                # 缓存更新数据
+                self._status_cache[instance_id] = {
+                    'data': update_data,
+                    'timestamp': current_time
+                }
+
+                # 发送更新完成信号
+                self.update_complete.emit(update_data)
+                logger.debug(f"成功更新实例状态: {instance_id}")
+
+            finally:
+                # 清理更新标记
+                self._updating_instances.discard(instance_id)
 
         except Exception as e:
             import traceback
             logger.error(f"更新状态时出错: {e}")
             logger.error(f"异常堆栈: {traceback.format_exc()}")
             self.update_failed.emit(str(e))
+            # 清理更新标记
+            self._updating_instances.discard(instance_id)
 
     def _get_system_memory_total(self) -> int:
         """

@@ -114,9 +114,28 @@ def create_app():
         """应用关闭时的清理"""
         try:
             logger.info("Web应用正在关闭...")
+            # 快速清理，避免长时间阻塞
             # 这里可以添加需要在应用关闭时执行的清理逻辑
             # 例如关闭数据库连接、清理缓存等
+
+            # 设置较短的清理超时，避免阻塞关闭过程
+            import asyncio
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        # 在这里添加需要清理的异步任务
+                        asyncio.sleep(0.1),  # 占位符，实际清理任务可以在这里添加
+                        return_exceptions=True
+                    ),
+                    timeout=1.0  # 1秒超时
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Web应用清理超时，强制继续关闭")
+
             logger.info("Web应用关闭清理完成")
+        except asyncio.CancelledError:
+            # 忽略取消错误，这是正常的关闭流程
+            logger.info("Web应用关闭被取消，这是正常的")
         except Exception as e:
             logger.error(f"关闭清理失败: {e}")
             import traceback
@@ -266,7 +285,7 @@ def stop_server():
             try:
                 # 给服务器一些时间来处理正在进行的请求
                 import time
-                time.sleep(0.5)
+                time.sleep(0.2)  # 减少等待时间，避免阻塞
 
                 # 强制退出标志
                 if hasattr(_server, 'force_exit'):
@@ -285,3 +304,26 @@ def stop_server():
         logger.error(f"停止Web服务器时出错: {e}")
         import traceback
         logger.error(traceback.format_exc())
+
+def force_stop_server():
+    """强制停止服务器，用于程序退出时"""
+    global _server, _server_should_exit, _shutdown_requested
+
+    logger.info("强制停止Web服务器...")
+
+    try:
+        # 设置所有停止标志
+        _shutdown_requested = True
+        _server_should_exit.set()
+
+        if _server:
+            _server.should_exit = True
+            if hasattr(_server, 'force_exit'):
+                _server.force_exit = True
+            logger.info("已设置强制停止标志")
+
+        # 清理全局变量
+        _server = None
+
+    except Exception as e:
+        logger.error(f"强制停止Web服务器时出错: {e}")
