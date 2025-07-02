@@ -157,10 +157,118 @@ class MessageDeliveryService:
         self._running = True
         logger.info("启动消息投递服务")
 
-        # 创建消息轮询任务
-        poll_task = asyncio.create_task(self._message_poll_loop())
+        # 启动独立的轮询循环
+        await self._start_independent_polling()
+
+        # 启动卡住消息监控
+        await self.start_stuck_message_monitor()
+
+        logger.info("消息投递服务启动完成")
+
+    async def _start_independent_polling(self):
+        """启动完全独立的轮询循环"""
+        logger.info("🚀 启动独立的消息投递轮询循环")
+
+        # 创建独立的轮询任务
+        poll_task = asyncio.create_task(self._independent_poll_loop())
         self._tasks.add(poll_task)
-        poll_task.add_done_callback(self._tasks.discard)
+
+        # 添加任务监控
+        def task_monitor(task):
+            self._tasks.discard(task)
+            if task.cancelled():
+                logger.warning("⚠️ 独立轮询任务被取消")
+            elif task.exception():
+                logger.error(f"❌ 独立轮询任务异常: {task.exception()}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
+                # 自动重启
+                if self._running:
+                    logger.info("🔄 自动重启独立轮询任务...")
+                    asyncio.create_task(self._restart_polling())
+            else:
+                logger.info("✅ 独立轮询任务正常完成")
+
+        poll_task.add_done_callback(task_monitor)
+        logger.info("✅ 独立轮询任务已创建并启动")
+
+    async def _restart_polling(self):
+        """重启轮询任务"""
+        await asyncio.sleep(1)  # 短暂延迟
+        if self._running:
+            await self._start_independent_polling()
+
+    async def _independent_poll_loop(self):
+        """完全独立的轮询循环"""
+        logger.info("🔄 独立轮询循环开始运行")
+        loop_count = 0
+
+        while self._running:
+            loop_count += 1
+            try:
+                logger.debug(f"🔍 独立轮询循环第 {loop_count} 次迭代开始")
+
+                # 直接处理消息，不依赖其他服务
+                await self._process_messages_independently()
+
+                logger.debug(f"✅ 独立轮询循环第 {loop_count} 次迭代完成")
+
+                # 等待下一次轮询
+                await asyncio.sleep(self.poll_interval)
+
+            except asyncio.CancelledError:
+                logger.info("🛑 独立轮询循环被取消")
+                break
+            except Exception as e:
+                logger.error(f"❌ 独立轮询循环第 {loop_count} 次迭代出错: {e}")
+                import traceback
+                logger.error(f"错误堆栈: {traceback.format_exc()}")
+                # 继续运行，不退出
+                await asyncio.sleep(self.poll_interval)
+
+        logger.info("🏁 独立轮询循环结束")
+
+    async def _process_messages_independently(self):
+        """独立处理消息，不依赖其他服务"""
+        try:
+            # 直接查询数据库获取未处理消息
+            # 包括投递失败(2)和正在投递(3)的消息，以便重新处理
+            sql = """
+            SELECT * FROM messages
+            WHERE processed = 0 AND delivery_status IN (0, 2, 3)
+            ORDER BY create_time ASC
+            LIMIT ?
+            """
+
+            messages = await db_manager.fetchall(sql, (self.batch_size,))
+
+            if not messages:
+                logger.debug("🔍 独立轮询: 没有未处理的消息")
+                return
+
+            logger.info(f"🎯 独立轮询: 发现 {len(messages)} 条未处理消息")
+
+            # 处理每条消息
+            for message in messages:
+                message_dict = dict(message)
+                message_id = message_dict.get('message_id', 'unknown')
+
+                # 检查是否正在处理
+                if message_id in self._processing_messages:
+                    logger.debug(f"⏭️ 跳过正在处理的消息: {message_id}")
+                    continue
+
+                logger.info(f"🚀 独立处理消息: {message_id}")
+
+                # 创建独立的处理任务
+                task = asyncio.create_task(self.process_message(message_dict))
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+
+        except Exception as e:
+            logger.error(f"❌ 独立消息处理出错: {e}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
 
     async def stop(self) -> None:
         """停止服务"""
@@ -182,24 +290,28 @@ class MessageDeliveryService:
 
     async def _message_poll_loop(self) -> None:
         """消息轮询循环"""
+        logger.info("消息投递服务轮询循环已启动")
         while self._running:
             try:
                 # 获取所有实例
                 instances = instance_manager.get_all_instances()
                 file_logger.debug(f"获取到 {len(instances)} 个实例")
+                logger.debug(f"消息投递轮询: 获取到 {len(instances)} 个实例")
 
                 for instance_id in instances:
                     file_logger.debug(f"开始处理实例: {instance_id}")
+                    logger.debug(f"消息投递轮询: 开始处理实例 {instance_id}")
 
                     # 获取未处理的消息
                     messages = await self._get_unprocessed_messages(instance_id)
 
                     if not messages:
                         file_logger.debug(f"实例 {instance_id} 没有未处理的消息")
+                        logger.debug(f"消息投递轮询: 实例 {instance_id} 没有未处理的消息")
                         continue
 
                     file_logger.info(f"获取到 {len(messages)} 条未处理消息，实例: {instance_id}")
-                    logger.info(f"获取到 {len(messages)} 条未处理消息，实例: {instance_id}")
+                    logger.info(f"消息投递轮询: 获取到 {len(messages)} 条未处理消息，实例: {instance_id}")
 
                     # 处理消息
                     if self.merge_messages:
@@ -226,6 +338,7 @@ class MessageDeliveryService:
 
                 # 等待下一次轮询
                 file_logger.debug(f"等待下一次轮询，间隔: {self.poll_interval}秒")
+                logger.debug(f"消息投递轮询: 等待下一次轮询，间隔: {self.poll_interval}秒")
                 await asyncio.sleep(self.poll_interval)
             except asyncio.CancelledError:
                 file_logger.info("消息轮询被取消")
@@ -247,10 +360,10 @@ class MessageDeliveryService:
             List[Dict[str, Any]]: 未处理消息列表
         """
         try:
-            # 查询未处理且未投递的消息
+            # 查询未处理的消息，包括投递失败和正在投递的消息
             sql = """
             SELECT * FROM messages
-            WHERE instance_id = ? AND processed = 0 AND delivery_status = 0
+            WHERE instance_id = ? AND processed = 0 AND delivery_status IN (0, 2, 3)
             ORDER BY create_time ASC
             LIMIT ?
             """
@@ -346,7 +459,40 @@ class MessageDeliveryService:
 
     async def process_message(self, message: Dict[str, Any]) -> bool:
         """
-        处理单条消息
+        处理单条消息（带超时机制）
+
+        Args:
+            message: 消息数据
+
+        Returns:
+            bool: 是否处理成功
+        """
+        message_id = message['message_id']
+
+        # 记录消息处理开始
+        logger.debug(f"开始处理消息: {message_id}")
+
+        # 使用超时机制包装实际的处理逻辑
+        try:
+            # 设置30秒超时
+            async with asyncio.timeout(30):
+                return await self._process_message_internal(message)
+        except asyncio.TimeoutError:
+            logger.error(f"❌ 消息处理超时: {message_id} (30秒)")
+            # 超时处理：重置状态，清理资源
+            await self._handle_timeout(message_id)
+            return False
+        except Exception as e:
+            logger.error(f"❌ 消息处理异常: {message_id}, 错误: {e}")
+            import traceback
+            logger.error(f"异常堆栈: {traceback.format_exc()}")
+            # 异常处理：重置状态，清理资源
+            await self._handle_exception(message_id, e)
+            return False
+
+    async def _process_message_internal(self, message: Dict[str, Any]) -> bool:
+        """
+        内部消息处理逻辑
 
         Args:
             message: 消息数据
@@ -462,9 +608,15 @@ class MessageDeliveryService:
                 if 'local_file_path' in message:
                     logger.debug(f"文件路径: {message.get('local_file_path')}")
 
+            logger.debug(f"🚀 开始调用deliver_message方法: {message_id}")
             delivery_result = await self.deliver_message(message, platform)
+            logger.debug(f"📊 deliver_message返回结果: {delivery_result}")
             file_logger.debug(f"投递结果: {delivery_result}")
 
+            # 记录投递完成，开始后续处理
+            logger.debug(f"平台处理完成，开始后续处理: {message_id}")
+
+            logger.debug(f"🔍 检查投递结果是否包含错误: {'error' in delivery_result}")
             if 'error' in delivery_result:
                 file_logger.error(f"投递消息 {message_id} 失败: {delivery_result['error']}")
                 logger.error(f"投递消息 {message_id} 失败: {delivery_result['error']}")
@@ -476,16 +628,34 @@ class MessageDeliveryService:
             file_logger.info(f"消息 {message_id} 投递成功，标记为已投递")
             # 使用特殊格式的日志，确保能被UI识别
             logger.info(f"【转发消息到{platform.name}平台成功】: ID={message_id}, 实例={message.get('instance_id')}, 聊天={message.get('chat_name')}")
-            await self._update_message_delivery_status(
+
+            # 更新投递状态为已投递(1)
+            logger.debug(f"🔄 开始更新消息 {message_id} 的投递状态为已投递(1)")
+            update_result = await self._update_message_delivery_status(
                 message_id, 1, rule['platform_id']
             )
+            if update_result:
+                logger.debug(f"✅ 消息 {message_id} 投递状态更新成功")
+            else:
+                logger.error(f"❌ 消息 {message_id} 投递状态更新失败")
+                # 即使状态更新失败，也继续处理回复
+                file_logger.error(f"消息 {message_id} 投递状态更新失败，但继续处理回复")
 
             # 发送回复 - 记录详细信息
+            logger.debug(f"🔄 步骤4: 开始处理回复发送，消息ID: {message_id}")
+
             # 检查平台是否建议发送回复
             should_reply = delivery_result.get('should_reply', True)  # 默认发送回复
             reply_content = delivery_result.get('content', '') or delivery_result.get('reply_content', '')
 
+            # 添加调试日志，帮助诊断问题
+            logger.debug(f"🔍 回复检查: should_reply={should_reply}, reply_content长度={len(reply_content) if reply_content else 0}")
+            logger.debug(f"🔍 delivery_result keys: {list(delivery_result.keys())}")
+            if 'content' in delivery_result:
+                logger.debug(f"🔍 delivery_result['content']: {delivery_result['content'][:100] if delivery_result['content'] else 'None/Empty'}")
+
             if should_reply and reply_content:
+                logger.debug(f"✅ 满足回复条件，准备发送回复: {message_id}")
                 # 记录详细的回复信息
                 logger.info(f"准备发送回复: ID={message_id}, 实例={message['instance_id']}, 聊天={message['chat_name']}, 内容长度={len(reply_content)}")
                 logger.debug(f"回复内容摘要: {reply_content[:100]}{'...' if len(reply_content) > 100 else ''}")
@@ -510,17 +680,30 @@ class MessageDeliveryService:
                         logger.error(f"更新会话ID时出错: {e}")
 
                 # 发送回复
+                logger.debug(f"🚀 步骤5: 开始发送回复到微信，消息ID: {message_id}")
                 logger.info(f"开始发送回复到微信: ID={message_id}, 实例={message['instance_id']}, 聊天={message['chat_name']}")
-                reply_success = await self.send_reply(message, reply_content)
 
+                logger.debug(f"🔄 调用send_reply方法: {message_id}")
+                reply_success = await self.send_reply(message, reply_content)
+                logger.debug(f"📊 send_reply返回结果: {reply_success}, 消息ID: {message_id}")
+
+                logger.debug(f"🔍 检查回复发送结果: {reply_success}, 消息ID: {message_id}")
                 if reply_success:
                     # 标记为已回复
+                    logger.debug(f"🚀 步骤6: 更新回复状态为成功，消息ID: {message_id}")
                     logger.info(f"回复发送成功: ID={message_id}, 聊天={message['chat_name']}")
+
+                    logger.debug(f"🔄 调用_update_message_reply_status(成功): {message_id}")
                     await self._update_message_reply_status(message_id, 1, reply_content)
+                    logger.debug(f"✅ 回复状态更新完成(成功): {message_id}")
                 else:
                     # 标记为回复失败
+                    logger.debug(f"🚀 步骤6: 更新回复状态为失败，消息ID: {message_id}")
                     logger.error(f"回复发送失败: ID={message_id}, 聊天={message['chat_name']}")
+
+                    logger.debug(f"🔄 调用_update_message_reply_status(失败): {message_id}")
                     await self._update_message_reply_status(message_id, 2, reply_content)
+                    logger.debug(f"✅ 回复状态更新完成(失败): {message_id}")
             elif not should_reply:
                 # 平台建议不发送回复（如"信息与记账无关"）
                 logger.info(f"平台建议不发送回复: ID={message_id}, 实例={message['instance_id']}, 聊天={message['chat_name']}")
@@ -533,19 +716,112 @@ class MessageDeliveryService:
                 await self._update_message_reply_status(message_id, 2, '')
 
             # 标记消息为已处理
+            logger.debug(f"🚀 步骤7: 标记消息为已处理，消息ID: {message_id}")
+            logger.debug(f"🔄 调用_mark_as_processed: {message_id}")
             await self._mark_as_processed(message)
+            logger.debug(f"✅ 消息已标记为已处理: {message_id}")
 
             # 只记录处理完成的关键信息
-            logger.info(f"消息 {message_id} 处理完成")
+            logger.info(f"🎉 消息 {message_id} 处理完成")
+            logger.debug(f"🏁 process_message方法即将返回True: {message_id}")
             return True
         except Exception as e:
-            logger.error(f"处理消息 {message_id} 时出错: {e}")
+            logger.error(f"❌ 处理消息 {message_id} 时出错: {e}")
+            logger.error(f"❌ 异常类型: {type(e).__name__}")
+            import traceback
+            logger.error(f"❌ 异常堆栈: {traceback.format_exc()}")
             # 标记为投递失败
             await self._update_message_delivery_status(message_id, 2)
             return False
         finally:
             # 从正在处理的集合中移除
             self._processing_messages.discard(message_id)
+
+    async def _handle_timeout(self, message_id: str):
+        """处理消息处理超时"""
+        try:
+            logger.error(f"⏰ 处理消息超时，开始清理: {message_id}")
+
+            # 重置消息状态为未投递
+            await self._update_message_delivery_status(message_id, 0)
+            logger.info(f"✅ 已重置超时消息状态: {message_id}")
+
+            # 从正在处理的集合中移除
+            self._processing_messages.discard(message_id)
+
+        except Exception as e:
+            logger.error(f"❌ 处理超时清理时出错: {message_id}, 错误: {e}")
+
+    async def _handle_exception(self, message_id: str, exception: Exception):
+        """处理消息处理异常"""
+        try:
+            logger.error(f"💥 处理消息异常，开始清理: {message_id}, 异常: {exception}")
+
+            # 标记为投递失败
+            await self._update_message_delivery_status(message_id, 2)
+            logger.info(f"✅ 已标记异常消息为失败: {message_id}")
+
+            # 从正在处理的集合中移除
+            self._processing_messages.discard(message_id)
+
+        except Exception as e:
+            logger.error(f"❌ 处理异常清理时出错: {message_id}, 错误: {e}")
+
+    async def _monitor_stuck_messages(self):
+        """监控并自动恢复卡住的消息"""
+        try:
+            current_time = int(time.time())
+            # 查找超过2分钟仍在"正在投递"状态的消息
+            threshold_time = current_time - 120  # 2分钟前
+
+            stuck_sql = """
+            SELECT message_id, create_time, delivery_time
+            FROM messages
+            WHERE delivery_status = 3 AND delivery_time < ?
+            ORDER BY create_time ASC
+            """
+
+            stuck_messages = await db_manager.fetchall(stuck_sql, (threshold_time,))
+
+            if stuck_messages:
+                logger.warning(f"🔍 发现 {len(stuck_messages)} 条卡住的消息，开始自动恢复")
+
+                for msg in stuck_messages:
+                    msg_dict = dict(msg)
+                    message_id = msg_dict['message_id']
+                    stuck_duration = current_time - (msg_dict['delivery_time'] or msg_dict['create_time'])
+
+                    logger.warning(f"⚠️ 消息 {message_id} 卡住了 {stuck_duration:.1f} 秒，开始恢复")
+
+                    # 重置状态为未投递，让独立轮询重新处理
+                    await self._update_message_delivery_status(message_id, 0)
+
+                    # 从正在处理的集合中移除
+                    self._processing_messages.discard(message_id)
+
+                    logger.info(f"✅ 已恢复卡住的消息: {message_id}")
+
+        except Exception as e:
+            logger.error(f"❌ 监控卡住消息时出错: {e}")
+
+    async def start_stuck_message_monitor(self):
+        """启动卡住消息监控任务"""
+        async def monitor_loop():
+            while self._running:
+                try:
+                    await self._monitor_stuck_messages()
+                    # 每分钟检查一次
+                    await asyncio.sleep(60)
+                except Exception as e:
+                    logger.error(f"❌ 监控循环出错: {e}")
+                    await asyncio.sleep(60)  # 出错后也等待60秒再重试
+
+        # 创建监控任务
+        monitor_task = asyncio.create_task(monitor_loop())
+        self._tasks.add(monitor_task)
+        monitor_task.add_done_callback(self._tasks.discard)
+
+        logger.info("🔍 卡住消息监控任务已启动")
 
     async def deliver_message(self, message: Dict[str, Any], platform) -> Dict[str, Any]:
         """
@@ -943,29 +1219,16 @@ class MessageDeliveryService:
                     logger.warning(f"检测到会话ID不存在错误，清除监听对象的会话ID: {instance_id} - {chat_name}")
                     await self._clear_invalid_conversation_id(instance_id, chat_name)
 
-            # 检查是否返回了新的会话ID
+            # 检查是否返回了新的会话ID - 仅记录日志，不进行实际更新
             if 'conversation_id' in result:
                 new_conversation_id = result.get('conversation_id')
                 instance_id = message.get('instance_id')
                 chat_name = message.get('chat_name')
 
                 if new_conversation_id and instance_id and chat_name:
-                    try:
-                        # 导入消息监听器
-                        from wxauto_mgt.core.message_listener import message_listener
-
-                        # 更新监听对象的会话ID
-                        await message_listener.add_listener(
-                            instance_id,
-                            chat_name,
-                            conversation_id=new_conversation_id
-                        )
-
-                        file_logger.info(f"已更新监听对象的会话ID: {instance_id} - {chat_name} - {new_conversation_id}")
-                        logger.info(f"已更新监听对象的会话ID: {instance_id} - {chat_name}")
-                    except Exception as e:
-                        file_logger.error(f"更新监听对象会话ID时出错: {e}")
-                        logger.error(f"更新监听对象会话ID时出错: {e}")
+                    # 仅记录会话ID信息，不调用add_listener（因为监听对象已存在）
+                    file_logger.info(f"消息处理返回会话ID: {instance_id} - {chat_name} - {new_conversation_id}")
+                    logger.debug(f"消息处理返回会话ID: {instance_id} - {chat_name}")
 
             return result
         except Exception as e:
@@ -1151,28 +1414,53 @@ class MessageDeliveryService:
         try:
             now = int(time.time())
 
+            # 添加详细的调试日志
+            status_names = {0: "未投递", 1: "已投递", 2: "投递失败", 3: "正在投递"}
+            status_name = status_names.get(status, f"未知状态({status})")
+            logger.debug(f"🔄 更新消息 {message_id} 投递状态: {status_name}({status}), 平台ID: {platform_id}")
+
             if platform_id:
-                await db_manager.execute(
-                    """
-                    UPDATE messages
-                    SET delivery_status = ?, delivery_time = ?, platform_id = ?
-                    WHERE message_id = ?
-                    """,
-                    (status, now, platform_id, message_id)
-                )
+                sql = """
+                UPDATE messages
+                SET delivery_status = ?, delivery_time = ?, platform_id = ?
+                WHERE message_id = ?
+                """
+                params = (status, now, platform_id, message_id)
+                logger.debug(f"🔄 执行SQL: {sql}")
+                logger.debug(f"🔄 参数: {params}")
+
+                await db_manager.execute(sql, params)
             else:
-                await db_manager.execute(
-                    """
-                    UPDATE messages
-                    SET delivery_status = ?, delivery_time = ?
-                    WHERE message_id = ?
-                    """,
-                    (status, now, message_id)
-                )
+                sql = """
+                UPDATE messages
+                SET delivery_status = ?, delivery_time = ?
+                WHERE message_id = ?
+                """
+                params = (status, now, message_id)
+                logger.debug(f"🔄 执行SQL: {sql}")
+                logger.debug(f"🔄 参数: {params}")
+
+                await db_manager.execute(sql, params)
+
+            # 验证更新是否成功
+            check_sql = "SELECT delivery_status FROM messages WHERE message_id = ?"
+            result = await db_manager.fetchone(check_sql, (message_id,))
+            if result:
+                actual_status = result['delivery_status']
+                if actual_status == status:
+                    logger.debug(f"✅ 消息 {message_id} 投递状态更新成功: {status_name}({status})")
+                else:
+                    logger.error(f"❌ 消息 {message_id} 投递状态更新失败: 期望{status}，实际{actual_status}")
+                    return False
+            else:
+                logger.error(f"❌ 消息 {message_id} 不存在，无法验证状态更新")
+                return False
 
             return True
         except Exception as e:
-            logger.error(f"更新消息投递状态失败: {e}")
+            logger.error(f"❌ 更新消息投递状态失败: {e}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
             return False
 
     async def _update_message_reply_status(self, message_id: str, status: int,
@@ -1240,5 +1528,5 @@ class MessageDeliveryService:
             return False
 
 
-# 创建全局实例
+# 创建全局实例 - 🔥🔥🔥 强制重新创建实例 🔥🔥🔥
 message_delivery_service = MessageDeliveryService()
