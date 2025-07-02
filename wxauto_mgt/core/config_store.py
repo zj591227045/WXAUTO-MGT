@@ -72,7 +72,47 @@ class ConfigStore:
         except Exception as e:
             logger.error(f"获取配置项时出错: {e}")
             return default
-    
+
+    def get_config_sync(self, section, key, default=None):
+        """同步获取配置项
+
+        Args:
+            section: 配置区域名称
+            key: 配置项键名
+            default: 默认值，如果配置不存在则返回此值
+
+        Returns:
+            配置值，如果不存在则返回默认值
+        """
+        try:
+            import sqlite3
+            # 使用复合键，将section和key组合为一个键值
+            composite_key = f"{section}.{key}"
+
+            with sqlite3.connect(self.db_path) as db:
+                db.row_factory = sqlite3.Row
+
+                query = "SELECT value FROM configs WHERE key = ?"
+                params = (composite_key,)
+
+                cursor = db.execute(query, params)
+                result = cursor.fetchone()
+
+                if result:
+                    value = result['value']
+                    # 尝试解析JSON
+                    try:
+                        return json.loads(value)
+                    except:
+                        return value
+
+                logger.debug(f"配置项不存在: {section}.{key}，使用默认值: {default}")
+                return default
+
+        except Exception as e:
+            logger.error(f"同步获取配置项时出错: {e}")
+            return default
+
     async def set_config(self, section, key, value):
         """设置配置项
         

@@ -61,7 +61,7 @@ class ConfigStore:
                 value = self._crypto.encrypt(value.encode()).decode()
 
             # 准备数据
-            config_key = f"{section}:{key}"
+            config_key = f"{section}.{key}"
             data = {
                 'key': config_key,
                 'value': value,
@@ -104,7 +104,7 @@ class ConfigStore:
         """
         try:
             # 先从缓存获取
-            config_key = f"{section}:{key}"
+            config_key = f"{section}.{key}"
             if config_key in self._config_cache:
                 return self._config_cache[config_key]
 
@@ -148,7 +148,7 @@ class ConfigStore:
             bool: 是否成功删除
         """
         try:
-            config_key = f"{section}:{key}"
+            config_key = f"{section}.{key}"
             await db_manager.delete('configs', {'key': config_key})
 
             # 清除缓存
@@ -174,7 +174,7 @@ class ConfigStore:
         """
         try:
             # 先从缓存获取
-            config_key = f"{section}:{key}"
+            config_key = f"{section}.{key}"
             if config_key in self._config_cache:
                 return self._config_cache[config_key]
 
@@ -183,14 +183,17 @@ class ConfigStore:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM configs WHERE key = ?", (config_key,))
             config = cursor.fetchone()
-            cursor.close()
 
             if not config:
+                cursor.close()
+                conn.close()
                 return default
 
-            # 将结果转换为字典
+            # 将结果转换为字典（在cursor关闭前）
             column_names = [desc[0] for desc in cursor.description]
             config = dict(zip(column_names, config))
+            cursor.close()
+            conn.close()
 
             value = config['value']
 
@@ -211,6 +214,8 @@ class ConfigStore:
             return value
         except Exception as e:
             logger.error(f"同步获取配置失败: {str(e)}")
+            import traceback
+            logger.error(f"同步获取配置异常详情: {traceback.format_exc()}")
             return default
 
     async def get_section_configs(self, section: str) -> Dict[str, Any]:
@@ -265,11 +270,11 @@ class ConfigStore:
             # 删除数据库中的配置
             await db_manager.execute(
                 "DELETE FROM configs WHERE key LIKE ?",
-                (f"{section}:%",)
+                (f"{section}.%",)
             )
 
             # 清除缓存
-            keys_to_remove = [k for k in self._config_cache if k.startswith(f"{section}:")]
+            keys_to_remove = [k for k in self._config_cache if k.startswith(f"{section}.")]
             for key in keys_to_remove:
                 self._config_cache.pop(key, None)
 

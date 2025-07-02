@@ -90,7 +90,7 @@ class WebServicePanel(QWidget):
         # 自动启动
         auto_start_layout = QHBoxLayout()
         self.auto_start_checkbox = QCheckBox("程序启动时自动启动Web服务")
-        self.auto_start_checkbox.setChecked(False)
+        # 不在这里硬编码设置，等待配置加载后更新
         auto_start_layout.addWidget(self.auto_start_checkbox)
         auto_start_layout.addStretch()
         form_layout.addRow("", auto_start_layout)
@@ -283,43 +283,103 @@ class WebServicePanel(QWidget):
             web_config = config_store.get_config_sync('system', 'web_service', {})
 
             # 如果配置存在，更新Web服务配置
-            if web_config:
+            if web_config and isinstance(web_config, dict) and web_config:
                 # 更新Web服务配置
                 config = get_web_service_config()
 
                 # 设置端口号
-                if 'port' in web_config:
+                if 'port' in web_config and isinstance(web_config['port'], int):
                     config['port'] = web_config['port']
                     self.port_spinbox.setValue(web_config['port'])
+                    logger.debug(f"已设置端口号: {web_config['port']}")
 
                 # 设置主机地址
-                if 'host' in web_config:
+                if 'host' in web_config and web_config['host']:
                     config['host'] = web_config['host']
                     self.host_input.setText(web_config['host'])
+                    logger.debug(f"已设置主机地址: {web_config['host']}")
 
                 # 设置自动启动
                 if 'auto_start' in web_config:
-                    self.auto_start_checkbox.setChecked(web_config['auto_start'])
+                    self.auto_start_checkbox.setChecked(bool(web_config['auto_start']))
+                    logger.debug(f"已设置自动启动: {web_config['auto_start']}")
 
                 # 设置密码（不显示实际密码，只显示是否已设置）
                 if 'password' in web_config and web_config['password']:
                     self.password_input.setPlaceholderText("已设置密码（输入新密码可修改）")
+                    logger.debug("已检测到设置的密码")
                 else:
                     self.password_input.setPlaceholderText("留空表示不需要密码")
 
                 # 更新Web服务配置
                 set_web_service_config(config)
 
-                self.add_log(f"已加载Web服务配置: {web_config}")
+                self.add_log(f"已加载Web服务配置: host={web_config.get('host', 'N/A')}, port={web_config.get('port', 'N/A')}, auto_start={web_config.get('auto_start', 'N/A')}")
+                logger.info(f"Web服务面板已加载配置: {web_config}")
             else:
-                # 使用默认配置
+                # 同步加载失败，使用Web服务配置类的默认值
+                logger.warning("同步配置加载失败或配置为空，将在延迟刷新时更新")
                 config = get_web_service_config()
                 self.port_spinbox.setValue(config['port'])
                 self.host_input.setText(config['host'])
-                self.add_log("使用默认Web服务配置")
+                # 对于auto_start，使用配置类的值而不是硬编码False
+                self.auto_start_checkbox.setChecked(config['auto_start'])
+                self.add_log("等待配置刷新...")
+                logger.info("Web服务面板等待延迟配置刷新")
         except Exception as e:
             self.add_log(f"加载Web服务配置失败: {e}")
             logger.error(f"加载Web服务配置失败: {e}")
+            # 发生异常时，至少使用Web服务配置类的默认值
+            try:
+                config = get_web_service_config()
+                self.port_spinbox.setValue(config['port'])
+                self.host_input.setText(config['host'])
+                self.auto_start_checkbox.setChecked(config['auto_start'])
+                logger.info("使用Web服务配置类的默认值")
+            except Exception as fallback_e:
+                logger.error(f"使用默认配置也失败: {fallback_e}")
+            import traceback
+            logger.error(f"配置加载异常详情: {traceback.format_exc()}")
+
+    def refresh_config_from_database(self, web_config):
+        """从数据库配置刷新UI显示
+
+        Args:
+            web_config: 从数据库加载的Web服务配置字典
+        """
+        try:
+            if web_config and isinstance(web_config, dict):
+                # 更新端口号
+                if 'port' in web_config and isinstance(web_config['port'], int):
+                    self.port_spinbox.setValue(web_config['port'])
+                    logger.debug(f"刷新端口号: {web_config['port']}")
+
+                # 更新主机地址
+                if 'host' in web_config and web_config['host']:
+                    self.host_input.setText(web_config['host'])
+                    logger.debug(f"刷新主机地址: {web_config['host']}")
+
+                # 更新自动启动
+                if 'auto_start' in web_config:
+                    self.auto_start_checkbox.setChecked(bool(web_config['auto_start']))
+                    logger.debug(f"刷新自动启动: {web_config['auto_start']}")
+
+                # 更新密码显示
+                if 'password' in web_config and web_config['password']:
+                    self.password_input.setPlaceholderText("已设置密码（输入新密码可修改）")
+                    logger.debug("刷新密码状态: 已设置")
+                else:
+                    self.password_input.setPlaceholderText("留空表示不需要密码")
+                    logger.debug("刷新密码状态: 未设置")
+
+                self.add_log(f"已从数据库刷新配置: host={web_config.get('host', 'N/A')}, port={web_config.get('port', 'N/A')}, auto_start={web_config.get('auto_start', 'N/A')}")
+                logger.info(f"Web服务面板已从数据库刷新配置: {web_config}")
+            else:
+                logger.warning("刷新配置失败：配置为空或格式不正确")
+        except Exception as e:
+            logger.error(f"刷新Web服务配置失败: {e}")
+            import traceback
+            logger.error(f"刷新配置异常详情: {traceback.format_exc()}")
 
     def _toggle_web_service(self):
         """切换Web服务状态"""

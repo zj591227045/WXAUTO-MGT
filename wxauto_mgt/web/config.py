@@ -49,11 +49,18 @@ class WebServiceConfig:
         return self._password
     
     def _load_from_store(self):
-        """从配置存储加载配置（简化版本）"""
+        """从配置存储加载配置（同步版本）"""
         try:
-            # 暂时使用默认值，避免复杂的同步/异步处理
-            # 实际配置将在异步保存时更新
-            logger.debug("使用默认Web服务配置")
+            # 使用同步方式从配置存储加载配置
+            from wxauto_mgt.core.config_store import config_store
+            config = config_store.get_config_sync('system', 'web_service', {})
+
+            if config and isinstance(config, dict):
+                logger.debug(f"从配置存储加载Web服务配置: {config}")
+                self._apply_config(config)
+            else:
+                logger.debug("使用默认Web服务配置")
+
             self._loaded = True
 
         except Exception as e:

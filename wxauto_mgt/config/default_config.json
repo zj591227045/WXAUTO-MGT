@@ -20,10 +20,12 @@
     "auto_clean_messages": true,
     "retention_days": 7
   },
-  "web_service": {
-    "host": "0.0.0.0",
-    "port": 8080,
-    "auto_start": false
+  "system": {
+    "web_service": {
+      "host": "0.0.0.0",
+      "port": 8080,
+      "auto_start": true
+    }
   },
   "instances": []
 }

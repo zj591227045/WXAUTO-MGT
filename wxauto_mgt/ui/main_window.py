@@ -48,8 +48,10 @@ class MainWindow(QMainWindow):
         # 启动延迟任务，强制保存一次配置
         # 使用包装函数来正确处理协程
         def start_delayed_save():
+            logger.info("启动延迟配置保存任务（2秒后执行）")
             asyncio.create_task(self._delayed_config_save())
 
+        logger.info("设置延迟配置保存定时器")
         QTimer.singleShot(2000, start_delayed_save)
 
         # 启动UI响应性监控
@@ -343,8 +345,10 @@ class MainWindow(QMainWindow):
 
     async def _delayed_config_save(self):
         """延迟执行的配置保存任务"""
+        logger.info("开始执行延迟配置保存任务")
         try:
             # 从配置存储中获取所有实例
+            logger.debug("正在获取实例配置...")
             instances = await config_store.get_config('system', 'instances', [])
 
             if instances:
@@ -355,9 +359,20 @@ class MainWindow(QMainWindow):
                     self.instance_panel.refresh_instances()
 
             # 加载Web服务配置
+            logger.debug("正在获取Web服务配置...")
             web_config = await config_store.get_config('system', 'web_service', {})
+            logger.debug(f"获取到Web服务配置: {web_config}")
+
             if web_config:
                 logger.info(f"加载Web服务配置: {web_config}")
+
+                # 更新Web服务面板的UI显示
+                if hasattr(self, 'web_service_panel'):
+                    logger.debug("正在刷新Web服务面板UI...")
+                    self.web_service_panel.refresh_config_from_database(web_config)
+                    logger.info("已更新Web服务面板UI配置")
+                else:
+                    logger.warning("Web服务面板尚未初始化，跳过UI更新")
 
                 # 检查是否需要自动启动Web服务
                 if 'auto_start' in web_config and web_config['auto_start']:
@@ -371,8 +386,14 @@ class MainWindow(QMainWindow):
 
                         # 启动Web服务
                         await self.web_service_panel._start_web_service(host, port)
+            else:
+                logger.warning("未获取到Web服务配置或配置为空")
+
+            logger.info("延迟配置保存任务完成")
         except Exception as e:
             logger.error(f"启动时保存配置失败: {str(e)}")
+            import traceback
+            logger.error(f"异常详情: {traceback.format_exc()}")
 
     def _create_web_service_controls(self):
         """创建Web服务控制区域"""
@@ -1200,9 +1221,25 @@ class MainWindow(QMainWindow):
         try:
             logger.info("保存所有配置...")
 
-            # 保存Web服务配置
-            port = self.port_spinbox.value()
-            await config_store.set_config('system', 'web_service', {'port': port})
+            # 保存Web服务配置 - 使用正确的配置管理方式
+            if hasattr(self, 'web_service_panel'):
+                # 如果有Web服务面板，让它处理配置保存
+                await self.web_service_panel._save_config_async(
+                    self.web_service_panel.port_spinbox.value(),
+                    self.web_service_panel.host_input.text(),
+                    self.web_service_panel.auto_start_checkbox.isChecked(),
+                    None  # 不更新密码
+                )
+            else:
+                # 如果没有Web服务面板，使用Web服务配置类
+                from wxauto_mgt.web.config import get_web_service_config
+                web_config = get_web_service_config()
+
+                # 获取现有配置并只更新必要的字段
+                existing_config = await config_store.get_config('system', 'web_service', {})
+                if hasattr(self, 'port_spinbox'):
+                    port = self.port_spinbox.value()
+                    await web_config.save_config(port=port)
 
             # 保存其他配置...
             # 这里可以添加其他需要保存的配置
