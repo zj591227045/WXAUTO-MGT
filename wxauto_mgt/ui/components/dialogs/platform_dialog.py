@@ -97,6 +97,8 @@ class ZhiWeiJZLoginThread(QThread):
 class AddEditPlatformDialog(QDialog):
     """添加/编辑服务平台对话框"""
 
+
+
     def __init__(self, parent=None, platform_data=None):
         """
         初始化对话框
@@ -113,6 +115,8 @@ class AddEditPlatformDialog(QDialog):
         self.original_api_key = ""
 
         self._init_ui()
+
+
 
         if self.is_edit_mode:
             self._load_platform_data()
@@ -145,6 +149,7 @@ class AddEditPlatformDialog(QDialog):
         self.type_combo = QComboBox()
         self.type_combo.addItem("Dify", "dify")
         self.type_combo.addItem("OpenAI", "openai")
+        self.type_combo.addItem("扣子(Coze)", "coze")
         self.type_combo.addItem("关键词匹配", "keyword")
         self.type_combo.addItem("只为记账", "zhiweijz")
         self.type_combo.currentIndexChanged.connect(self._on_type_changed)
@@ -250,6 +255,48 @@ class AddEditPlatformDialog(QDialog):
         openai_layout.addRow("最大令牌数:", self.openai_max_tokens)
 
         self.config_stack.addWidget(self.openai_tab)
+
+        # Coze配置选项卡
+        self.coze_tab = QWidget()
+        coze_layout = QFormLayout(self.coze_tab)
+        coze_layout.setLabelAlignment(Qt.AlignRight)
+        coze_layout.setSpacing(10)
+
+        # Coze API密钥
+        self.coze_api_key = QLineEdit()
+        self.coze_api_key.setPlaceholderText("例如: pat_...")
+        self.coze_api_key.setMinimumWidth(300)
+        self.coze_api_key.setEchoMode(QLineEdit.Password)
+        coze_layout.addRow("API密钥:", self.coze_api_key)
+
+        # 工作空间选择
+        self.coze_workspace_combo = QComboBox()
+        self.coze_workspace_combo.setMinimumWidth(300)
+        self.coze_workspace_combo.setEditable(False)
+        coze_layout.addRow("工作空间:", self.coze_workspace_combo)
+
+        # 刷新工作空间按钮
+        self.refresh_workspaces_btn = QPushButton("刷新工作空间")
+        self.refresh_workspaces_btn.clicked.connect(self._refresh_workspaces)
+        coze_layout.addRow("", self.refresh_workspaces_btn)
+
+        # 智能体选择
+        self.coze_bot_combo = QComboBox()
+        self.coze_bot_combo.setMinimumWidth(300)
+        self.coze_bot_combo.setEditable(False)
+        coze_layout.addRow("智能体:", self.coze_bot_combo)
+
+        # 刷新智能体按钮
+        self.refresh_bots_btn = QPushButton("刷新智能体")
+        self.refresh_bots_btn.clicked.connect(self._refresh_bots)
+        coze_layout.addRow("", self.refresh_bots_btn)
+
+        # 连续对话开关
+        self.coze_continuous_conversation = QCheckBox("启用连续对话")
+        self.coze_continuous_conversation.setToolTip("启用后将保持会话上下文")
+        coze_layout.addRow("", self.coze_continuous_conversation)
+
+        self.config_stack.addWidget(self.coze_tab)
 
         # 关键词匹配配置选项卡
         self.keyword_match_tab = QWidget()
@@ -793,10 +840,12 @@ class AddEditPlatformDialog(QDialog):
             index = 0
         elif platform_type == "openai":
             index = 1
-        elif platform_type == "keyword" or platform_type == "keyword_match":
+        elif platform_type == "coze":
             index = 2
-        elif platform_type == "zhiweijz":
+        elif platform_type == "keyword" or platform_type == "keyword_match":
             index = 3
+        elif platform_type == "zhiweijz":
+            index = 4
         else:
             index = 0
         self.type_combo.setCurrentIndex(index)
@@ -882,6 +931,29 @@ class AddEditPlatformDialog(QDialog):
             self.zhiweijz_request_timeout.setValue(config.get("request_timeout", 30))
             self.zhiweijz_max_retries.setValue(config.get("max_retries", 3))
             self.zhiweijz_warn_on_irrelevant.setChecked(config.get("warn_on_irrelevant", False))
+        elif platform_type == "coze":
+            # 加载Coze配置
+            # 设置API密钥为掩码，实际值会在保存时处理
+            self.coze_api_key.setText("******")
+            # 保存原始API密钥，用于后续处理
+            self.original_api_key = config.get("api_key", "")
+
+            # 加载工作空间信息
+            workspace_id = config.get("workspace_id", "")
+            workspace_name = config.get("workspace_name", "")
+            if workspace_id and workspace_name:
+                self.coze_workspace_combo.clear()
+                self.coze_workspace_combo.addItem(workspace_name, workspace_id)
+
+            # 加载智能体信息
+            bot_id = config.get("bot_id", "")
+            bot_name = config.get("bot_name", "")
+            if bot_id and bot_name:
+                self.coze_bot_combo.clear()
+                self.coze_bot_combo.addItem(bot_name, bot_id)
+
+            # 加载连续对话设置
+            self.coze_continuous_conversation.setChecked(config.get("continuous_conversation", False))
 
     def get_platform_data(self) -> Dict[str, Any]:
         """
@@ -965,6 +1037,30 @@ class AddEditPlatformDialog(QDialog):
                 "request_timeout": self.zhiweijz_request_timeout.value(),
                 "max_retries": self.zhiweijz_max_retries.value(),
                 "warn_on_irrelevant": self.zhiweijz_warn_on_irrelevant.isChecked(),
+                "message_send_mode": message_send_mode
+            }
+        elif platform_type == "coze":
+            # 获取API密钥，如果是掩码且在编辑模式下，则使用原始值
+            api_key = self.coze_api_key.text().strip()
+            if self.is_edit_mode and api_key == "******" and hasattr(self, 'original_api_key'):
+                api_key = self.original_api_key
+                logger.info("使用原始API密钥而不是掩码值")
+
+            # 获取选中的工作空间信息
+            workspace_id = self.coze_workspace_combo.currentData() or ""
+            workspace_name = self.coze_workspace_combo.currentText()
+
+            # 获取选中的智能体信息
+            bot_id = self.coze_bot_combo.currentData() or ""
+            bot_name = self.coze_bot_combo.currentText()
+
+            config = {
+                "api_key": api_key,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace_name,
+                "bot_id": bot_id,
+                "bot_name": bot_name,
+                "continuous_conversation": self.coze_continuous_conversation.isChecked(),
                 "message_send_mode": message_send_mode
             }
 
@@ -1084,8 +1180,30 @@ class AddEditPlatformDialog(QDialog):
             # 验证是否已选择账本
             if self.zhiweijz_account_book_combo.currentIndex() < 0:
                 QMessageBox.warning(self, "错误", "请先登录并选择账本")
-                self.config_stack.setCurrentIndex(3)
+                self.config_stack.setCurrentIndex(4)
                 self.zhiweijz_login_btn.setFocus()
+                return False
+        elif platform_type == "coze":
+            # 验证API密钥
+            api_key = self.coze_api_key.text().strip()
+            if not api_key or (self.is_edit_mode and api_key == "******" and not hasattr(self, 'original_api_key')):
+                QMessageBox.warning(self, "错误", "请输入Coze API密钥")
+                self.config_stack.setCurrentIndex(2)
+                self.coze_api_key.setFocus()
+                return False
+
+            # 验证工作空间选择
+            if self.coze_workspace_combo.currentIndex() < 0:
+                QMessageBox.warning(self, "错误", "请选择工作空间")
+                self.config_stack.setCurrentIndex(2)
+                self.coze_workspace_combo.setFocus()
+                return False
+
+            # 验证智能体选择
+            if self.coze_bot_combo.currentIndex() < 0:
+                QMessageBox.warning(self, "错误", "请选择智能体")
+                self.config_stack.setCurrentIndex(2)
+                self.coze_bot_combo.setFocus()
                 return False
 
         return True
@@ -1225,3 +1343,137 @@ class AddEditPlatformDialog(QDialog):
         """重置登录按钮状态"""
         self.zhiweijz_login_btn.setEnabled(True)
         self.zhiweijz_login_btn.setText("登录")
+
+    def _refresh_workspaces(self):
+        """刷新工作空间列表"""
+        try:
+            api_key = self.coze_api_key.text().strip()
+            if not api_key:
+                QMessageBox.warning(self, "错误", "请先输入API密钥")
+                return
+
+            # 禁用按钮
+            self.refresh_workspaces_btn.setEnabled(False)
+            self.refresh_workspaces_btn.setText("刷新中...")
+
+            # 创建临时Coze平台实例来获取工作空间
+            from wxauto_mgt.core.platforms.coze_platform import CozeServicePlatform
+            temp_platform = CozeServicePlatform("temp", "temp", {"api_key": api_key})
+
+            # 使用更简单的方法：直接在主线程中启动异步任务
+            import asyncio
+
+            async def refresh_workspaces():
+                try:
+                    result = await temp_platform.get_workspaces()
+
+                    if "error" in result:
+                        QMessageBox.warning(self, "错误", f"获取工作空间失败: {result['error']}")
+                        return
+
+                    # 直接在主线程中更新UI
+                    workspaces = result.get("data", [])
+                    self.coze_workspace_combo.clear()
+
+                    for workspace in workspaces:
+                        workspace_id = workspace.get("id", "")
+                        workspace_name = workspace.get("name", "Unknown")
+                        self.coze_workspace_combo.addItem(workspace_name, workspace_id)
+
+                    if workspaces:
+                        QMessageBox.information(self, "成功", f"成功获取到 {len(workspaces)} 个工作空间")
+                        # 自动刷新智能体列表
+                        if self.coze_workspace_combo.count() > 0:
+                            QTimer.singleShot(100, self._refresh_bots)
+                    else:
+                        QMessageBox.information(self, "提示", "未找到任何工作空间")
+
+                except Exception as e:
+                    logger.error(f"刷新工作空间失败: {e}")
+                    QMessageBox.warning(self, "错误", f"刷新工作空间失败: {str(e)}")
+                finally:
+                    self._reset_refresh_workspaces_button()
+
+            # 创建任务
+            asyncio.create_task(refresh_workspaces())
+
+        except Exception as e:
+            logger.error(f"刷新工作空间失败: {e}")
+            QMessageBox.warning(self, "错误", f"刷新工作空间失败: {str(e)}")
+            self._reset_refresh_workspaces_button()
+
+
+
+    def _reset_refresh_workspaces_button(self):
+        """重置刷新工作空间按钮状态"""
+        self.refresh_workspaces_btn.setEnabled(True)
+        self.refresh_workspaces_btn.setText("刷新工作空间")
+
+    def _refresh_bots(self):
+        """刷新智能体列表"""
+        try:
+            api_key = self.coze_api_key.text().strip()
+            if not api_key:
+                QMessageBox.warning(self, "错误", "请先输入API密钥")
+                return
+
+            workspace_id = self.coze_workspace_combo.currentData()
+            if not workspace_id:
+                QMessageBox.warning(self, "错误", "请先选择工作空间")
+                return
+
+            # 禁用按钮
+            self.refresh_bots_btn.setEnabled(False)
+            self.refresh_bots_btn.setText("刷新中...")
+
+            # 创建临时Coze平台实例来获取智能体
+            from wxauto_mgt.core.platforms.coze_platform import CozeServicePlatform
+            temp_platform = CozeServicePlatform("temp", "temp", {"api_key": api_key})
+
+            # 使用更简单的方法：直接在主线程中启动异步任务
+            import asyncio
+
+            async def refresh_bots():
+                try:
+                    result = await temp_platform.get_bots(workspace_id)
+
+                    if "error" in result:
+                        QMessageBox.warning(self, "错误", f"获取智能体失败: {result['error']}")
+                        return
+
+                    # 直接在主线程中更新UI
+                    bots = result.get("data", [])
+                    self.coze_bot_combo.clear()
+
+                    for bot in bots:
+                        bot_id = bot.get("id", "")
+                        bot_name = bot.get("name", "Unknown")
+                        self.coze_bot_combo.addItem(bot_name, bot_id)
+
+                    if bots:
+                        QMessageBox.information(self, "成功", f"成功获取到 {len(bots)} 个智能体")
+                    else:
+                        QMessageBox.information(self, "提示", "未找到任何智能体")
+
+                except Exception as e:
+                    logger.error(f"刷新智能体失败: {e}")
+                    QMessageBox.warning(self, "错误", f"刷新智能体失败: {str(e)}")
+                finally:
+                    self._reset_refresh_bots_button()
+
+            # 创建任务
+            asyncio.create_task(refresh_bots())
+
+        except Exception as e:
+            logger.error(f"刷新智能体失败: {e}")
+            QMessageBox.warning(self, "错误", f"刷新智能体失败: {str(e)}")
+            self._reset_refresh_bots_button()
+
+
+
+    def _reset_refresh_bots_button(self):
+        """重置刷新智能体按钮状态"""
+        self.refresh_bots_btn.setEnabled(True)
+        self.refresh_bots_btn.setText("刷新智能体")
+
+

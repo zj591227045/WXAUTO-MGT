@@ -45,6 +45,14 @@ const platformTypeConfigs = {
         { id: 'token_refresh_interval', label: 'Token刷新间隔（秒）', type: 'number', default: 300, min: 60, max: 3600 },
         { id: 'request_timeout', label: '请求超时时间（秒）', type: 'number', default: 30, min: 5, max: 120 },
         { id: 'max_retries', label: '最大重试次数', type: 'number', default: 3, min: 1, max: 10 }
+    ],
+    coze: [
+        { id: 'api_key', label: 'API密钥', type: 'password', required: true, placeholder: 'pat_...' },
+        { id: 'workspace_select', label: '工作空间', type: 'select', required: true, options: [], disabled: true },
+        { id: 'refresh_workspaces_button', label: '', type: 'button', text: '刷新工作空间', onclick: 'refreshCozeWorkspaces' },
+        { id: 'bot_select', label: '智能体', type: 'select', required: true, options: [], disabled: true },
+        { id: 'refresh_bots_button', label: '', type: 'button', text: '刷新智能体', onclick: 'refreshCozeBots' },
+        { id: 'continuous_conversation', label: '启用连续对话', type: 'checkbox', default: false }
     ]
 };
 
@@ -620,7 +628,25 @@ async function savePlatform() {
                     config['account_book_id'] = value;
                     config['account_book_name'] = selectedOption.textContent.replace(' (默认)', '');
                 }
-            } else {
+            }
+            // 特殊处理Coze平台的工作空间和智能体选择
+            else if (type === 'coze' && field.id === 'workspace_select') {
+                if (value) {
+                    // 获取选中的工作空间信息
+                    const selectedOption = element.options[element.selectedIndex];
+                    config['workspace_id'] = value;
+                    config['workspace_name'] = selectedOption.textContent;
+                }
+            }
+            else if (type === 'coze' && field.id === 'bot_select') {
+                if (value) {
+                    // 获取选中的智能体信息
+                    const selectedOption = element.options[element.selectedIndex];
+                    config['bot_id'] = value;
+                    config['bot_name'] = selectedOption.textContent;
+                }
+            }
+            else {
                 config[field.id] = value;
             }
         }
@@ -1031,6 +1057,165 @@ async function loginZhiWeiJZ(buttonId) {
         if (loginBtn) {
             loginBtn.disabled = false;
             loginBtn.textContent = '登录';
+        }
+    }
+}
+
+/**
+ * 刷新Coze工作空间列表
+ */
+async function refreshCozeWorkspaces(buttonId) {
+    try {
+        const apiKey = document.getElementById('platform-config-api_key').value.trim();
+        if (!apiKey) {
+            showNotification('请先输入API密钥', 'warning');
+            return;
+        }
+
+        // 禁用按钮
+        const refreshBtn = document.getElementById(buttonId);
+        const originalText = refreshBtn.textContent;
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = '刷新中...';
+
+        // 调用API获取工作空间列表
+        const response = await fetch('/api/coze/workspaces', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ api_key: apiKey })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+
+        if (result.code !== 0) {
+            throw new Error(result.message || '获取工作空间失败');
+        }
+
+        // 更新工作空间下拉框
+        const workspaceSelect = document.getElementById('platform-config-workspace_select');
+        workspaceSelect.innerHTML = '<option value="">请选择工作空间</option>';
+
+        const workspaces = result.data?.workspaces || [];
+        if (workspaces.length > 0) {
+            workspaces.forEach(workspace => {
+                const option = document.createElement('option');
+                option.value = workspace.id;
+                option.textContent = workspace.name;
+                workspaceSelect.appendChild(option);
+            });
+            workspaceSelect.disabled = false;
+            showNotification(`成功获取到 ${workspaces.length} 个工作空间`, 'success');
+        } else {
+            showNotification('未找到任何工作空间', 'info');
+        }
+
+        // 恢复按钮
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = originalText;
+
+    } catch (error) {
+        console.error('刷新工作空间失败:', error);
+        showNotification(`刷新工作空间失败: ${error.message}`, 'danger');
+
+        // 恢复按钮
+        const refreshBtn = document.getElementById(buttonId);
+        if (refreshBtn) {
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = '刷新工作空间';
+        }
+    }
+}
+
+/**
+ * 刷新Coze智能体列表
+ */
+async function refreshCozeBots(buttonId) {
+    try {
+        const apiKey = document.getElementById('platform-config-api_key').value.trim();
+        const workspaceId = document.getElementById('platform-config-workspace_select').value;
+
+        if (!apiKey) {
+            showNotification('请先输入API密钥', 'warning');
+            return;
+        }
+
+        if (!workspaceId) {
+            showNotification('请先选择工作空间', 'warning');
+            return;
+        }
+
+        // 禁用按钮
+        const refreshBtn = document.getElementById(buttonId);
+        const originalText = refreshBtn.textContent;
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = '刷新中...';
+
+        // 调用API获取智能体列表
+        const response = await fetch('/api/coze/bots', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                api_key: apiKey,
+                workspace_id: workspaceId
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+
+        if (result.code !== 0) {
+            throw new Error(result.message || '获取智能体失败');
+        }
+
+        // 添加调试日志
+        console.log('智能体API响应:', result);
+        console.log('智能体数据:', result.data?.bots);
+
+        // 更新智能体下拉框
+        const botSelect = document.getElementById('platform-config-bot_select');
+        botSelect.innerHTML = '<option value="">请选择智能体</option>';
+
+        const bots = result.data?.bots || [];
+        console.log('处理的智能体数组:', bots);
+
+        if (bots.length > 0) {
+            bots.forEach((bot, index) => {
+                console.log(`智能体 ${index}:`, bot);
+                const option = document.createElement('option');
+                option.value = bot.id || bot.bot_id;  // 兼容两种字段名
+                option.textContent = bot.name || bot.bot_name || '未知智能体';  // 兼容两种字段名
+                botSelect.appendChild(option);
+            });
+            botSelect.disabled = false;
+            showNotification(`成功获取到 ${bots.length} 个智能体`, 'success');
+        } else {
+            showNotification('未找到任何智能体', 'info');
+        }
+
+        // 恢复按钮
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = originalText;
+
+    } catch (error) {
+        console.error('刷新智能体失败:', error);
+        showNotification(`刷新智能体失败: ${error.message}`, 'danger');
+
+        // 恢复按钮
+        const refreshBtn = document.getElementById(buttonId);
+        if (refreshBtn) {
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = '刷新智能体';
         }
     }
 }

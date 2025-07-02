@@ -1929,6 +1929,189 @@ async def test_accounting_connection(request: Request):
             }
         }
 
+# ==================== Coze平台相关API ====================
+
+@api_router.post("/coze/workspaces")
+async def get_coze_workspaces(request: Request):
+    """获取Coze工作空间列表"""
+    try:
+        # 验证认证
+        await verify_request_auth(request)
+
+        data = await request.json()
+
+        # 验证必需字段
+        api_key = data.get('api_key', '').strip()
+        if not api_key:
+            raise HTTPException(status_code=400, detail="缺少必需字段: api_key")
+
+        # 创建临时Coze平台实例进行测试
+        from wxauto_mgt.core.platforms.coze_platform import CozeServicePlatform
+
+        # 创建临时配置
+        temp_config = {
+            'api_key': api_key,
+            'workspace_id': '',
+            'bot_id': '',
+            'continuous_conversation': False
+        }
+
+        # 创建临时平台实例
+        temp_platform = CozeServicePlatform("temp", "temp", temp_config)
+
+        # 获取工作空间列表
+        result = await temp_platform.get_workspaces()
+
+        if "error" in result:
+            return {
+                "code": 1,
+                "message": f"获取工作空间失败: {result['error']}",
+                "data": {
+                    "workspaces": []
+                }
+            }
+        else:
+            return {
+                "code": 0,
+                "message": "获取工作空间成功",
+                "data": {
+                    "workspaces": result.get('data', [])
+                }
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取Coze工作空间失败: {e}")
+        logger.error(traceback.format_exc())
+        return {
+            "code": 1,
+            "message": f"获取工作空间失败: {str(e)}",
+            "data": {
+                "workspaces": []
+            }
+        }
+
+@api_router.post("/coze/bots")
+async def get_coze_bots(request: Request):
+    """获取Coze智能体列表"""
+    try:
+        # 验证认证
+        await verify_request_auth(request)
+
+        data = await request.json()
+
+        # 验证必需字段
+        api_key = data.get('api_key', '').strip()
+        workspace_id = data.get('workspace_id', '').strip()
+
+        if not api_key:
+            raise HTTPException(status_code=400, detail="缺少必需字段: api_key")
+        if not workspace_id:
+            raise HTTPException(status_code=400, detail="缺少必需字段: workspace_id")
+
+        # 创建临时Coze平台实例进行测试
+        from wxauto_mgt.core.platforms.coze_platform import CozeServicePlatform
+
+        # 创建临时配置
+        temp_config = {
+            'api_key': api_key,
+            'workspace_id': workspace_id,
+            'bot_id': '',
+            'continuous_conversation': False
+        }
+
+        # 创建临时平台实例
+        temp_platform = CozeServicePlatform("temp", "temp", temp_config)
+
+        # 获取智能体列表
+        result = await temp_platform.get_bots(workspace_id)
+
+        if "error" in result:
+            return {
+                "code": 1,
+                "message": f"获取智能体失败: {result['error']}",
+                "data": {
+                    "bots": []
+                }
+            }
+        else:
+            return {
+                "code": 0,
+                "message": "获取智能体成功",
+                "data": {
+                    "bots": result.get('data', [])
+                }
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取Coze智能体失败: {e}")
+        logger.error(traceback.format_exc())
+        return {
+            "code": 1,
+            "message": f"获取智能体失败: {str(e)}",
+            "data": {
+                "bots": []
+            }
+        }
+
+@api_router.post("/coze/test")
+async def test_coze_connection(request: Request):
+    """测试Coze平台连接"""
+    try:
+        # 验证认证
+        await verify_request_auth(request)
+
+        data = await request.json()
+
+        # 验证必需字段
+        api_key = data.get('api_key', '').strip()
+        if not api_key:
+            raise HTTPException(status_code=400, detail="缺少必需字段: api_key")
+
+        # 创建临时Coze平台实例进行测试
+        from wxauto_mgt.core.platforms.coze_platform import CozeServicePlatform
+
+        # 创建临时配置
+        temp_config = {
+            'api_key': api_key,
+            'workspace_id': data.get('workspace_id', ''),
+            'bot_id': data.get('bot_id', ''),
+            'continuous_conversation': data.get('continuous_conversation', False)
+        }
+
+        # 创建临时平台实例
+        temp_platform = CozeServicePlatform("temp", "temp", temp_config)
+
+        # 测试连接
+        result = await temp_platform.test_connection()
+
+        if result.get('success', False):
+            return {
+                "code": 0,
+                "message": result.get('message', '连接测试成功'),
+                "data": result.get('data', {})
+            }
+        else:
+            return {
+                "code": 1,
+                "message": result.get('message', '连接测试失败'),
+                "data": result.get('data', {})
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"测试Coze连接失败: {e}")
+        logger.error(traceback.format_exc())
+        return {
+            "code": 1,
+            "message": f"测试失败: {str(e)}",
+            "data": {}
+        }
+
 # ==================== 固定监听配置API ====================
 
 @api_router.get("/fixed-listeners")

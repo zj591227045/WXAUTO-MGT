@@ -17,6 +17,7 @@ from .platforms.dify_platform import DifyPlatform
 from .platforms.openai_platform import OpenAIPlatform
 from .platforms.keyword_platform import KeywordMatchPlatform
 from .platforms.zhiweijz_platform import ZhiWeiJZPlatform
+from .platforms.coze_platform import CozeServicePlatform
 
 
 def create_platform(platform_type: str, platform_id: str, name: str, config: Dict[str, Any]) -> Optional[ServicePlatform]:
@@ -40,6 +41,8 @@ def create_platform(platform_type: str, platform_id: str, name: str, config: Dic
         return KeywordMatchPlatform(platform_id, name, config)
     elif platform_type == "zhiweijz":
         return ZhiWeiJZPlatform(platform_id, name, config)
+    elif platform_type == "coze":
+        return CozeServicePlatform(platform_id, name, config)
     else:
         logger.error(f"不支持的平台类型: {platform_type}")
         return None
