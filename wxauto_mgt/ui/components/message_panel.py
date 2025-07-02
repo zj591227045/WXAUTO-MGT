@@ -866,9 +866,9 @@ class MessageListenerPanel(QWidget):
         self._init_instance_filter()
 
         # 初始化监听列表（延迟调用异步方法，给监听服务足够的启动时间）
-        QTimer.singleShot(1000, lambda: asyncio.ensure_future(self.refresh_listeners()))
+        QTimer.singleShot(1000, lambda: self.refresh_listeners())
         # 再次刷新，确保显示最新状态
-        QTimer.singleShot(3000, lambda: asyncio.ensure_future(self.refresh_listeners()))
+        QTimer.singleShot(3000, lambda: self.refresh_listeners())
 
         # 初始化日志系统
         self._init_logging()
@@ -1813,6 +1813,13 @@ class MessageListenerPanel(QWidget):
             # 任务被取消，通常发生在程序关闭或窗口关闭时
             logger.debug("自动刷新任务被取消")
             return
+        except RuntimeError as e:
+            if "Cannot enter into task" in str(e):
+                # 忽略异步任务冲突错误，这不影响实际功能
+                logger.debug(f"自动刷新异步任务冲突（已忽略）: {e}")
+                return
+            else:
+                logger.error(f"自动刷新运行时错误: {e}")
         except Exception as e:
             # 只记录严重错误，普通连接错误不记录
             if "Connection refused" not in str(e) and "Not connected" not in str(e):
@@ -2227,11 +2234,11 @@ class MessageListenerPanel(QWidget):
         # 更新当前选中的实例ID
         if instance_id != self.current_instance_id:
             self.current_instance_id = instance_id
-            # 异步加载该实例的配置
-            asyncio.create_task(self._load_instance_config(instance_id))
+            # 使用QTimer延迟执行，避免异步任务冲突
+            QTimer.singleShot(10, lambda: self._load_instance_config(instance_id))
 
-        # 使用异步任务刷新该监听对象的消息
-        asyncio.create_task(self._view_listener_messages(instance_id=instance_id, wxid=wxid))
+        # 使用QTimer延迟执行，避免异步任务冲突
+        QTimer.singleShot(10, lambda: self._view_listener_messages(instance_id=instance_id, wxid=wxid))
 
     async def _load_instance_config(self, instance_id):
         """加载实例配置

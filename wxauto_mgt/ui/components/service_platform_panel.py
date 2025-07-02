@@ -35,6 +35,8 @@ class ServicePlatformPanel(QWidget):
     platform_updated = Signal(str)  # 平台ID
     platform_removed = Signal(str)  # 平台ID
     platform_tested = Signal(str, bool)  # 平台ID, 是否成功
+    platforms_loaded = Signal(list)  # 平台数据加载完成时发出信号
+    show_edit_dialog = Signal(dict)  # 显示编辑对话框信号
 
     def __init__(self, parent=None):
         """初始化服务平台管理面板"""
@@ -42,8 +44,15 @@ class ServicePlatformPanel(QWidget):
 
         self._init_ui()
 
-        # 初始加载平台列表
-        QTimer.singleShot(0, self.refresh_platforms)
+        # 连接信号
+        self.platforms_loaded.connect(self._update_platform_table)
+        self.show_edit_dialog.connect(self._show_edit_dialog_in_main_thread)
+
+        # 初始加载平台列表（延迟执行，确保数据库已初始化）
+        self.init_timer = QTimer()
+        self.init_timer.setSingleShot(True)
+        self.init_timer.timeout.connect(self.refresh_platforms)
+        self.init_timer.start(2000)  # 延迟2秒执行
 
     def _init_ui(self):
         """初始化UI"""
@@ -93,7 +102,7 @@ class ServicePlatformPanel(QWidget):
                 background-color: #73d13d;
             }
         """)
-        self.refresh_btn.clicked.connect(lambda: self.refresh_platforms())
+        self.refresh_btn.clicked.connect(self.refresh_platforms)
         title_layout.addWidget(self.refresh_btn)
 
         main_layout.addLayout(title_layout)
@@ -116,15 +125,63 @@ class ServicePlatformPanel(QWidget):
         self.status_label.setStyleSheet("color: #666666;")
         main_layout.addWidget(self.status_label)
 
-    @asyncSlot()
-    async def refresh_platforms(self):
+    def refresh_platforms(self):
         """刷新平台列表"""
+        logger.info("开始刷新服务平台列表...")
+        import asyncio
+        import threading
+
+        def run_async_task():
+            """在新的事件循环中运行异步任务"""
+            try:
+                logger.debug("创建新的事件循环...")
+                # 创建新的事件循环
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                async def refresh():
+                    logger.debug("开始异步刷新任务...")
+                    # 确保数据库管理器已初始化
+                    from wxauto_mgt.data.db_manager import db_manager
+                    if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+                        logger.debug("初始化数据库管理器...")
+                        await db_manager.initialize()
+
+                    # 确保平台管理器已初始化
+                    if not hasattr(platform_manager, '_initialized') or not platform_manager._initialized:
+                        logger.debug("初始化平台管理器...")
+                        await platform_manager.initialize()
+
+                    # 获取所有平台
+                    logger.debug("获取所有平台...")
+                    platforms = await platform_manager.get_all_platforms()
+                    logger.info(f"获取到 {len(platforms)} 个平台")
+
+                    # 发出信号，在主线程中更新UI
+                    logger.debug("发出platforms_loaded信号...")
+                    self.platforms_loaded.emit(platforms)
+
+                # 运行异步任务
+                loop.run_until_complete(refresh())
+                logger.debug("异步刷新任务完成")
+
+            except Exception as e:
+                logger.error(f"刷新平台列表失败: {e}")
+                import traceback
+                logger.error(f"异常堆栈: {traceback.format_exc()}")
+                QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"刷新平台列表失败: {str(e)}"))
+            finally:
+                loop.close()
+
+        # 在线程池中执行
+        logger.debug("启动异步刷新线程...")
+        threading.Thread(target=run_async_task, daemon=True).start()
+
+    def _update_platform_table(self, platforms):
+        """在主线程中更新平台表格"""
         try:
             # 清空表格
             self.platform_table.setRowCount(0)
-
-            # 获取所有平台
-            platforms = await platform_manager.get_all_platforms()
 
             # 添加平台到表格
             for platform in platforms:
@@ -133,14 +190,16 @@ class ServicePlatformPanel(QWidget):
             # 更新状态标签
             self.status_label.setText(f"共 {len(platforms)} 个服务平台")
 
+            # 强制刷新UI
+            self.platform_table.repaint()
+            self.repaint()
+
             logger.info(f"刷新平台列表成功，共 {len(platforms)} 个平台")
-            return platforms
         except Exception as e:
-            logger.error(f"刷新平台列表失败: {e}")
+            logger.error(f"更新平台表格失败: {e}")
             import traceback
             logger.error(f"异常堆栈: {traceback.format_exc()}")
-            QMessageBox.warning(self, "错误", f"刷新平台列表失败: {str(e)}")
-            return []
+            QMessageBox.warning(self, "错误", f"更新平台表格失败: {str(e)}")
 
     def _add_platform_to_table(self, platform: Dict[str, Any]):
         """
@@ -162,11 +221,13 @@ class ServicePlatformPanel(QWidget):
         self.platform_table.setItem(row, 0, id_item)
 
         # 名称
-        name_item = QTableWidgetItem(platform.get("name", ""))
+        name = platform.get("name", "")
+        name_item = QTableWidgetItem(name)
         self.platform_table.setItem(row, 1, name_item)
 
         # 类型
-        type_item = QTableWidgetItem(platform.get("type", "").upper())
+        platform_type = platform.get("type", "").upper()
+        type_item = QTableWidgetItem(platform_type)
         self.platform_table.setItem(row, 2, type_item)
 
         # 状态
@@ -262,50 +323,76 @@ class ServicePlatformPanel(QWidget):
         if dialog.exec():
             platform_data = dialog.get_platform_data()
 
-            # 使用asyncSlot装饰器处理异步调用
-            self._add_platform_async(platform_data)
+            # 使用QTimer延迟执行，避免异步任务冲突
+            QTimer.singleShot(10, lambda: self._add_platform_async(platform_data))
 
-    @asyncSlot()
-    async def _add_platform_async(self, platform_data: Dict[str, Any]):
+    def _add_platform_async(self, platform_data: Dict[str, Any]):
         """
-        异步添加平台
+        在线程池中异步添加平台
 
         Args:
             platform_data: 平台数据
         """
-        try:
-            # 显示正在处理的消息
-            logger.info(f"正在添加平台: {platform_data['name']}")
+        import asyncio
+        import threading
 
-            # 直接执行平台注册，不创建嵌套任务
-            platform_id = await platform_manager.register_platform(
-                platform_data["type"],
-                platform_data["name"],
-                platform_data["config"]
-            )
+        def run_async_task():
+            """在新的事件循环中运行异步任务"""
+            try:
+                # 创建新的事件循环
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
-            # 在UI线程中处理结果
-            if platform_id:
-                logger.info(f"添加平台成功: {platform_data['name']} ({platform_id})")
+                async def add_platform():
+                    # 确保数据库管理器已初始化
+                    from wxauto_mgt.data.db_manager import db_manager
+                    if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+                        await db_manager.initialize()
 
-                # 发送平台添加信号
-                self.platform_added.emit(platform_id)
+                    # 显示正在处理的消息
+                    logger.info(f"正在添加平台: {platform_data['name']}")
 
-                # 刷新平台列表 - 直接调用方法而不是创建新任务
-                await self.refresh_platforms()
+                    # 直接执行平台注册
+                    platform_id = await platform_manager.register_platform(
+                        platform_data["type"],
+                        platform_data["name"],
+                        platform_data["config"]
+                    )
 
-                # 显示成功消息，并提示需要点击重载配置按钮
-                QMessageBox.information(self, "成功",
-                                       f"添加平台成功: {platform_data['name']}\n\n请点击工具栏上的\"重载配置\"按钮应用配置，否则将无法继续监听消息。")
-            else:
-                logger.error(f"添加平台失败: {platform_data['name']}")
-                QMessageBox.warning(self, "错误", f"添加平台失败: {platform_data['name']}")
+                    if platform_id:
+                        logger.info(f"添加平台成功: {platform_data['name']} (ID: {platform_id})")
 
-        except Exception as e:
-            logger.error(f"添加平台失败: {e}")
-            import traceback
-            logger.error(f"异常堆栈: {traceback.format_exc()}")
-            QMessageBox.warning(self, "错误", f"添加平台失败: {str(e)}")
+                        # 在主线程中更新UI
+                        QTimer.singleShot(0, lambda: self._on_platform_added(platform_id, platform_data['name']))
+                    else:
+                        logger.error(f"添加平台失败: {platform_data['name']}")
+                        QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"添加平台失败: {platform_data['name']}"))
+
+                # 运行异步任务
+                loop.run_until_complete(add_platform())
+
+            except Exception as e:
+                logger.error(f"添加平台失败: {e}")
+                QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"添加平台失败: {str(e)}"))
+            finally:
+                loop.close()
+
+        # 在线程池中执行
+        threading.Thread(target=run_async_task, daemon=True).start()
+
+    def _on_platform_added(self, platform_id: str, platform_name: str):
+        """平台添加成功后的UI更新"""
+        # 发出信号
+        self.platform_added.emit(platform_id)
+
+        # 刷新平台列表
+        self.refresh_platforms()
+
+        # 显示成功消息
+        QMessageBox.information(self, "成功",
+                              f"添加平台成功: {platform_name}\n\n"
+                              f"平台ID: {platform_id}\n\n"
+                              f"请点击主界面的\"重载配置\"按钮以应用新配置。")
 
     @Slot()
     def _edit_platform(self):
@@ -318,61 +405,132 @@ class ServicePlatformPanel(QWidget):
             logger.error("编辑平台时缺少平台ID")
             return
 
-        # 使用asyncSlot装饰器处理异步调用
-        self._edit_platform_async(platform_id)
+        # 使用QTimer延迟执行，避免异步任务冲突
+        QTimer.singleShot(10, lambda: self._edit_platform_async(platform_id))
 
-    @asyncSlot()
-    async def _edit_platform_async(self, platform_id: str):
+    def _edit_platform_async(self, platform_id: str):
         """
-        异步编辑平台
+        在线程池中异步编辑平台
 
         Args:
             platform_id: 平台ID
         """
+        logger.info(f"开始异步编辑平台: {platform_id}")
+        import asyncio
+        import threading
+
+        def run_async_task():
+            """在新的事件循环中运行异步任务"""
+            try:
+                logger.debug(f"创建新的事件循环用于编辑平台: {platform_id}")
+                # 创建新的事件循环
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                async def edit_platform():
+                    logger.debug(f"开始编辑平台异步任务: {platform_id}")
+
+                    # 确保数据库管理器已初始化
+                    from wxauto_mgt.data.db_manager import db_manager
+                    if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+                        logger.debug("初始化数据库管理器...")
+                        await db_manager.initialize()
+
+                    # 导入对话框
+                    logger.debug("导入平台对话框...")
+                    from wxauto_mgt.ui.components.dialogs.platform_dialog import AddEditPlatformDialog
+
+                    # 首先尝试从内存中获取平台
+                    logger.debug(f"从平台管理器获取平台: {platform_id}")
+                    platform = await platform_manager.get_platform(platform_id)
+                    logger.debug(f"获取平台结果: {platform is not None}")
+
+                    if platform:
+                        logger.debug("从内存中的平台实例获取数据...")
+                        # 从内存中的平台实例获取数据
+                        platform_data = {
+                            'platform_id': platform.platform_id,
+                            'name': platform.name,
+                            'type': platform.get_type(),
+                            'config': platform.config.copy(),  # 使用原始配置，不是安全配置
+                            'initialized': platform._initialized
+                        }
+                        logger.debug(f"构建的平台数据: {platform_data['name']} ({platform_data['type']})")
+                    else:
+                        # 如果内存中没有，从数据库获取平台数据
+                        from wxauto_mgt.data.db_manager import db_manager
+                        import json
+
+                        platform_db_data = await db_manager.fetchone(
+                            "SELECT * FROM service_platforms WHERE platform_id = ?",
+                            (platform_id,)
+                        )
+
+                        if not platform_db_data:
+                            logger.error(f"找不到平台: {platform_id}")
+                            QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"找不到平台: {platform_id}"))
+                            return
+
+                        # 从数据库数据构建平台数据
+                        platform_data = {
+                            'platform_id': platform_db_data['platform_id'],
+                            'name': platform_db_data['name'],
+                            'type': platform_db_data['type'],
+                            'config': json.loads(platform_db_data['config']),
+                            'initialized': False  # 数据库中的平台默认未初始化
+                        }
+
+                    # 发出信号，在主线程中显示对话框
+                    logger.debug("发出显示编辑对话框信号...")
+                    self.show_edit_dialog.emit(platform_data)
+
+                # 运行异步任务
+                loop.run_until_complete(edit_platform())
+
+            except Exception as e:
+                logger.error(f"编辑平台失败: {e}")
+                QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"编辑平台失败: {str(e)}"))
+            finally:
+                loop.close()
+
+        # 在线程池中执行
+        threading.Thread(target=run_async_task, daemon=True).start()
+
+    @Slot(dict)
+    def _show_edit_dialog_in_main_thread(self, platform_data: dict):
+        """在主线程中显示编辑对话框"""
         try:
-            # 导入对话框
+            import threading
             from wxauto_mgt.ui.components.dialogs.platform_dialog import AddEditPlatformDialog
 
-            # 首先尝试从内存中获取平台
-            platform = await platform_manager.get_platform(platform_id)
-
-            if platform:
-                # 从内存中的平台实例获取数据
-                platform_data = {
-                    'platform_id': platform.platform_id,
-                    'name': platform.name,
-                    'type': platform.get_type(),
-                    'config': platform.config.copy(),  # 使用原始配置，不是安全配置
-                    'initialized': platform._initialized
-                }
-            else:
-                # 如果内存中没有，从数据库获取平台数据
-                from wxauto_mgt.data.db_manager import db_manager
-                import json
-
-                platform_db_data = await db_manager.fetchone(
-                    "SELECT * FROM service_platforms WHERE platform_id = ?",
-                    (platform_id,)
-                )
-
-                if not platform_db_data:
-                    logger.error(f"找不到平台: {platform_id}")
-                    QMessageBox.warning(self, "错误", f"找不到平台: {platform_id}")
-                    return
-
-                # 从数据库数据构建平台数据
-                platform_data = {
-                    'platform_id': platform_db_data['platform_id'],
-                    'name': platform_db_data['name'],
-                    'type': platform_db_data['type'],
-                    'config': json.loads(platform_db_data['config']),
-                    'initialized': False  # 数据库中的平台默认未初始化
-                }
-
-            # 创建对话框
             dialog = AddEditPlatformDialog(self, platform_data)
+
             if dialog.exec():
                 updated_data = dialog.get_platform_data()
+                platform_id = platform_data['platform_id']
+                # 在新线程中继续处理更新
+                threading.Thread(target=lambda: self._update_platform_data(platform_id, updated_data), daemon=True).start()
+
+        except Exception as e:
+            logger.error(f"显示编辑对话框失败: {e}")
+            import traceback
+            logger.error(f"异常堆栈: {traceback.format_exc()}")
+            QMessageBox.warning(self, "错误", f"显示编辑对话框失败: {str(e)}")
+
+    def _update_platform_data(self, platform_id: str, updated_data: dict):
+        """更新平台数据"""
+        import asyncio
+
+        try:
+            # 创建新的事件循环
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            async def update_platform():
+                # 确保数据库管理器已初始化
+                from wxauto_mgt.data.db_manager import db_manager
+                if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+                    await db_manager.initialize()
 
                 # 直接更新数据库中的配置
                 success = await platform_manager.update_platform_simple(
@@ -383,25 +541,33 @@ class ServicePlatformPanel(QWidget):
 
                 if success:
                     logger.info(f"更新平台配置成功: {updated_data['name']} ({platform_id})")
-
-                    # 发送平台更新信号
-                    self.platform_updated.emit(platform_id)
-
-                    # 刷新平台列表
-                    await self.refresh_platforms()
-
-                    # 显示成功消息，并提示需要点击重载配置按钮
-                    QMessageBox.information(self, "成功",
-                                          f"更新平台配置成功: {updated_data['name']}\n\n请点击工具栏上的\"重载配置\"按钮应用配置，否则将无法继续监听消息。")
+                    # 在主线程中更新UI
+                    QTimer.singleShot(0, lambda: self._on_platform_updated(platform_id, updated_data['name']))
                 else:
                     logger.error(f"更新平台配置失败: {updated_data['name']}")
-                    QMessageBox.warning(self, "错误", f"更新平台配置失败: {updated_data['name']}")
+                    QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"更新平台配置失败: {updated_data['name']}"))
+
+            # 运行异步任务
+            loop.run_until_complete(update_platform())
 
         except Exception as e:
-            logger.error(f"编辑平台失败: {e}")
-            import traceback
-            logger.error(f"异常堆栈: {traceback.format_exc()}")
-            QMessageBox.warning(self, "错误", f"编辑平台失败: {str(e)}")
+            logger.error(f"更新平台数据失败: {e}")
+            QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"更新平台数据失败: {str(e)}"))
+        finally:
+            loop.close()
+
+    def _on_platform_updated(self, platform_id: str, platform_name: str):
+        """平台更新成功后的UI更新"""
+        # 发出信号
+        self.platform_updated.emit(platform_id)
+
+        # 刷新平台列表
+        self.refresh_platforms()
+
+        # 显示成功消息
+        QMessageBox.information(self, "成功",
+                              f"更新平台配置成功: {platform_name}\n\n"
+                              f"请点击主界面的\"重载配置\"按钮以应用新配置。")
 
     @Slot()
     def _delete_platform(self):
@@ -424,48 +590,65 @@ class ServicePlatformPanel(QWidget):
         )
 
         if reply == QMessageBox.Yes:
-            # 使用asyncSlot装饰器处理异步调用
-            self._delete_platform_async(platform_id)
+            # 使用QTimer延迟执行，避免异步任务冲突
+            QTimer.singleShot(10, lambda: self._delete_platform_async(platform_id))
 
-    @asyncSlot()
-    async def _delete_platform_async(self, platform_id: str):
+    def _delete_platform_async(self, platform_id: str):
         """
-        异步删除平台
+        在线程池中异步删除平台
 
         Args:
             platform_id: 平台ID
         """
-        try:
-            # 使用简单方法删除平台
+        import asyncio
+        import threading
+
+        def run_async_task():
+            """在新的事件循环中运行异步任务"""
             try:
-                # 直接从数据库中删除平台
-                success = await platform_manager.delete_platform_simple(platform_id)
+                # 创建新的事件循环
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
-                if success:
-                    logger.info(f"删除平台成功: {platform_id}")
+                async def delete_platform():
+                    # 确保数据库管理器已初始化
+                    from wxauto_mgt.data.db_manager import db_manager
+                    if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+                        await db_manager.initialize()
 
-                    # 发送平台删除信号
-                    self.platform_removed.emit(platform_id)
+                    # 直接从数据库中删除平台
+                    success = await platform_manager.delete_platform_simple(platform_id)
 
-                    # 刷新平台列表
-                    await self.refresh_platforms()
+                    if success:
+                        logger.info(f"删除平台成功: {platform_id}")
+                        # 在主线程中更新UI
+                        QTimer.singleShot(0, lambda: self._on_platform_deleted(platform_id))
+                    else:
+                        logger.error(f"删除平台失败: {platform_id}")
+                        QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"删除平台失败: {platform_id}"))
 
-                    # 显示成功消息
-                    QMessageBox.information(self, "成功", f"删除平台成功: {platform_id}")
-                else:
-                    logger.error(f"删除平台失败: {platform_id}")
-                    QMessageBox.warning(self, "错误", f"删除平台失败: {platform_id}")
-            except Exception as delete_error:
-                logger.error(f"删除平台时出错: {delete_error}")
-                import traceback
-                logger.error(f"异常堆栈: {traceback.format_exc()}")
-                QMessageBox.warning(self, "错误", f"删除平台时出错: {str(delete_error)}")
+                # 运行异步任务
+                loop.run_until_complete(delete_platform())
 
-        except Exception as e:
-            logger.error(f"删除平台失败: {e}")
-            import traceback
-            logger.error(f"异常堆栈: {traceback.format_exc()}")
-            QMessageBox.warning(self, "错误", f"删除平台失败: {str(e)}")
+            except Exception as e:
+                logger.error(f"删除平台失败: {e}")
+                QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"删除平台失败: {str(e)}"))
+            finally:
+                loop.close()
+
+        # 在线程池中执行
+        threading.Thread(target=run_async_task, daemon=True).start()
+
+    def _on_platform_deleted(self, platform_id: str):
+        """平台删除成功后的UI更新"""
+        # 发出信号
+        self.platform_removed.emit(platform_id)
+
+        # 刷新平台列表
+        self.refresh_platforms()
+
+        # 显示成功消息
+        QMessageBox.information(self, "成功", f"删除平台成功: {platform_id}")
 
     @Slot()
     def _test_platform(self):
@@ -478,78 +661,104 @@ class ServicePlatformPanel(QWidget):
             logger.error("测试平台时缺少平台ID")
             return
 
-        # 使用asyncSlot装饰器处理异步调用
-        self._test_platform_async(platform_id)
+        # 使用QTimer延迟执行，避免异步任务冲突
+        QTimer.singleShot(10, lambda: self._test_platform_async(platform_id))
 
-    @asyncSlot()
-    async def _test_platform_async(self, platform_id: str):
+    def _test_platform_async(self, platform_id: str):
         """
-        异步测试平台连接
+        在线程池中异步测试平台连接
 
         Args:
             platform_id: 平台ID
         """
-        try:
-            # 显示正在处理的消息
-            logger.info(f"正在测试平台连接: {platform_id}")
+        import asyncio
+        import threading
 
-            # 获取平台
-            platform = await platform_manager.get_platform(platform_id)
+        def run_async_task():
+            """在新的事件循环中运行异步任务"""
+            try:
+                # 创建新的事件循环
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
-            if not platform:
-                # 如果内存中没有，尝试从数据库获取并创建临时平台实例进行测试
-                from wxauto_mgt.data.db_manager import db_manager
-                from wxauto_mgt.core.service_platform import create_platform
-                import json
+                async def test_platform():
+                    # 确保数据库管理器已初始化
+                    from wxauto_mgt.data.db_manager import db_manager
+                    if not hasattr(db_manager, '_initialized') or not db_manager._initialized:
+                        await db_manager.initialize()
 
-                platform_db_data = await db_manager.fetchone(
-                    "SELECT * FROM service_platforms WHERE platform_id = ?",
-                    (platform_id,)
-                )
+                    # 显示正在处理的消息
+                    logger.info(f"正在测试平台连接: {platform_id}")
 
-                if not platform_db_data:
-                    logger.error(f"找不到平台: {platform_id}")
-                    QMessageBox.warning(self, "错误", f"找不到平台: {platform_id}")
-                    return
+                    # 获取平台
+                    platform = await platform_manager.get_platform(platform_id)
 
-                # 创建临时平台实例进行测试
-                config = json.loads(platform_db_data['config'])
-                platform = create_platform(
-                    platform_db_data['type'],
-                    platform_id,
-                    platform_db_data['name'],
-                    config
-                )
+                    if not platform:
+                        # 如果内存中没有，尝试从数据库获取并创建临时平台实例进行测试
+                        from wxauto_mgt.data.db_manager import db_manager
+                        from wxauto_mgt.core.service_platform import create_platform
+                        import json
 
-                if not platform:
-                    logger.error(f"创建平台实例失败: {platform_id}")
-                    QMessageBox.warning(self, "错误", f"创建平台实例失败: {platform_id}")
-                    return
+                        platform_db_data = await db_manager.fetchone(
+                            "SELECT * FROM service_platforms WHERE platform_id = ?",
+                            (platform_id,)
+                        )
 
-            # 测试连接
-            result = await platform.test_connection()
+                        if not platform_db_data:
+                            logger.error(f"找不到平台: {platform_id}")
+                            QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"找不到平台: {platform_id}"))
+                            return
 
-            # 在UI线程中处理结果
-            if not result.get("error"):
-                logger.info(f"测试平台连接成功: {platform_id}")
+                        # 创建临时平台实例进行测试
+                        config = json.loads(platform_db_data['config'])
+                        platform = create_platform(
+                            platform_db_data['type'],
+                            platform_id,
+                            platform_db_data['name'],
+                            config
+                        )
 
-                # 发送平台测试信号
-                self.platform_tested.emit(platform_id, True)
+                        if not platform:
+                            logger.error(f"创建平台实例失败: {platform_id}")
+                            QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"创建平台实例失败: {platform_id}"))
+                            return
 
-                # 显示成功消息
-                QMessageBox.information(self, "成功", f"测试平台连接成功: {platform.name}")
-            else:
-                error_msg = result.get("error", "未知错误")
-                logger.error(f"测试平台连接失败: {platform_id}, 错误: {error_msg}")
+                    # 测试连接
+                    result = await platform.test_connection()
 
-                # 发送平台测试信号
-                self.platform_tested.emit(platform_id, False)
+                    # 在主线程中处理结果
+                    if not result.get("error"):
+                        logger.info(f"测试平台连接成功: {platform_id}")
+                        QTimer.singleShot(0, lambda: self._on_platform_test_success(platform_id, platform.name))
+                    else:
+                        error_msg = result.get("error", "未知错误")
+                        logger.error(f"测试平台连接失败: {platform_id}, 错误: {error_msg}")
+                        QTimer.singleShot(0, lambda: self._on_platform_test_failed(platform_id, error_msg))
 
-                # 显示错误消息
-                QMessageBox.warning(self, "错误", f"测试平台连接失败: {error_msg}")
+                # 运行异步任务
+                loop.run_until_complete(test_platform())
 
-        except Exception as e:
-            logger.error(f"测试平台连接失败: {e}")
-            import traceback
-            logger.error(f"异常堆栈: {traceback.format_exc()}")
-            QMessageBox.warning(self, "错误", f"测试平台连接失败: {str(e)}")
+            except Exception as e:
+                logger.error(f"测试平台连接失败: {e}")
+                QTimer.singleShot(0, lambda: QMessageBox.warning(self, "错误", f"测试平台连接失败: {str(e)}"))
+            finally:
+                loop.close()
+
+        # 在线程池中执行
+        threading.Thread(target=run_async_task, daemon=True).start()
+
+    def _on_platform_test_success(self, platform_id: str, platform_name: str):
+        """平台测试成功后的UI更新"""
+        # 发出信号
+        self.platform_tested.emit(platform_id, True)
+
+        # 显示成功消息
+        QMessageBox.information(self, "成功", f"测试平台连接成功: {platform_name}")
+
+    def _on_platform_test_failed(self, platform_id: str, error_msg: str):
+        """平台测试失败后的UI更新"""
+        # 发出信号
+        self.platform_tested.emit(platform_id, False)
+
+        # 显示错误消息
+        QMessageBox.warning(self, "错误", f"测试平台连接失败: {error_msg}")

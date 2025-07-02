@@ -290,55 +290,62 @@ def cleanup_services_sync():
             logger.error(f"停止Web服务失败: {web_e}")
             # 不设置cleanup_success = False，因为这不应该阻止程序退出
 
-        # 停止消息投递服务 - 如果有异步方法，在这里同步调用
+        # 强制停止消息投递服务 - 不等待异步操作
         try:
             global message_delivery_service
             if message_delivery_service:
-                logger.info("正在停止消息投递服务...")
-                # 如果有同步停止方法，使用同步方法
-                if hasattr(message_delivery_service, 'stop_sync'):
-                    message_delivery_service.stop_sync()
-                else:
-                    # 否则尝试在当前线程中运行异步方法
-                    import asyncio
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if not loop.is_closed():
-                            loop.run_until_complete(message_delivery_service.stop())
-                    except RuntimeError:
-                        # 如果没有事件循环，创建一个新的
-                        asyncio.run(message_delivery_service.stop())
+                logger.info("强制停止消息投递服务...")
+                # 直接设置停止标志，不等待异步操作
+                message_delivery_service._running = False
+                # 取消所有任务
+                if hasattr(message_delivery_service, '_tasks'):
+                    for task in message_delivery_service._tasks:
+                        if not task.done():
+                            task.cancel()
+                logger.info("消息投递服务已强制停止")
         except Exception as delivery_e:
-            logger.error(f"停止消息投递服务失败: {delivery_e}")
-            cleanup_success = False
+            logger.warning(f"停止消息投递服务时出错: {delivery_e}")
 
-        # 停止消息监听 - 如果有异步方法，在这里同步调用
+        # 强制停止消息监听服务 - 不等待异步操作
         try:
             global message_listener
             if message_listener:
-                logger.info("正在停止消息监听...")
-                # 如果有同步停止方法，使用同步方法
-                if hasattr(message_listener, 'stop_sync'):
-                    message_listener.stop_sync()
-                else:
-                    # 否则尝试在当前线程中运行异步方法
-                    import asyncio
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if not loop.is_closed():
-                            loop.run_until_complete(message_listener.stop())
-                    except RuntimeError:
-                        # 如果没有事件循环，创建一个新的
-                        asyncio.run(message_listener.stop())
+                logger.info("强制停止消息监听服务...")
+                # 直接设置停止标志，不等待异步操作
+                message_listener._running = False
+                message_listener._paused = True
+                # 取消所有任务
+                if hasattr(message_listener, '_tasks'):
+                    for task in message_listener._tasks:
+                        if not task.done():
+                            task.cancel()
+                logger.info("消息监听服务已强制停止")
         except Exception as listener_e:
-            logger.error(f"停止消息监听失败: {listener_e}")
-            cleanup_success = False
+            logger.warning(f"停止消息监听服务时出错: {listener_e}")
 
     except Exception as e:
         logger.error(f"清理服务时发生未预期的错误: {e}")
         cleanup_success = False
 
     return cleanup_success
+
+def start_force_exit_monitor():
+    """启动强制退出监控线程（仅在关闭时使用）"""
+    import threading
+    import time
+
+    def monitor_thread():
+        """监控线程，如果程序关闭时间过长则强制退出"""
+        # 等待10秒，如果程序还没有正常退出，则强制退出
+        time.sleep(10)
+        logger.warning("程序关闭时间过长，强制退出")
+        import os
+        os._exit(1)
+
+    # 创建守护线程
+    monitor = threading.Thread(target=monitor_thread, daemon=True)
+    monitor.start()
+    logger.info("强制退出监控已启动（10秒超时）")
 
 async def cleanup_services():
     """异步清理各服务（保持向后兼容）"""
@@ -350,36 +357,6 @@ async def cleanup_services():
             return future.result(timeout=30)
     except Exception as e:
         logger.error(f"异步清理服务失败: {e}")
-        return False
-
-        # 关闭所有API客户端
-        try:
-            if instance_manager:
-                logger.info("正在关闭API客户端...")
-                await instance_manager.close_all()
-        except Exception as api_e:
-            logger.error(f"关闭API客户端失败: {api_e}")
-            cleanup_success = False
-
-        # 关闭数据库连接
-        try:
-            if db_manager:
-                logger.info("正在关闭数据库连接...")
-                await db_manager.close()
-        except Exception as db_e:
-            logger.error(f"关闭数据库连接失败: {db_e}")
-            cleanup_success = False
-
-        if cleanup_success:
-            logger.info("服务清理完成")
-        else:
-            logger.warning("服务清理完成，但部分服务停止时出现错误")
-
-        return cleanup_success
-    except Exception as e:
-        logger.error(f"服务清理过程中出现未预期的错误: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
         return False
 
 def main():
@@ -424,35 +401,39 @@ def main():
             try:
                 loop.run_forever()
             finally:
-                # 在事件循环关闭前执行清理
-                logger.info("正在清理服务...")
+                # 启动强制退出监控
+                start_force_exit_monitor()
+
+                # 强制快速清理，不等待异步操作
+                logger.info("程序正在关闭，开始强制清理...")
                 try:
-                    # 使用同步清理方法，避免事件循环冲突
+                    # 1. 立即取消所有剩余任务
+                    if not loop.is_closed():
+                        pending = asyncio.all_tasks(loop)
+                        logger.info(f"发现 {len(pending)} 个待处理任务，强制取消...")
+                        for task in pending:
+                            if not task.done():
+                                task.cancel()
+
+                        # 给任务很短的时间来响应取消
+                        if pending:
+                            try:
+                                loop.run_until_complete(asyncio.wait_for(
+                                    asyncio.gather(*pending, return_exceptions=True),
+                                    timeout=2.0  # 最多等待2秒
+                                ))
+                            except asyncio.TimeoutError:
+                                logger.warning("任务取消超时，强制继续关闭")
+                            except Exception as gather_e:
+                                logger.warning(f"任务取消时出错: {gather_e}")
+
+                    # 2. 使用同步清理方法
                     cleanup_services_sync()
-                    logger.info("服务清理完成")
+                    logger.info("强制清理完成")
 
                 except Exception as cleanup_e:
-                    logger.error(f"服务清理失败: {cleanup_e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                finally:
-                    # 确保取消所有剩余的任务
-                    try:
-                        if not loop.is_closed():
-                            pending = asyncio.all_tasks(loop)
-                            for task in pending:
-                                if not task.done():
-                                    task.cancel()
-
-                            # 等待所有任务完成或被取消
-                            if pending:
-                                try:
-                                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-                                except Exception as gather_e:
-                                    logger.warning(f"等待任务完成时出错: {gather_e}")
-
-                    except Exception as task_cleanup_e:
-                        logger.warning(f"清理剩余任务时出错: {task_cleanup_e}")
+                    logger.error(f"强制清理失败: {cleanup_e}")
+                    # 不打印完整堆栈，避免延迟关闭
 
         return 0
 

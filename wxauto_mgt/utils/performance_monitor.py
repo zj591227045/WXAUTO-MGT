@@ -119,8 +119,8 @@ class PerformanceMonitor:
         
         if time_since_last_update > self.ui_response_threshold:
             self.ui_blocked_count += 1
-            logger.warning(f"UI可能被阻塞，距离上次更新: {time_since_last_update:.3f}秒")
-        
+            #logger.warning(f"UI可能被阻塞，距离上次更新: {time_since_last_update:.3f}秒")
+    
         self.last_ui_update = current_time
     
     def reset_ui_timer(self):

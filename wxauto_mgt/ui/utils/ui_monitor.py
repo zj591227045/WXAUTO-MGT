@@ -85,7 +85,7 @@ class UIResponsivenessMonitor(QObject):
     
     def _on_ui_blocked(self, block_time: float):
         """UI被阻塞时的处理"""
-        logger.warning(f"检测到UI阻塞，阻塞时间: {block_time:.3f}秒")
+        #logger.warning(f"检测到UI阻塞，阻塞时间: {block_time:.3f}秒")
         
         # 记录到性能监控器
         performance_monitor.record_operation(

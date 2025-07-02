@@ -288,7 +288,7 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event):
-        """窗口关闭事件"""
+        """窗口关闭事件 - 强制快速关闭"""
         reply = QMessageBox.question(
             self,
             '确认退出',
@@ -298,21 +298,46 @@ class MainWindow(QMainWindow):
         )
 
         if reply == QMessageBox.Yes:
-            logger.info("用户请求关闭应用程序")
+            logger.info("用户请求关闭应用程序，开始强制关闭流程")
 
-            # 停止Web状态更新定时器
+            # 立即停止所有定时器
             if hasattr(self, 'web_status_timer'):
                 self.web_status_timer.stop()
-
-            # 标记正在关闭，让主程序的cleanup_services_sync处理所有清理工作
-            # 这样避免重复清理和事件循环冲突
-            logger.info("应用程序关闭，将由主程序统一清理服务")
 
             # 停止UI监控
             stop_ui_monitoring()
 
-            # 执行清理操作
+            # 强制关闭事件循环
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop and not loop.is_closed():
+                    logger.info("强制停止事件循环")
+                    loop.stop()
+            except Exception as e:
+                logger.warning(f"停止事件循环时出错: {e}")
+
+            # 立即接受关闭事件
             event.accept()
+
+            # 强制退出程序（如果其他方法失败）
+            import os
+            import sys
+
+            def force_exit():
+                """延迟强制退出，给清理过程一些时间"""
+                import time
+                time.sleep(3)  # 给清理过程3秒时间
+                logger.warning("强制退出程序")
+                if getattr(sys, 'frozen', False):
+                    os._exit(0)
+                else:
+                    sys.exit(0)
+
+            # 在后台线程中启动强制退出
+            import threading
+            threading.Thread(target=force_exit, daemon=True).start()
+
         else:
             event.ignore()
 
@@ -635,8 +660,8 @@ class MainWindow(QMainWindow):
             for i in range(self.tab_widget.count()):
                 widget = self.tab_widget.widget(i)
                 if hasattr(widget, 'refresh_listeners'):
-                    # 异步调用刷新方法
-                    asyncio.ensure_future(widget.refresh_listeners())
+                    # 使用QTimer延迟执行，避免异步任务冲突
+                    QTimer.singleShot(10, lambda: widget.refresh_listeners())
                     logger.debug("已通知消息面板刷新监听列表")
                     break
         except Exception as e:
