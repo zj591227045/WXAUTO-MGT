@@ -705,23 +705,24 @@ class MessageListener:
 
     async def has_listener(self, instance_id: str, who: str) -> bool:
         """
-        检查监听对象是否存在
+        检查活跃的监听对象是否存在
 
         Args:
             instance_id: 实例ID
             who: 监听对象的标识
 
         Returns:
-            bool: 监听对象是否存在
+            bool: 活跃的监听对象是否存在
         """
         async with self._lock:
-            # 检查内存中是否存在
+            # 检查内存中是否存在且活跃
             if instance_id in self.listeners and who in self.listeners[instance_id]:
-                return True
+                listener_info = self.listeners[instance_id][who]
+                return listener_info.active
 
-            # 检查数据库中是否存在
+            # 检查数据库中是否存在活跃的记录
             try:
-                query = "SELECT id FROM listeners WHERE instance_id = ? AND who = ?"
+                query = "SELECT id FROM listeners WHERE instance_id = ? AND who = ? AND status = 'active'"
                 result = await db_manager.fetchone(query, (instance_id, who))
                 return result is not None
             except Exception as e:
@@ -832,51 +833,88 @@ class MessageListener:
         Returns:
             bool: 是否移除成功
         """
-        async with self._lock:
-            if instance_id not in self.listeners or who not in self.listeners[instance_id]:
-                return False
+        logger.debug(f"开始移除监听对象: {instance_id} - {who}")
 
-            # 获取API客户端
-            api_client = instance_manager.get_instance(instance_id)
-            if not api_client:
-                logger.error(f"找不到实例 {instance_id} 的API客户端")
-                return False
+        # 使用超时机制获取锁，避免死锁
+        try:
+            async with asyncio.timeout(5.0):  # 5秒超时
+                async with self._lock:
+                    logger.debug(f"获得锁，检查监听对象是否存在: {instance_id} - {who}")
 
-            try:
-                try:
-                    # 调用API客户端的移除监听方法
-                    await api_client.remove_listener(who)
-                finally:
-                    pass
-                # 无论API调用成功与否，都尝试清理本地数据
-                try:
-                    # 从内存中移除
+                    # 检查内存中是否存在活跃的监听对象
+                    memory_exists = (instance_id in self.listeners and
+                                   who in self.listeners[instance_id] and
+                                   self.listeners[instance_id][who].active)
+
+                    # 检查数据库中是否存在活跃的监听对象
+                    db_exists = False
+                    try:
+                        query = "SELECT id FROM listeners WHERE instance_id = ? AND who = ? AND status = 'active'"
+                        result = await asyncio.wait_for(db_manager.fetchone(query, (instance_id, who)), timeout=2.0)
+                        db_exists = result is not None
+                    except asyncio.TimeoutError:
+                        logger.warning(f"检查数据库监听对象超时: {instance_id} - {who}")
+                    except Exception as e:
+                        logger.error(f"检查数据库监听对象时出错: {e}")
+
+                    logger.debug(f"监听对象存在检查: 内存={memory_exists}, 数据库={db_exists}")
+
+                    # 如果内存和数据库中都不存在活跃的监听对象，则返回False
+                    if not memory_exists and not db_exists:
+                        logger.debug(f"监听对象不存在或已非活跃: {instance_id} - {who}")
+                        return False
+        except asyncio.TimeoutError:
+            logger.error(f"获取锁超时，移除监听对象失败: {instance_id} - {who}")
+            return False
+
+        # 获取API客户端
+        api_client = instance_manager.get_instance(instance_id)
+        if not api_client:
+            logger.error(f"找不到实例 {instance_id} 的API客户端")
+            return False
+
+        logger.debug(f"开始处理监听对象移除: {instance_id} - {who}")
+        try:
+            # 第一步：标记为非活跃状态
+            logger.debug(f"步骤1: 标记监听对象为非活跃: {instance_id} - {who}")
+            db_success = await asyncio.wait_for(self._mark_listener_inactive(instance_id, who), timeout=3.0)
+            if db_success:
+                logger.info(f"已将监听对象标记为非活跃状态: {instance_id} - {who}")
+            else:
+                logger.error(f"标记监听对象为非活跃状态失败: {instance_id} - {who}")
+
+            # 第二步：从内存中移除
+            logger.debug(f"步骤2: 从内存中移除监听对象: {instance_id} - {who}")
+            async with asyncio.timeout(2.0):
+                async with self._lock:
                     if instance_id in self.listeners and who in self.listeners[instance_id]:
                         del self.listeners[instance_id][who]
                         logger.info(f"从内存中移除监听对象: {instance_id} - {who}")
 
-                    # 将数据库中的记录标记为非活跃状态（不删除）
-                    db_success = await self._mark_listener_inactive(instance_id, who)
-                    if db_success:
-                        logger.info(f"已将监听对象标记为非活跃状态: {instance_id} - {who}")
-                    else:
-                        logger.error(f"标记监听对象为非活跃状态失败: {instance_id} - {who}")
-                except Exception as e:
-                    logger.error(f"清理监听对象本地数据时出错: {e}")
-                    logger.exception(e)
+            # 第三步：调用API移除（使用超时机制）
+            logger.debug(f"步骤3: 调用API移除监听对象: {instance_id} - {who}")
+            try:
+                # 设置3秒超时，避免API调用卡住
+                await asyncio.wait_for(api_client.remove_listener(who), timeout=3.0)
+                logger.debug(f"API移除监听对象完成: {instance_id} - {who}")
+            except asyncio.TimeoutError:
+                logger.warning(f"API移除监听对象超时: {instance_id} - {who}")
+            except Exception as api_e:
+                logger.warning(f"API移除监听对象失败: {instance_id} - {who}, 错误: {api_e}")
 
-                # 只要完成了本地清理，就认为移除成功
-                logger.info(f"已移除实例 {instance_id} 的监听对象: {who}")
+            # 记录监听对象移除统计
+            service_monitor.record_listener_removed()
 
-                # 记录监听对象移除统计
-                service_monitor.record_listener_removed()
+            logger.debug(f"监听对象移除成功: {instance_id} - {who}")
+            return True
 
-                return True
-
-            except Exception as e:
-                logger.error(f"移除监听对象时出错: {e}")
-                logger.exception(e)  # 记录完整堆栈
-                return False
+        except asyncio.TimeoutError:
+            logger.error(f"移除监听对象操作超时: {instance_id} - {who}")
+            return False
+        except Exception as e:
+            logger.error(f"移除监听对象时出错: {e}")
+            logger.exception(e)  # 记录完整堆栈
+            return False
 
     async def _remove_inactive_listeners(self) -> int:
         """
@@ -2106,7 +2144,7 @@ class MessageListener:
                 except Exception as e:
                     logger.error(f"初始化API实例时出错: {e}")
 
-        # 为所有监听对象提供启动宽限期
+        # 为所有监听对象提供启动宽限期，避免在初始化时立即移除
         logger.info("为所有监听对象提供启动宽限期")
         async with self._lock:
             for instance_id, listeners_dict in self.listeners.items():
@@ -2114,226 +2152,41 @@ class MessageListener:
                     # 更新最后消息时间，提供一个缓冲时间
                     buffer_time = self.timeout_minutes * 30  # 半个超时时间(秒)
                     info.last_message_time = time.time() - buffer_time
-                    logger.info(f"监听对象 {instance_id} - {who} 已设置启动宽限期")
+                    info.last_check_time = time.time()
+                    logger.debug(f"监听对象 {instance_id} - {who} 已设置启动宽限期")
 
-        # 准备可能超时的监听对象列表
-        potentially_expired = []
-        current_time = time.time()
-        timeout = self.timeout_minutes * 60
+        logger.info("启动时监听对象处理完成，跳过消息获取以避免阻塞")
 
-        logger.info("启动时识别可能已超时的监听对象")
-        async with self._lock:
-            for instance_id, listeners_dict in self.listeners.items():
-                for who, info in listeners_dict.items():
-                    # 检查是否为手动添加或固定监听对象（不受超时限制）
-                    if getattr(info, 'manual_added', False) or getattr(info, 'fixed_listener', False):
-                        logger.debug(f"跳过手动添加或固定监听对象（不受超时限制）: {instance_id} - {who}")
-                        continue
+        # 重新激活所有内存中的监听对象
+        await self._reactivate_memory_listeners()
 
-                    # 检查最后消息时间
-                    if current_time - info.last_message_time > timeout:
-                        logger.info(f"启动时发现可能超时的监听对象: {instance_id} - {who}, 最后消息时间: {datetime.fromtimestamp(info.last_message_time).strftime('%Y-%m-%d %H:%M:%S')}")
-                        potentially_expired.append((instance_id, who))
-                    else:
-                        logger.debug(f"监听对象正常: {instance_id} - {who}, 剩余时间: {int((info.last_message_time + timeout - current_time) / 60)} 分钟")
+    async def _reactivate_memory_listeners(self):
+        """重新激活内存中的监听对象，并更新数据库状态"""
+        try:
+            logger.info("开始重新激活内存中的监听对象")
+            reactivated_count = 0
 
-        if not potentially_expired:
-            logger.info("未发现超时的监听对象，无需处理")
-            return
+            async with self._lock:
+                for instance_id, listeners_dict in self.listeners.items():
+                    for who, info in listeners_dict.items():
+                        # 重新激活监听对象
+                        info.active = True
+                        info.last_check_time = time.time()
 
-        # 启动时强制刷新所有可能超时的监听对象
-        logger.info(f"启动时处理 {len(potentially_expired)} 个可能超时的监听对象")
-        for instance_id, who in potentially_expired:
-            try:
-                # 获取API客户端
-                api_client = instance_manager.get_instance(instance_id)
-                if not api_client:
-                    logger.error(f"找不到实例 {instance_id} 的API客户端")
-                    continue
+                        # 更新数据库状态为active
+                        try:
+                            update_sql = "UPDATE listeners SET status = 'active' WHERE instance_id = ? AND who = ?"
+                            await db_manager.execute(update_sql, (instance_id, who))
+                            reactivated_count += 1
+                            logger.debug(f"重新激活监听对象: {instance_id} - {who}")
+                        except Exception as e:
+                            logger.error(f"重新激活监听对象数据库更新失败: {instance_id} - {who}, 错误: {e}")
 
-                # 直接获取最新消息
-                logger.info(f"启动时获取监听对象消息: {instance_id} - {who}")
-                messages = await api_client.get_listener_messages(who)
+            logger.info(f"重新激活完成，共激活 {reactivated_count} 个监听对象")
 
-                # 更新最后检查时间
-                async with self._lock:
-                    if instance_id in self.listeners and who in self.listeners[instance_id]:
-                        self.listeners[instance_id][who].last_check_time = time.time()
-
-                if messages:
-                    # 先过滤消息
-                    filtered_messages = self._filter_messages(messages)
-
-                    # 如果有新消息，更新时间戳
-                    logger.info(f"监听对象 {who} 有 {len(messages)} 条新消息，过滤后剩余 {len(filtered_messages)} 条，重置超时")
-
-                    # 记录第一条过滤后的消息内容
-                    if filtered_messages:
-                        msg = filtered_messages[0]
-                        sender = msg.get('sender', '未知')
-                        sender_remark = msg.get('sender_remark', '')
-                        content = msg.get('content', '')
-                        # 使用发送者备注名(如果有)，否则使用发送者ID
-                        display_sender = sender_remark if sender_remark else sender
-                        # 截断内容，避免日志过长
-                        short_content = content[:50] + "..." if len(content) > 50 else content
-
-                        # 检查消息是否符合@规则
-                        from wxauto_mgt.core.message_filter import message_filter
-                        from wxauto_mgt.core.service_platform_manager import rule_manager
-
-                        # 获取匹配的规则
-                        rule = await rule_manager.match_rule(instance_id, who, content)
-
-                        # 检查是否需要@规则过滤
-                        is_at_rule_filtered = False
-                        if rule:
-                            # 获取规则ID，但不使用它，只是为了避免IDE警告
-                            _ = rule.get('rule_id', '未知')
-                            only_at_messages = rule.get('only_at_messages', 0)
-
-                            if only_at_messages == 1:
-                                at_name = rule.get('at_name', '')
-                                if at_name:
-                                    # 支持多个@名称，用逗号分隔
-                                    at_names = [name.strip() for name in at_name.split(',')]
-
-                                    # 检查消息是否包含任意一个@名称
-                                    at_match = False
-                                    for name in at_names:
-                                        if name and f"@{name}" in content:
-                                            at_match = True
-                                            break
-
-                                    # 如果没有匹配到任何@名称，标记为不符合规则
-                                    if not at_match:
-                                        is_at_rule_filtered = True
-
-                        # 根据是否符合@规则记录不同的日志 - 只记录一条日志
-                        if is_at_rule_filtered:
-                            # 只记录一条带有[不符合消息转发规则]标记的日志
-                            logger.info(f"监控到来自于会话\"{who}\"，发送人是\"{display_sender}\"的新消息，内容：\"{short_content}\" [不符合消息转发规则]")
-
-                            # 重要：将这条消息从filtered_messages中移除，避免后续处理
-                            filtered_messages.remove(msg)
-                        else:
-                            logger.info(f"获取到新消息: 实例={instance_id}, 聊天={who}, 发送者={display_sender}, 内容={short_content}")
-
-                    async with self._lock:
-                        if instance_id in self.listeners and who in self.listeners[instance_id]:
-                            self.listeners[instance_id][who].last_message_time = time.time()
-                            self.listeners[instance_id][who].last_check_time = time.time()
-                            # 更新数据库中的时间戳
-                            await self._update_listener_timestamp(instance_id, who)
-
-                            # 处理消息
-                            for msg in filtered_messages:
-                                # 在保存前检查消息是否应该被过滤
-                                from wxauto_mgt.core.message_filter import message_filter
-
-                                # 直接检查sender是否为self
-                                sender = msg.get('sender', '')
-                                if sender and (sender.lower() == 'self' or sender == 'Self'):
-                                    logger.debug(f"过滤掉self发送的启动消息: {msg.get('id')}")
-                                    continue
-
-                                # 处理不同类型的消息
-                                from wxauto_mgt.core.message_processor import message_processor
-
-                                # 处理消息内容
-                                processed_msg = await message_processor.process_message(msg, api_client)
-
-                                # 保存消息到数据库
-                                save_data = {
-                                    'instance_id': instance_id,
-                                    'chat_name': who,
-                                    'message_type': processed_msg.get('type', 'text'),
-                                    'content': processed_msg.get('content', ''),
-                                    'sender': processed_msg.get('sender', ''),
-                                    'sender_remark': processed_msg.get('sender_remark', ''),
-                                    'message_id': processed_msg.get('id', ''),
-                                    'mtype': processed_msg.get('mtype', 0)
-                                }
-
-                                # 如果是文件或图片，添加本地文件路径
-                                if 'local_file_path' in processed_msg:
-                                    save_data['local_file_path'] = processed_msg.get('local_file_path')
-                                    save_data['file_size'] = processed_msg.get('file_size')
-                                    save_data['original_file_path'] = processed_msg.get('original_file_path')
-
-                                # 使用消息过滤模块进行二次检查
-                                if message_filter.should_filter_message(save_data, log_prefix="启动保存前"):
-                                    logger.debug(f"消息过滤模块过滤掉启动消息: {msg.get('id')}")
-                                    continue
-
-                                # 保存到数据库
-                                message_id = await self._save_message(save_data)
-                                if message_id:
-                                    logger.debug(f"启动时消息保存成功，ID: {message_id}")
-
-                                    # 直接处理消息投递和回复 - 与主窗口保持一致
-                                    try:
-                                        # 导入消息投递服务
-                                        from wxauto_mgt.core.message_delivery_service import message_delivery_service
-
-                                        # 获取保存的消息
-                                        from wxauto_mgt.data.db_manager import db_manager
-                                        saved_message = await db_manager.fetchone(
-                                            "SELECT * FROM messages WHERE message_id = ?",
-                                            (processed_msg.get('id'),)
-                                        )
-
-                                        if saved_message:
-                                            # 直接处理消息投递
-                                            logger.info(f"启动时消息直接投递处理: {processed_msg.get('id')}")
-                                            # 直接等待处理完成，确保回复能发送回微信
-                                            try:
-                                                delivery_result = await message_delivery_service.process_message(saved_message)
-                                                logger.info(f"启动时消息投递处理完成: {processed_msg.get('id')}, 结果: {delivery_result}")
-                                            except Exception as delivery_e:
-                                                logger.error(f"启动时消息投递处理异常: {delivery_e}")
-                                                logger.exception(delivery_e)
-                                        else:
-                                            logger.error(f"无法找到保存的消息: {processed_msg.get('id')}")
-                                    except Exception as e:
-                                        logger.error(f"启动时消息投递处理失败: {e}")
-                                        logger.exception(e)
-                else:
-                    # 无消息时，尝试重置监听对象
-                    logger.info(f"监听对象 {who} 没有新消息，尝试重置")
-                    try:
-                        # 先移除
-                        await api_client.remove_listener(who)
-                        # 再添加，设置接收图片、文件、语音信息、URL信息参数为True
-                        add_success = await api_client.add_listener(
-                            who,
-                            save_pic=True,
-                            save_file=True,
-                            save_voice=True,
-                            parse_url=True
-                        )
-
-                        if add_success:
-                            logger.info(f"成功重置监听对象: {instance_id} - {who}")
-                            # 延长超时时间
-                            async with self._lock:
-                                if instance_id in self.listeners and who in self.listeners[instance_id]:
-                                    # 延长一半超时时间
-                                    buffer_time = self.timeout_minutes * 30  # 半个超时时间(秒)
-                                    self.listeners[instance_id][who].last_message_time = time.time() - buffer_time
-                                    self.listeners[instance_id][who].last_check_time = time.time()
-                                    await self._update_listener_timestamp(instance_id, who)
-                        else:
-                            logger.warning(f"无法重置监听对象: {instance_id} - {who}")
-                    except Exception as e:
-                        logger.error(f"重置监听对象出错: {e}")
-                        logger.exception(e)
-
-            except Exception as e:
-                logger.error(f"启动时处理监听对象 {who} 时出错: {e}")
-                logger.exception(e)
-
-        logger.info("启动时监听对象处理完成")
+        except Exception as e:
+            logger.error(f"重新激活监听对象失败: {e}")
+            logger.exception(e)
 
     async def _mark_listener_inactive(self, instance_id: str, who: str) -> bool:
         """

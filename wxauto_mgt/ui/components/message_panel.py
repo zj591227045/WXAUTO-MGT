@@ -842,6 +842,9 @@ class MessageListenerPanel(QWidget):
         self.refresh_count = 1          # 刷新计数器
         self.refresh_log_dict = {}      # 存储不同刷新日志的计数
 
+        # 超时移除状态标志
+        self._removing_timeout_listeners = False
+
         # 创建定时器
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self._auto_refresh)
@@ -1484,9 +1487,11 @@ class MessageListenerPanel(QWidget):
 
             # 确保message_listener已经初始化
             from wxauto_mgt.core.message_listener import message_listener
+            logger.debug(f"开始调用message_listener.remove_listener: {instance_id}-{who}")
 
             # 移除监听对象
             success = await message_listener.remove_listener(instance_id, who)
+            logger.debug(f"message_listener.remove_listener返回结果: {instance_id}-{who} = {success}")
 
             if success:
                 # 不再记录成功日志，避免重复
@@ -2886,6 +2891,24 @@ class MessageListenerPanel(QWidget):
                 # 不频繁输出日志，降低日志量
                 return
 
+            # 防止重复处理：检查是否已有移除任务在运行
+            if hasattr(self, '_removing_timeout_listeners') and self._removing_timeout_listeners:
+                # 检查任务是否已经运行太久（超过60秒），如果是则强制重置
+                if hasattr(self, '_remove_task_start_time'):
+                    elapsed = time.time() - self._remove_task_start_time
+                    if elapsed > 60:  # 60秒超时
+                        logger.warning(f"超时移除任务运行时间过长({elapsed:.1f}秒)，强制重置标志")
+                        self._removing_timeout_listeners = False
+                        if hasattr(self, '_remove_task_start_time'):
+                            delattr(self, '_remove_task_start_time')
+                    else:
+                        logger.debug(f"已有超时移除任务在运行({elapsed:.1f}秒)，跳过本次处理")
+                        return
+                else:
+                    # 强制重置标志，因为可能任务已经卡住
+                    logger.warning("检测到移除标志为True但没有开始时间，强制重置")
+                    self._removing_timeout_listeners = False
+
             # 检查启动宽限期 - 启动后10秒内不执行超时移除
             current_time = time.time()
             if hasattr(message_listener, 'startup_timestamp') and message_listener.startup_timestamp > 0:
@@ -2951,22 +2974,61 @@ class MessageListenerPanel(QWidget):
                 # 批量移除并最后只刷新一次
                 async def remove_batch():
                     try:
+                        # 设置移除标志，防止重复处理
+                        self._removing_timeout_listeners = True
+                        self._remove_task_start_time = time.time()
+                        logger.debug(f"设置移除标志为True，开始处理 {len(to_remove)} 个超时监听对象")
+
                         # 记录移除开始
                         logger.info(f"超时移除开始: {len(to_remove)} 个监听对象")
 
                         # 批量移除，减少不必要的日志
+                        removed_count = 0
                         for i, (instance_id, who) in enumerate(to_remove):
+                            logger.info(f"[步骤1] 处理第 {i+1}/{len(to_remove)} 个监听对象: {instance_id}-{who}")
+
                             # 每5个记录一次进度，避免日志过多
                             if i % 5 == 0 or i == len(to_remove) - 1:
                                 logger.info(f"超时移除进度: {i+1}/{len(to_remove)}")
-                            await self._remove_listener(instance_id, who, show_dialog=False)
 
+                            # 检查监听对象是否仍然存在且超时
+                            logger.info(f"[步骤2] 检查监听对象数据: {instance_id}-{who}")
+                            if (instance_id, who) in self.listener_data:
+                                listener_data = self.listener_data[(instance_id, who)]
+                                countdown = self._calculate_countdown_from_data(listener_data)
+                                logger.info(f"[步骤3] 监听对象 {instance_id}-{who} 倒计时: {countdown}, 活跃状态: {listener_data.get('active', False)}")
+
+                                if countdown == "已超时" and listener_data.get('active', False):
+                                    logger.info(f"[步骤4] 开始移除超时监听对象: {instance_id}-{who}")
+                                    try:
+                                        success = await self._remove_listener(instance_id, who, show_dialog=False)
+                                        logger.info(f"[步骤5] 移除结果: {instance_id}-{who} = {success}")
+                                        if success:
+                                            removed_count += 1
+                                    except Exception as e:
+                                        logger.error(f"[步骤5-错误] 移除监听对象时出错: {instance_id}-{who}, 错误: {e}")
+                                        logger.exception(e)
+                                else:
+                                    logger.info(f"[步骤4-跳过] 监听对象 {instance_id}-{who} 不再超时，跳过移除")
+                            else:
+                                logger.info(f"[步骤2-跳过] 监听对象 {instance_id}-{who} 不在数据中，跳过移除")
+
+                        logger.info(f"[步骤6] 批量移除循环完成，开始刷新监听对象列表")
                         # 完成后强制刷新一次
                         await self.refresh_listeners(force_reload=True)
+                        logger.info(f"[步骤7] 监听对象列表刷新完成")
+
                         # 记录完成日志
-                        logger.info(f"超时移除完成: {len(to_remove)} 个监听对象")
+                        logger.info(f"[步骤8] 超时移除完成: 实际移除 {removed_count}/{len(to_remove)} 个监听对象")
                     except Exception as e:
                         logger.error(f"批量移除超时监听对象时出错: {e}")
+                        logger.exception(e)
+                    finally:
+                        # 清除移除标志
+                        logger.debug("清除移除标志，设置为False")
+                        self._removing_timeout_listeners = False
+                        if hasattr(self, '_remove_task_start_time'):
+                            delattr(self, '_remove_task_start_time')
 
                 # 启动批量移除任务
                 task = asyncio.create_task(remove_batch())

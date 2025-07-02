@@ -12,8 +12,8 @@ import logging
 import json
 from typing import Dict, Any, Optional
 
-from .service_platform import ServicePlatform
-from .async_accounting_manager import AsyncAccountingManager
+from .base_platform import ServicePlatform
+from ..async_accounting_manager import AsyncAccountingManager
 
 # 导入标准日志记录器
 logger = logging.getLogger('wxauto_mgt')
@@ -70,18 +70,15 @@ class ZhiWeiJZPlatform(ServicePlatform):
             # 创建记账管理器
             self.accounting_manager = AsyncAccountingManager(self.config)
             
-            # 初始化记账管理器
+            # 初始化记账管理器（不进行网络请求）
             if not await self.accounting_manager.initialize():
                 logger.error("记账管理器初始化失败")
                 self._initialized = False
                 return False
-            
-            # 测试登录
-            success, message = await self.accounting_manager.login()
-            if not success:
-                logger.error(f"测试登录失败: {message}")
-                self._initialized = False
-                return False
+
+            # 不在初始化阶段进行网络请求测试
+            # 网络连接测试将在实际使用时或通过test_connection方法进行
+            logger.info("只为记账平台配置验证完成，跳过网络连接测试")
             
             logger.info(f"只为记账平台初始化成功: {self.name}")
             self._initialized = True
@@ -176,22 +173,22 @@ class ZhiWeiJZPlatform(ServicePlatform):
 
         # 其他情况（记账成功、失败、错误等）都发送回复
         return True
-    
+
     async def test_connection(self) -> Dict[str, Any]:
         """
         测试记账平台连接
-        
+
         Returns:
             Dict[str, Any]: 测试结果
         """
         try:
             logger.info(f"开始测试只为记账平台连接: {self.name}")
-            
+
             if not self.accounting_manager:
                 # 创建临时记账管理器进行测试
                 temp_manager = AsyncAccountingManager(self.config)
                 await temp_manager.initialize()
-                
+
                 try:
                     # 测试登录
                     success, message = await temp_manager.login()
@@ -204,10 +201,10 @@ class ZhiWeiJZPlatform(ServicePlatform):
                                 'username': self.username
                             }
                         }
-                    
+
                     # 测试获取账本列表
                     books_success, books_message, books = await temp_manager.get_account_books()
-                    
+
                     result = {
                         'success': True,
                         'message': '连接测试成功',
@@ -218,19 +215,19 @@ class ZhiWeiJZPlatform(ServicePlatform):
                             'current_account_book': self.account_book_name or self.account_book_id
                         }
                     }
-                    
+
                     if books_success and books:
                         result['data'] = {'account_books': books}
-                    
+
                     return result
-                    
+
                 finally:
                     await temp_manager.cleanup()
             else:
                 # 使用现有的记账管理器
                 # 测试获取账本列表
                 books_success, books_message, books = await self.accounting_manager.get_account_books()
-                
+
                 if books_success:
                     return {
                         'success': True,
@@ -252,7 +249,7 @@ class ZhiWeiJZPlatform(ServicePlatform):
                             'username': self.username
                         }
                     }
-                    
+
         except Exception as e:
             error_msg = f'连接测试异常: {str(e)}'
             logger.error(error_msg)
@@ -264,20 +261,20 @@ class ZhiWeiJZPlatform(ServicePlatform):
                     'username': self.username
                 }
             }
-    
+
     def get_type(self) -> str:
         """
         获取平台类型
-        
+
         Returns:
             str: 平台类型
         """
         return "zhiweijz"
-    
+
     def get_safe_config(self) -> Dict[str, Any]:
         """
         获取安全的配置（隐藏敏感信息）
-        
+
         Returns:
             Dict[str, Any]: 安全的配置
         """
@@ -286,18 +283,18 @@ class ZhiWeiJZPlatform(ServicePlatform):
         if 'password' in safe_config:
             safe_config['password'] = '******'
         return safe_config
-    
+
     async def cleanup(self):
         """清理资源"""
         if self.accounting_manager:
             await self.accounting_manager.cleanup()
             self.accounting_manager = None
         logger.info(f"只为记账平台资源已清理: {self.name}")
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """
         获取平台统计信息
-        
+
         Returns:
             Dict[str, Any]: 统计信息
         """
