@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "WxAuto管理程序",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "log_level": "INFO",
     "ui_theme": "default",
     "use_temp_dir_for_downloads": false

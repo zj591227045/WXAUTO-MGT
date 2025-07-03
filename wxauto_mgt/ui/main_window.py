@@ -6,7 +6,9 @@
 """
 
 import os
+import sys
 import asyncio
+import subprocess
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer
@@ -280,11 +282,15 @@ class MainWindow(QMainWindow):
 
     def _show_about(self):
         """显示关于对话框"""
+        # 从配置模块获取版本信息
+        from wxauto_mgt.config import get_version
+        version = get_version()
+
         QMessageBox.about(
             self,
             "关于 WxAuto管理工具",
-            """<h3>WxAuto管理工具</h3>
-            <p>版本: 0.1.0</p>
+            f"""<h3>WxAuto管理工具</h3>
+            <p>版本: {version}</p>
             <p>一个用于管理多个WxAuto实例的工具，提供消息监听、状态监控等功能。</p>
             """
         )
@@ -512,6 +518,24 @@ class MainWindow(QMainWindow):
         self.pause_resume_btn.setToolTip("暂停/继续消息监听服务")
         self.pause_resume_btn.clicked.connect(self._toggle_listening_service)
         web_service_layout.addWidget(self.pause_resume_btn)
+
+        # 添加启动本地API客户端按钮
+        self.start_api_client_btn = QPushButton("启动本地API客户端")
+        self.start_api_client_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #722ed1;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #9254de;
+            }
+        """)
+        self.start_api_client_btn.setToolTip("启动本地API客户端 (wxauto_http_api.exe)")
+        self.start_api_client_btn.clicked.connect(self._start_api_client)
+        web_service_layout.addWidget(self.start_api_client_btn)
 
         # 初始化监听状态
         self._is_listening_paused = False
@@ -796,6 +820,59 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"切换监听服务状态时出错: {e}")
             QMessageBox.critical(self, "操作失败", f"切换监听服务状态时出错: {str(e)}")
+
+    def _start_api_client(self):
+        """启动本地API客户端"""
+        try:
+            # 获取当前程序所在目录
+            if getattr(sys, 'frozen', False):
+                # 打包环境 - 使用可执行文件所在目录
+                app_dir = os.path.dirname(sys.executable)
+            else:
+                # 开发环境 - 使用项目根目录
+                app_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+            # API客户端可执行文件路径
+            api_client_path = os.path.join(app_dir, "wxauto_http_api.exe")
+
+            # 检查文件是否存在
+            if not os.path.exists(api_client_path):
+                QMessageBox.warning(
+                    self,
+                    "文件不存在",
+                    f"未找到API客户端文件:\n{api_client_path}\n\n请确保wxauto_http_api.exe文件位于程序同目录下。"
+                )
+                logger.warning(f"API客户端文件不存在: {api_client_path}")
+                return
+
+            # 启动API客户端进程
+            try:
+                # 使用subprocess.Popen启动进程，不等待完成
+                process = subprocess.Popen(
+                    [api_client_path],
+                    cwd=app_dir,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
+                )
+
+                logger.info(f"已启动本地API客户端: {api_client_path} (PID: {process.pid})")
+                self.status_changed.emit("本地API客户端已启动", 3000)
+
+                # 显示成功消息
+                QMessageBox.information(
+                    self,
+                    "启动成功",
+                    f"本地API客户端已成功启动！\n\n进程ID: {process.pid}\n文件路径: {api_client_path}"
+                )
+
+            except subprocess.SubprocessError as e:
+                error_msg = f"启动API客户端失败: {str(e)}"
+                logger.error(error_msg)
+                QMessageBox.critical(self, "启动失败", error_msg)
+
+        except Exception as e:
+            error_msg = f"启动本地API客户端时出错: {str(e)}"
+            logger.error(error_msg)
+            QMessageBox.critical(self, "操作失败", error_msg)
 
     async def _restart_application(self):
         """重启应用程序"""

@@ -47,7 +47,7 @@ def create_app():
     app = FastAPI(
         title="wxauto_Mgt Web管理界面",
         description="提供Web管理界面功能，允许通过浏览器管理wxauto实例、服务平台和消息转发规则。",
-        version="0.1.0"
+        version="2.0.0"
     )
 
     # 配置CORS

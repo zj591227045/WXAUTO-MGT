@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 # 应用版本
-__version__ = "0.1.0"
+__version__ = "2.0.0"
 
 def get_version():
     """

@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT_DIR))
 
 # 打包配置
 APP_NAME = "WxAuto管理工具"
-APP_VERSION = "1.1.0"
+APP_VERSION = "2.0.0"
 MAIN_SCRIPT = Path(os.path.join(ROOT_DIR, "wxauto_mgt", "main.py"))
 ICON_PATH = Path(os.path.join(ROOT_DIR, "wxauto_mgt", "resources", "icons", "app_icon.ico"))
 OUTPUT_DIR = "dist"
