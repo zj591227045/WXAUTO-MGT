@@ -2249,6 +2249,161 @@ async def delete_fixed_listener(listener_id: int):
             "data": None
         }
 
+# 实例自动登录代理API
+@api_router.post("/instances/{instance_id}/auto-login")
+async def instance_auto_login(instance_id: str, request: Request):
+    """实例自动登录代理API"""
+    try:
+        # 验证认证
+        await verify_request_auth(request)
+
+        # 确保管理器已初始化
+        await initialize_managers()
+
+        # 从数据库获取实例配置
+        instance_config = await db_manager.fetchone(
+            "SELECT * FROM instances WHERE instance_id = ?",
+            (instance_id,)
+        )
+
+        if not instance_config:
+            return {"code": 1, "message": f"找不到实例配置: {instance_id}"}
+
+        # 获取API客户端
+        client = instance_manager.get_instance(instance_id)
+
+        if not client:
+            # 创建新的API客户端
+            from wxauto_mgt.core.api_client import WxAutoApiClient
+            client = WxAutoApiClient(
+                instance_id=instance_id,
+                base_url=instance_config.get("base_url"),
+                api_key=instance_config.get("api_key")
+            )
+            instance_manager.add_instance(instance_id, client)
+
+        # 调用自动登录API
+        data = await client._post('/api/auxiliary/login/auto', {
+            "timeout": 10
+        })
+
+        login_result = data.get('login_result', False)
+
+        return {
+            "code": 0,
+            "message": "自动登录请求完成",
+            "data": {
+                "login_result": login_result,
+                "instance_id": instance_id
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"实例自动登录失败: {instance_id}, 错误: {e}")
+        return {"code": 1, "message": f"自动登录失败: {str(e)}"}
+
+# 实例获取二维码代理API
+@api_router.post("/instances/{instance_id}/qrcode")
+async def instance_qrcode(instance_id: str, request: Request):
+    """获取实例登录二维码代理API"""
+    try:
+        # 验证认证
+        await verify_request_auth(request)
+
+        # 确保管理器已初始化
+        await initialize_managers()
+
+        # 从数据库获取实例配置
+        instance_config = await db_manager.fetchone(
+            "SELECT * FROM instances WHERE instance_id = ?",
+            (instance_id,)
+        )
+
+        if not instance_config:
+            return {"code": 1, "message": f"找不到实例配置: {instance_id}"}
+
+        # 获取API客户端
+        client = instance_manager.get_instance(instance_id)
+
+        if not client:
+            # 创建新的API客户端
+            from wxauto_mgt.core.api_client import WxAutoApiClient
+            client = WxAutoApiClient(
+                instance_id=instance_id,
+                base_url=instance_config.get("base_url"),
+                api_key=instance_config.get("api_key")
+            )
+            instance_manager.add_instance(instance_id, client)
+
+        # 调用获取二维码API
+        data = await client._post('/api/auxiliary/login/qrcode', {})
+
+        qrcode_data_url = data.get('qrcode_data_url')
+
+        return {
+            "code": 0,
+            "message": "获取二维码成功",
+            "data": {
+                "qrcode_data_url": qrcode_data_url,
+                "instance_id": instance_id
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"获取实例二维码失败: {instance_id}, 错误: {e}")
+        return {"code": 1, "message": f"获取二维码失败: {str(e)}"}
+
+# 实例微信初始化代理API
+@api_router.post("/instances/{instance_id}/wechat-init")
+async def instance_wechat_init(instance_id: str, request: Request):
+    """实例微信初始化代理API"""
+    try:
+        # 验证认证
+        await verify_request_auth(request)
+
+        # 确保管理器已初始化
+        await initialize_managers()
+
+        # 从数据库获取实例配置
+        instance_config = await db_manager.fetchone(
+            "SELECT * FROM instances WHERE instance_id = ?",
+            (instance_id,)
+        )
+
+        if not instance_config:
+            return {"code": 1, "message": f"找不到实例配置: {instance_id}"}
+
+        # 获取API客户端
+        client = instance_manager.get_instance(instance_id)
+
+        if not client:
+            # 创建新的API客户端
+            from wxauto_mgt.core.api_client import WxAutoApiClient
+            client = WxAutoApiClient(
+                instance_id=instance_id,
+                base_url=instance_config.get("base_url"),
+                api_key=instance_config.get("api_key")
+            )
+            instance_manager.add_instance(instance_id, client)
+
+        # 调用微信初始化API
+        data = await client._post('/api/wechat/initialize', {})
+
+        status = data.get('status')
+
+        return {
+            "code": 0,
+            "message": "微信初始化请求完成",
+            "data": {
+                "status": status,
+                "instance_id": instance_id
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"实例微信初始化失败: {instance_id}, 错误: {e}")
+        return {"code": 1, "message": f"微信初始化失败: {str(e)}"}
+
 def register_api_routes(app: FastAPI):
     """
     注册API路由

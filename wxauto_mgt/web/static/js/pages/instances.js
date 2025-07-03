@@ -235,6 +235,12 @@ function createInstanceCard(instance) {
                 <button class="btn btn-sm btn-outline-info refresh-resources" data-instance-id="${instance.instance_id}">
                     <i class="fas fa-sync-alt"></i> 刷新资源
                 </button>
+                <button class="btn btn-sm btn-outline-success auto-login" data-instance-id="${instance.instance_id}">
+                    <i class="fas fa-sign-in-alt"></i> 自动登录
+                </button>
+                <button class="btn btn-sm btn-outline-primary qrcode-login" data-instance-id="${instance.instance_id}">
+                    <i class="fas fa-qrcode"></i> 登录码
+                </button>
             </div>
         </div>
     `;
@@ -269,7 +275,214 @@ function createInstanceCard(instance) {
         refreshInstanceResources(instanceId);
     });
 
+    // 绑定自动登录按钮事件
+    cardCol.querySelector('.auto-login').addEventListener('click', function() {
+        const instanceId = this.getAttribute('data-instance-id');
+        autoLogin(instanceId);
+    });
+
+    // 绑定二维码登录按钮事件
+    cardCol.querySelector('.qrcode-login').addEventListener('click', function() {
+        const instanceId = this.getAttribute('data-instance-id');
+        showQRCodeLogin(instanceId);
+    });
+
     return cardCol;
+}
+
+/**
+ * 自动登录实例
+ * @param {string} instanceId - 实例ID
+ */
+async function autoLogin(instanceId) {
+    try {
+        // 获取实例信息
+        const instances = await fetchAPI('/api/instances');
+        const instance = instances.find(inst => inst.instance_id === instanceId);
+
+        if (!instance) {
+            showNotification('未找到实例', 'danger');
+            return;
+        }
+
+        // 显示进度提示
+        showNotification(`正在为实例 ${instance.name} 执行自动登录...`, 'info');
+
+        // 调用代理API
+        const data = await fetchAPI(`/api/instances/${instanceId}/auto-login`, {
+            method: 'POST'
+        });
+
+        if (data.code === 0) {
+            const loginResult = data.data?.login_result;
+            if (loginResult) {
+                showNotification(`实例 ${instance.name} 自动登录成功`, 'success');
+
+                // 开始微信初始化循环
+                await startWeChatInitializationLoop(instanceId, instance);
+            } else {
+                showNotification(`实例 ${instance.name} 自动登录失败`, 'warning');
+            }
+        } else {
+            showNotification(`自动登录失败: ${data.message || '未知错误'}`, 'danger');
+        }
+
+    } catch (error) {
+        console.error('自动登录失败:', error);
+        showNotification(`自动登录失败: ${error.message}`, 'danger');
+    }
+}
+
+/**
+ * 显示二维码登录
+ * @param {string} instanceId - 实例ID
+ */
+async function showQRCodeLogin(instanceId) {
+    try {
+        // 获取实例信息
+        const instances = await fetchAPI('/api/instances');
+        const instance = instances.find(inst => inst.instance_id === instanceId);
+
+        if (!instance) {
+            showNotification('未找到实例', 'danger');
+            return;
+        }
+
+        // 显示进度提示
+        showNotification(`正在获取实例 ${instance.name} 的登录二维码...`, 'info');
+
+        // 调用代理API
+        const data = await fetchAPI(`/api/instances/${instanceId}/qrcode`, {
+            method: 'POST'
+        });
+
+        if (data.code === 0) {
+            const qrcodeDataUrl = data.data?.qrcode_data_url;
+            if (qrcodeDataUrl) {
+                showQRCodeModal(instanceId, instance, qrcodeDataUrl);
+            } else {
+                showNotification(`获取二维码失败: 无二维码数据`, 'danger');
+            }
+        } else {
+            showNotification(`获取二维码失败: ${data.message || '未知错误'}`, 'danger');
+        }
+
+    } catch (error) {
+        console.error('获取二维码失败:', error);
+        showNotification(`获取二维码失败: ${error.message}`, 'danger');
+    }
+}
+
+/**
+ * 显示二维码模态框
+ * @param {string} instanceId - 实例ID
+ * @param {Object} instance - 实例信息
+ * @param {string} qrcodeDataUrl - 二维码数据URL
+ */
+function showQRCodeModal(instanceId, instance, qrcodeDataUrl) {
+    // 创建模态框HTML
+    const modalHtml = `
+        <div class="modal fade" id="qrcodeModal" tabindex="-1" aria-labelledby="qrcodeModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="qrcodeModalLabel">微信登录二维码 - ${instance.name}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body text-center">
+                        <p class="mb-3">请使用微信扫描二维码登录</p>
+                        <img src="${qrcodeDataUrl}" alt="登录二维码" class="img-fluid" style="max-width: 250px; border: 1px solid #ccc;">
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                        <button type="button" class="btn btn-success" id="loginSuccessBtn">登录成功</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // 移除已存在的模态框
+    const existingModal = document.getElementById('qrcodeModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    // 添加模态框到页面
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    // 获取模态框元素
+    const modalElement = document.getElementById('qrcodeModal');
+    const modal = new bootstrap.Modal(modalElement);
+
+    // 绑定登录成功按钮事件
+    document.getElementById('loginSuccessBtn').addEventListener('click', async function() {
+        modal.hide();
+
+        // 开始微信初始化循环
+        await startWeChatInitializationLoop(instanceId, instance);
+    });
+
+    // 显示模态框
+    modal.show();
+
+    // 模态框关闭时清理
+    modalElement.addEventListener('hidden.bs.modal', function() {
+        modalElement.remove();
+    });
+}
+
+/**
+ * 开始微信初始化循环
+ * @param {string} instanceId - 实例ID
+ * @param {Object} instance - 实例信息
+ */
+async function startWeChatInitializationLoop(instanceId, instance) {
+    try {
+        showNotification(`正在初始化实例 ${instance.name} 的微信连接...`, 'info');
+
+        const maxAttempts = 30;
+        let attempt = 0;
+
+        while (attempt < maxAttempts) {
+            try {
+                // 调用代理API
+                const data = await fetchAPI(`/api/instances/${instanceId}/wechat-init`, {
+                    method: 'POST'
+                });
+
+                if (data.code === 0) {
+                    const status = data.data?.status;
+                    if (status === 'connected') {
+                        showNotification(`实例 ${instance.name} 微信连接成功，消息监听已重启`, 'success');
+
+                        // 刷新实例列表
+                        await loadInstances();
+                        break;
+                    }
+                }
+
+                attempt++;
+                console.log(`微信初始化尝试 ${attempt}/${maxAttempts}: ${instanceId}`);
+
+                // 等待2秒后重试
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+            } catch (error) {
+                attempt++;
+                console.warn(`微信初始化尝试失败 ${attempt}/${maxAttempts}: ${instanceId}`, error);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+
+        if (attempt >= maxAttempts) {
+            showNotification(`实例 ${instance.name} 微信初始化失败，已达到最大尝试次数`, 'warning');
+        }
+
+    } catch (error) {
+        console.error('微信初始化循环异常:', error);
+        showNotification(`微信初始化过程出错: ${error.message}`, 'danger');
+    }
 }
 
 /**

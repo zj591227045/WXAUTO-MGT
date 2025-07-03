@@ -25,6 +25,8 @@ class InstanceCard(QFrame):
     edit_requested = Signal(str)  # 实例ID
     delete_requested = Signal(str)  # 实例ID
     initialize_requested = Signal(str)  # 实例ID
+    auto_login_requested = Signal(str)  # 实例ID
+    qrcode_requested = Signal(str)  # 实例ID
 
     def __init__(self, instance_data: Dict[str, Any], parent=None):
         """
@@ -65,13 +67,16 @@ class InstanceCard(QFrame):
                 border: none;
             }
         """)
-        # 使用自适应高度，不设置固定高度限制
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        # 使用自适应高度，允许卡片根据内容自动调整高度
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+
+        # 设置最小高度以容纳所有按钮
+        self.setMinimumHeight(160)  # 增加最小高度以容纳三行按钮
 
         # 主布局
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(8, 8, 8, 8)  # 增加内边距
-        main_layout.setSpacing(6)  # 增加组件间距
+        main_layout.setContentsMargins(10, 10, 10, 10)  # 增加内边距
+        main_layout.setSpacing(8)  # 增加组件间距
 
         # 标题行
         title_layout = QHBoxLayout()
@@ -126,12 +131,16 @@ class InstanceCard(QFrame):
         # 添加一些垂直空间
         main_layout.addSpacing(5)
 
-        # 按钮行 - 横向分布
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(10)  # 增加按钮之间的间距
-        button_layout.addStretch(1)  # 左侧弹性空间
+        # 按钮区域 - 多行布局
+        buttons_container = QVBoxLayout()
+        buttons_container.setSpacing(8)  # 行间距
 
-        # 编辑按钮 - 放大
+        # 第一行按钮：编辑和删除
+        first_row_layout = QHBoxLayout()
+        first_row_layout.setSpacing(10)
+        first_row_layout.addStretch(1)  # 左侧弹性空间
+
+        # 编辑按钮
         self.edit_btn = QPushButton("编辑")
         self.edit_btn.setStyleSheet("""
             QPushButton {
@@ -141,7 +150,7 @@ class InstanceCard(QFrame):
                 padding: 6px 15px;
                 border-radius: 4px;
                 font-weight: bold;
-                min-width: 40px;
+                min-width: 60px;
                 font-size: 12px;
             }
             QPushButton:hover {
@@ -151,19 +160,15 @@ class InstanceCard(QFrame):
                 background-color: #096dd9;
             }
         """)
-        # 使用相对字体大小，但稍微大一点
         font = self.edit_btn.font()
-        font.setPointSize(int(font.pointSize() * 1.0))  # 保持原始大小
+        font.setPointSize(int(font.pointSize() * 1.0))
         self.edit_btn.setFont(font)
         self.edit_btn.clicked.connect(self._on_edit_clicked)
         self.edit_btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        self.edit_btn.setMinimumHeight(30)  # 设置最小高度
-        button_layout.addWidget(self.edit_btn)
+        self.edit_btn.setMinimumHeight(30)
+        first_row_layout.addWidget(self.edit_btn)
 
-        # 按钮之间的间距
-        button_layout.addSpacing(10)
-
-        # 删除按钮 - 放大
+        # 删除按钮
         self.delete_btn = QPushButton("删除")
         self.delete_btn.setStyleSheet("""
             QPushButton {
@@ -173,7 +178,7 @@ class InstanceCard(QFrame):
                 padding: 6px 15px;
                 border-radius: 4px;
                 font-weight: bold;
-                min-width: 40px;
+                min-width: 60px;
                 font-size: 12px;
             }
             QPushButton:hover {
@@ -183,23 +188,87 @@ class InstanceCard(QFrame):
                 background-color: #cf1322;
             }
         """)
-        # 使用相对字体大小，但稍微大一点
         font = self.delete_btn.font()
-        font.setPointSize(int(font.pointSize() * 1.0))  # 保持原始大小
+        font.setPointSize(int(font.pointSize() * 1.0))
         self.delete_btn.setFont(font)
         self.delete_btn.clicked.connect(self._on_delete_clicked)
         self.delete_btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        self.delete_btn.setMinimumHeight(30)  # 设置最小高度
-        button_layout.addWidget(self.delete_btn)
+        self.delete_btn.setMinimumHeight(30)
+        first_row_layout.addWidget(self.delete_btn)
+
+        first_row_layout.addStretch(1)  # 右侧弹性空间
+        buttons_container.addLayout(first_row_layout)
+
+        # 第二行按钮：自动登录（占满整行）
+        second_row_layout = QHBoxLayout()
+        second_row_layout.setSpacing(0)
+
+        self.auto_login_btn = QPushButton("自动登录")
+        self.auto_login_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #52c41a;
+                color: white;
+                border: none;
+                padding: 8px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #73d13d;
+            }
+            QPushButton:pressed {
+                background-color: #389e0d;
+            }
+        """)
+        font = self.auto_login_btn.font()
+        font.setPointSize(int(font.pointSize() * 1.0))
+        self.auto_login_btn.setFont(font)
+        self.auto_login_btn.clicked.connect(self._on_auto_login_clicked)
+        self.auto_login_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.auto_login_btn.setMinimumHeight(32)
+        second_row_layout.addWidget(self.auto_login_btn)
+
+        buttons_container.addLayout(second_row_layout)
+
+        # 第三行按钮：登录码（占满整行）
+        third_row_layout = QHBoxLayout()
+        third_row_layout.setSpacing(0)
+
+        self.qrcode_btn = QPushButton("获取登录二维码")
+        self.qrcode_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #722ed1;
+                color: white;
+                border: none;
+                padding: 8px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #9254de;
+            }
+            QPushButton:pressed {
+                background-color: #531dab;
+            }
+        """)
+        font = self.qrcode_btn.font()
+        font.setPointSize(int(font.pointSize() * 1.0))
+        self.qrcode_btn.setFont(font)
+        self.qrcode_btn.clicked.connect(self._on_qrcode_clicked)
+        self.qrcode_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.qrcode_btn.setMinimumHeight(32)
+        third_row_layout.addWidget(self.qrcode_btn)
+
+        buttons_container.addLayout(third_row_layout)
 
         # 隐藏初始化按钮，但保留属性以便代码兼容
         self.init_btn = QPushButton("初始化")
         self.init_btn.hide()
         self.init_btn.clicked.connect(self._on_initialize_clicked)
 
-        button_layout.addStretch(1)  # 右侧弹性空间
-
-        main_layout.addLayout(button_layout)
+        main_layout.addLayout(buttons_container)
 
         # 设置鼠标点击事件
         self.mousePressEvent = self._on_mouse_press
@@ -225,6 +294,14 @@ class InstanceCard(QFrame):
     def _on_initialize_clicked(self):
         """初始化按钮点击事件"""
         self.initialize_requested.emit(self.instance_id)
+
+    def _on_auto_login_clicked(self):
+        """自动登录按钮点击事件"""
+        self.auto_login_requested.emit(self.instance_id)
+
+    def _on_qrcode_clicked(self):
+        """二维码按钮点击事件"""
+        self.qrcode_requested.emit(self.instance_id)
 
     def set_selected(self, selected: bool):
         """
@@ -296,6 +373,8 @@ class InstanceCardList(QWidget):
     edit_requested = Signal(str)  # 实例ID
     delete_requested = Signal(str)  # 实例ID
     initialize_requested = Signal(str)  # 实例ID
+    auto_login_requested = Signal(str)  # 实例ID
+    qrcode_requested = Signal(str)  # 实例ID
     add_local_requested = Signal()  # 添加本机实例请求
 
     def __init__(self, parent=None):
@@ -386,8 +465,8 @@ class InstanceCardList(QWidget):
         # 卡片容器
         self.card_container = QWidget()
         self.card_layout = QVBoxLayout(self.card_container)
-        self.card_layout.setContentsMargins(6, 6, 6, 6)
-        self.card_layout.setSpacing(8)
+        self.card_layout.setContentsMargins(8, 8, 8, 8)
+        self.card_layout.setSpacing(12)  # 增加卡片间距以适应新的高度
         # 设置卡片容器的自适应策略
         self.card_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.card_layout.addStretch()
@@ -557,6 +636,8 @@ class InstanceCardList(QWidget):
         card.edit_requested.connect(self._on_instance_edit)
         card.delete_requested.connect(self._on_instance_delete)
         card.initialize_requested.connect(self._on_instance_initialize)
+        card.auto_login_requested.connect(self._on_instance_auto_login)
+        card.qrcode_requested.connect(self._on_instance_qrcode)
 
         # 添加到布局
         self.card_layout.insertWidget(self.card_layout.count() - 1, card)
@@ -616,6 +697,26 @@ class InstanceCardList(QWidget):
         """
         # 发送初始化请求信号
         self.initialize_requested.emit(instance_id)
+
+    def _on_instance_auto_login(self, instance_id: str):
+        """
+        实例自动登录事件
+
+        Args:
+            instance_id: 实例ID
+        """
+        # 发送自动登录请求信号
+        self.auto_login_requested.emit(instance_id)
+
+    def _on_instance_qrcode(self, instance_id: str):
+        """
+        实例二维码事件
+
+        Args:
+            instance_id: 实例ID
+        """
+        # 发送二维码请求信号
+        self.qrcode_requested.emit(instance_id)
 
     async def _update_instance_status(self):
         """更新实例状态 - 已禁用状态显示"""

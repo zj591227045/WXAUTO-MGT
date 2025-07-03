@@ -361,6 +361,8 @@ class InstanceManagerPanel(QWidget):
         self.instance_list.edit_requested.connect(self._edit_instance)
         self.instance_list.delete_requested.connect(self._delete_instance)
         self.instance_list.initialize_requested.connect(self._initialize_instance)
+        self.instance_list.auto_login_requested.connect(self._auto_login_instance)
+        self.instance_list.qrcode_requested.connect(self._qrcode_instance)
         self.instance_list.add_local_requested.connect(self._add_local_instance)
 
         # 连接添加实例按钮
@@ -742,6 +744,284 @@ class InstanceManagerPanel(QWidget):
             logger.info(f"实例状态检查: {instance_id}, 在线: {is_online}")
         except Exception as e:
             logger.error(f"实例状态检查失败: {instance_id}, 错误: {e}")
+
+    def _auto_login_instance(self, instance_id: str):
+        """
+        自动登录实例
+
+        Args:
+            instance_id: 实例ID
+        """
+        # 获取API客户端
+        client = instance_manager.get_instance(instance_id)
+        if not client:
+            try:
+                # 从配置获取实例信息
+                from wxauto_mgt.core.config_manager import config_manager
+
+                instance_config = config_manager.get_instance_config(instance_id)
+                if not instance_config:
+                    logger.error(f"找不到实例配置: {instance_id}")
+                    QMessageBox.warning(self, "错误", f"找不到实例配置: {instance_id}")
+                    return
+
+                # 创建新的API客户端
+                from wxauto_mgt.core.api_client import WxAutoApiClient
+                client = WxAutoApiClient(
+                    instance_id=instance_id,
+                    base_url=instance_config.get("base_url"),
+                    api_key=instance_config.get("api_key")
+                )
+                instance_manager.add_instance(instance_id, client)
+            except Exception as e:
+                logger.error(f"创建API客户端失败: {e}")
+                QMessageBox.warning(self, "错误", f"创建API客户端失败: {str(e)}")
+                return
+
+        # 使用asyncSlot装饰器处理异步调用
+        self._auto_login_instance_async(instance_id, client)
+
+    @asyncSlot()
+    async def _auto_login_instance_async(self, instance_id, client):
+        """异步自动登录实例"""
+        try:
+            logger.info(f"开始自动登录实例: {instance_id}")
+
+            # 调用自动登录API
+            data = await client._post('/api/auxiliary/login/auto', {
+                "timeout": 10
+            })
+
+            login_result = data.get('login_result', False)
+            if login_result:
+                logger.info(f"实例自动登录成功: {instance_id}")
+
+                # 显示成功消息
+                QTimer.singleShot(0, lambda: QMessageBox.information(
+                    self, "成功", f"实例 {instance_id} 自动登录成功"
+                ))
+
+                # 开始微信初始化循环
+                await self._start_wechat_initialization_loop(instance_id, client)
+            else:
+                logger.warning(f"实例自动登录失败: {instance_id}")
+                QTimer.singleShot(0, lambda: QMessageBox.warning(
+                    self, "失败", f"实例 {instance_id} 自动登录失败"
+                ))
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"自动登录实例失败: {instance_id}, 错误: {error_msg}")
+
+            def show_error():
+                QMessageBox.warning(self, "错误", f"自动登录失败: {error_msg}")
+
+            QTimer.singleShot(0, show_error)
+
+    def _qrcode_instance(self, instance_id: str):
+        """
+        获取实例登录二维码
+
+        Args:
+            instance_id: 实例ID
+        """
+        # 获取API客户端
+        client = instance_manager.get_instance(instance_id)
+        if not client:
+            try:
+                # 从配置获取实例信息
+                from wxauto_mgt.core.config_manager import config_manager
+
+                instance_config = config_manager.get_instance_config(instance_id)
+                if not instance_config:
+                    logger.error(f"找不到实例配置: {instance_id}")
+                    QMessageBox.warning(self, "错误", f"找不到实例配置: {instance_id}")
+                    return
+
+                # 创建新的API客户端
+                from wxauto_mgt.core.api_client import WxAutoApiClient
+                client = WxAutoApiClient(
+                    instance_id=instance_id,
+                    base_url=instance_config.get("base_url"),
+                    api_key=instance_config.get("api_key")
+                )
+                instance_manager.add_instance(instance_id, client)
+            except Exception as e:
+                logger.error(f"创建API客户端失败: {e}")
+                QMessageBox.warning(self, "错误", f"创建API客户端失败: {str(e)}")
+                return
+
+        # 使用asyncSlot装饰器处理异步调用
+        self._qrcode_instance_async(instance_id, client)
+
+    @asyncSlot()
+    async def _qrcode_instance_async(self, instance_id, client):
+        """异步获取实例登录二维码"""
+        try:
+            logger.info(f"开始获取实例登录二维码: {instance_id}")
+
+            # 调用获取二维码API
+            data = await client._post('/api/auxiliary/login/qrcode', {})
+
+            qrcode_data_url = data.get('qrcode_data_url')
+            if qrcode_data_url:
+                logger.info(f"实例二维码获取成功: {instance_id}")
+
+                # 在主线程显示二维码对话框
+                QTimer.singleShot(0, lambda: self._show_qrcode_dialog(instance_id, qrcode_data_url, client))
+            else:
+                logger.warning(f"实例二维码获取失败: {instance_id}")
+                QTimer.singleShot(0, lambda: QMessageBox.warning(
+                    self, "失败", f"实例 {instance_id} 二维码获取失败"
+                ))
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"获取实例二维码失败: {instance_id}, 错误: {error_msg}")
+
+            def show_error():
+                QMessageBox.warning(self, "错误", f"获取二维码失败: {error_msg}")
+
+            QTimer.singleShot(0, show_error)
+
+    def _show_qrcode_dialog(self, instance_id, qrcode_data_url, client):
+        """显示二维码对话框"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+        from PySide6.QtGui import QPixmap
+        from PySide6.QtCore import QByteArray
+        import base64
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"微信登录二维码 - {instance_id}")
+        dialog.setModal(True)
+        dialog.resize(300, 400)
+
+        layout = QVBoxLayout(dialog)
+
+        # 标题
+        title_label = QLabel(f"请使用微信扫描二维码登录")
+        title_label.setStyleSheet("font-size: 14px; font-weight: bold; margin: 10px;")
+        layout.addWidget(title_label)
+
+        # 二维码图片
+        qr_label = QLabel()
+        qr_label.setStyleSheet("border: 1px solid #ccc; margin: 10px;")
+
+        try:
+            # 解析data URL
+            if qrcode_data_url.startswith('data:image/png;base64,'):
+                base64_data = qrcode_data_url.split(',')[1]
+                image_data = base64.b64decode(base64_data)
+
+                pixmap = QPixmap()
+                pixmap.loadFromData(QByteArray(image_data))
+
+                # 缩放图片
+                scaled_pixmap = pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                qr_label.setPixmap(scaled_pixmap)
+                qr_label.setAlignment(Qt.AlignCenter)
+        except Exception as e:
+            logger.error(f"加载二维码图片失败: {e}")
+            qr_label.setText("二维码加载失败")
+            qr_label.setAlignment(Qt.AlignCenter)
+
+        layout.addWidget(qr_label)
+
+        # 按钮
+        button_layout = QHBoxLayout()
+
+        close_btn = QPushButton("关闭")
+        close_btn.clicked.connect(dialog.close)
+
+        login_success_btn = QPushButton("登录成功")
+        login_success_btn.setStyleSheet("background-color: #52c41a; color: white;")
+        login_success_btn.clicked.connect(lambda: self._on_qrcode_login_success(dialog, instance_id, client))
+
+        button_layout.addWidget(close_btn)
+        button_layout.addWidget(login_success_btn)
+        layout.addLayout(button_layout)
+
+        dialog.show()
+
+    def _on_qrcode_login_success(self, dialog, instance_id, client):
+        """二维码登录成功处理"""
+        dialog.close()
+
+        # 开始微信初始化循环
+        asyncio.create_task(self._start_wechat_initialization_loop(instance_id, client))
+
+    async def _start_wechat_initialization_loop(self, instance_id, client):
+        """开始微信初始化循环"""
+        try:
+            logger.info(f"开始微信初始化循环: {instance_id}")
+
+            max_attempts = 30  # 最多尝试30次
+            attempt = 0
+
+            while attempt < max_attempts:
+                try:
+                    # 调用微信初始化接口
+                    result = await client._post('/api/wechat/initialize')
+
+                    # 检查初始化结果
+                    if result.get('status') == 'connected':
+                        logger.info(f"微信初始化成功: {instance_id}")
+
+                        # 显示成功消息
+                        QTimer.singleShot(0, lambda: QMessageBox.information(
+                            self, "成功", f"实例 {instance_id} 微信连接成功，正在重启消息监听..."
+                        ))
+
+                        # 重新开始消息监听循环
+                        await self._restart_message_listening(instance_id)
+                        break
+                    else:
+                        attempt += 1
+                        logger.debug(f"微信初始化尝试 {attempt}/{max_attempts}: {instance_id}")
+                        await asyncio.sleep(2)  # 等待2秒后重试
+
+                except Exception as e:
+                    attempt += 1
+                    logger.warning(f"微信初始化尝试失败 {attempt}/{max_attempts}: {instance_id}, 错误: {e}")
+                    await asyncio.sleep(2)
+
+            if attempt >= max_attempts:
+                logger.error(f"微信初始化失败，已达到最大尝试次数: {instance_id}")
+                QTimer.singleShot(0, lambda: QMessageBox.warning(
+                    self, "失败", f"实例 {instance_id} 微信初始化失败，请检查微信状态"
+                ))
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"微信初始化循环异常: {instance_id}, 错误: {error_msg}")
+
+            def show_error():
+                QMessageBox.warning(self, "错误", f"微信初始化过程出错: {error_msg}")
+
+            QTimer.singleShot(0, show_error)
+
+    async def _restart_message_listening(self, instance_id):
+        """重新开始消息监听循环"""
+        try:
+            logger.info(f"重新开始消息监听: {instance_id}")
+
+            # 获取消息监听器
+            from wxauto_mgt.core.message_listener import message_listener
+
+            # 如果监听器正在运行，先停止
+            if message_listener.running:
+                logger.info("停止当前消息监听...")
+                await message_listener.stop()
+                await asyncio.sleep(1)  # 等待停止完成
+
+            # 重新启动消息监听
+            logger.info("重新启动消息监听...")
+            await message_listener.start()
+
+            logger.info(f"消息监听重启完成: {instance_id}")
+
+        except Exception as e:
+            logger.error(f"重启消息监听失败: {instance_id}, 错误: {e}")
 
     @asyncSlot()
     async def _add_instance(self):
