@@ -38,7 +38,7 @@ curl -X POST "http://localhost:8000/api/platforms/zhiweijz" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "我的记账平台",
-    "server_url": "https://api.zhiweijz.com",
+    "server_url": "https://app.zhiweijz.com",
     "username": "your_email@example.com",
     "password": "your_password",
     "account_book_id": "your_account_book_id",

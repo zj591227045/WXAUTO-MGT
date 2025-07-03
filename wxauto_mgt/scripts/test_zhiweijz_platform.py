@@ -36,7 +36,7 @@ async def test_async_accounting_manager():
     
     # 测试配置（请根据实际情况修改）
     test_config = {
-        'server_url': 'https://api.zhiweijz.com',  # 请替换为实际的服务器地址
+        'server_url': 'https://app.zhiweijz.com',  # 请替换为实际的服务器地址
         'username': 'test@example.com',  # 请替换为实际的用户名
         'password': 'test_password',  # 请替换为实际的密码
         'account_book_id': '',  # 可以为空，会自动获取
@@ -110,7 +110,7 @@ async def test_zhiweijz_platform():
     
     # 测试配置（请根据实际情况修改）
     test_config = {
-        'server_url': 'https://api.zhiweijz.com',  # 请替换为实际的服务器地址
+        'server_url': 'https://app.zhiweijz.com',  # 请替换为实际的服务器地址
         'username': 'test@example.com',  # 请替换为实际的用户名
         'password': 'test_password',  # 请替换为实际的密码
         'account_book_id': '',  # 可以为空，会自动获取
@@ -195,7 +195,7 @@ async def test_platform_manager_integration():
         
         # 测试配置（请根据实际情况修改）
         test_config = {
-            'server_url': 'https://api.zhiweijz.com',  # 请替换为实际的服务器地址
+            'server_url': 'https://app.zhiweijz.com',  # 请替换为实际的服务器地址
             'username': 'test@example.com',  # 请替换为实际的用户名
             'password': 'test_password',  # 请替换为实际的密码
             'account_book_id': '',

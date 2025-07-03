@@ -36,7 +36,7 @@ const platformTypeConfigs = {
         { id: 'max_delay', label: '最大延迟（秒）', type: 'number', default: 5, min: 0, max: 60 }
     ],
     zhiweijz: [
-        { id: 'server_url', label: '服务器地址', type: 'text', required: true, placeholder: 'https://api.zhiweijz.com' },
+        { id: 'server_url', label: '服务器地址', type: 'text', required: true, placeholder: 'https://app.zhiweijz.com' },
         { id: 'username', label: '用户名', type: 'text', required: true, placeholder: '登录邮箱' },
         { id: 'password', label: '密码', type: 'password', required: true },
         { id: 'login_button', label: '', type: 'button', text: '登录', onclick: 'loginZhiWeiJZ' },

@@ -450,7 +450,7 @@ class AddEditPlatformDialog(QDialog):
 
         # 服务器地址
         self.zhiweijz_server_url = QLineEdit()
-        self.zhiweijz_server_url.setPlaceholderText("例如: https://api.zhiweijz.com")
+        self.zhiweijz_server_url.setPlaceholderText("例如: https://app.zhiweijz.com")
         self.zhiweijz_server_url.setMinimumWidth(300)
         zhiweijz_layout.addRow("服务器地址:", self.zhiweijz_server_url)
 
