@@ -266,6 +266,221 @@
         font-size: 3rem;
         margin-bottom: 15px;
     }
+
+    /* 纯CSS监听列表抽屉 - 使用checkbox hack */
+    #listeners-drawer-toggle {
+        display: none;
+    }
+
+    .listeners-drawer {
+        position: fixed;
+        top: 56px; /* 避开导航栏 */
+        left: -75vw; /* 初始隐藏在左侧 */
+        width: 75vw;
+        height: calc(100vh - 56px); /* 减去导航栏高度 */
+        background-color: #fff;
+        box-shadow: 4px 0 15px rgba(0, 0, 0, 0.1);
+        display: flex;
+        flex-direction: column;
+        transition: left 0.3s ease;
+        z-index: 1000;
+        border-right: 1px solid #dee2e6;
+    }
+
+    /* 当checkbox被选中时显示抽屉 */
+    #listeners-drawer-toggle:checked ~ .listeners-drawer {
+        left: 0;
+    }
+
+    /* 当checkbox被选中时显示遮罩 */
+    #listeners-drawer-toggle:checked ~ .listeners-drawer-overlay {
+        opacity: 1;
+        visibility: visible;
+    }
+    .listeners-drawer-header {
+        padding: 15px;
+        border-bottom: 1px solid #dee2e6;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background-color: #f8f9fa;
+        flex-shrink: 0;
+    }
+    .listeners-drawer-title {
+        font-size: 1.1rem;
+        font-weight: bold;
+        margin: 0;
+        color: #495057;
+    }
+    .listeners-drawer-controls {
+        display: flex;
+        align-items: center;
+    }
+    .listeners-drawer-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0;
+    }
+
+    /* 监听列表抽屉遮罩层 */
+    .listeners-drawer-overlay {
+        position: fixed;
+        top: 56px; /* 避开导航栏 */
+        left: 0;
+        width: 100%;
+        height: calc(100vh - 56px); /* 减去导航栏高度 */
+        background-color: rgba(0, 0, 0, 0.5);
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.3s ease, visibility 0.3s ease;
+        z-index: 999;
+        cursor: pointer;
+    }
+
+    /* 移动端响应式样式 */
+    @media (max-width: 768px) {
+        .split-view {
+            flex-direction: column;
+            gap: 10px;
+            padding: 10px;
+        }
+
+        /* 隐藏原始监听面板，使用抽屉代替 */
+        .listeners-panel {
+            display: none;
+        }
+
+        /* 消息面板占满屏幕 */
+        .messages-panel {
+            width: 100%;
+            min-height: calc(100vh - 56px - 20px);
+            border-radius: 8px;
+        }
+
+        .messages-header {
+            padding: 10px 15px;
+        }
+
+        .messages-title {
+            font-size: 1.1rem;
+        }
+
+        .messages-controls .btn {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        /* 监听列表抽屉在移动端占满宽度 */
+        .listeners-drawer {
+            width: 100%;
+            left: -100%;
+        }
+
+        /* 移动端抽屉显示 */
+        #listeners-drawer-toggle:checked ~ .listeners-drawer {
+            left: 0;
+        }
+
+        /* 日志抽屉 - 从底部显示 */
+        .logs-drawer {
+            position: fixed !important;
+            bottom: -60vh !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 60vh !important;
+            top: auto !important;
+            right: auto !important;
+            border-radius: 15px 15px 0 0 !important;
+            z-index: 1050 !important;
+            transition: bottom 0.3s ease !important;
+        }
+
+        .logs-drawer.open {
+            bottom: 0 !important;
+        }
+
+        .logs-drawer-header {
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            background-color: #f8f9fa;
+            border-radius: 15px 15px 0 0;
+            position: relative;
+        }
+
+        .logs-drawer-header::before {
+            content: '';
+            position: absolute;
+            top: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 40px;
+            height: 4px;
+            background-color: #dee2e6;
+            border-radius: 2px;
+        }
+
+        .logs-drawer-title {
+            font-size: 1rem;
+            margin: 0;
+        }
+
+        /* 日志抽屉遮罩 */
+        .logs-drawer-overlay {
+            z-index: 1049 !important;
+        }
+    }
+
+    @media (max-width: 480px) {
+        .messages-container {
+            height: calc(100vh - 56px);
+        }
+
+        .split-view {
+            padding: 5px;
+            gap: 5px;
+        }
+
+        .listeners-panel {
+            max-height: 250px;
+        }
+
+        .listeners-panel.collapsed {
+            max-height: 50px;
+        }
+
+        .listeners-header {
+            padding: 10px;
+        }
+
+        .listeners-main-title {
+            font-size: 1rem;
+        }
+
+        .listeners-subtitle {
+            font-size: 0.75rem;
+        }
+
+        .messages-header {
+            padding: 8px 10px;
+        }
+
+        .messages-title {
+            font-size: 1rem;
+        }
+
+        .messages-controls .btn {
+            padding: 0.2rem 0.4rem;
+            font-size: 0.75rem;
+        }
+
+        .messages-controls .btn .fas {
+            font-size: 0.8rem;
+        }
+
+        .toggle-text {
+            display: none;
+        }
+    }
 </style>
 {% endblock %}
 
@@ -347,8 +562,12 @@
             <!-- 消息记录 -->
             <div class="messages-panel">
                 <div class="messages-header">
-                    <h5 class="messages-title">消息记录</h5>
+                    <h5 class="messages-title">消息记录<span id="current-chat-name" class="text-muted ms-2"></span></h5>
                     <div class="messages-controls">
+                        <label for="listeners-drawer-toggle" class="btn btn-sm btn-primary me-2 d-md-none" style="margin-bottom: 0;">
+                            <i class="fas fa-users"></i>
+                            <span class="toggle-text">监听</span>
+                        </label>
                         <button id="refresh-messages" class="btn btn-sm btn-outline-primary me-2">
                             <i class="fas fa-sync-alt"></i>
                         </button>
@@ -362,6 +581,70 @@
                     <div class="empty-state">
                         <i class="fas fa-comments"></i>
                         <p>请选择一个监听对象查看消息</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 纯CSS抽屉控制 -->
+            <input type="checkbox" id="listeners-drawer-toggle" style="display: none;">
+
+            <!-- 监听列表抽屉遮罩层 -->
+            <label for="listeners-drawer-toggle" class="listeners-drawer-overlay"></label>
+
+            <!-- 监听列表抽屉 - 从左侧滑出 -->
+            <div class="listeners-drawer">
+                <div class="listeners-drawer-header">
+                    <h5 class="listeners-drawer-title">监听对象列表</h5>
+                    <div class="listeners-drawer-controls">
+                        <label for="listeners-drawer-toggle" class="btn btn-sm btn-outline-secondary">
+                            <i class="fas fa-times"></i>
+                        </label>
+                    </div>
+                </div>
+                <div class="listeners-drawer-content">
+                    <!-- 监听对象列表内容 -->
+                    <div class="listeners-header">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <h6 class="listeners-main-title">监听对象</h6>
+                                <small class="listeners-subtitle text-muted">选择要查看消息的对象</small>
+                            </div>
+                        </div>
+                        <div class="listeners-subheader">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <small class="text-muted">共 <span id="listeners-count-drawer">0</span> 个监听对象</small>
+                                <div class="listener-actions">
+                                    <button id="refresh-listeners-drawer" class="btn btn-sm btn-outline-primary">
+                                        <i class="fas fa-sync-alt"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="listeners-list" id="listeners-list-drawer">
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">加载中...</span>
+                            </div>
+                            <p class="mt-2">加载监听对象...</p>
+                        </div>
+                    </div>
+
+                    <!-- 监听对象操作组件 -->
+                    <div class="listeners-drawer-footer" style="padding: 15px; border-top: 1px solid #dee2e6; background-color: #f8f9fa;">
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-primary btn-sm" onclick="showAddListenerModal()">
+                                <i class="fas fa-plus"></i> 添加监听对象
+                            </button>
+                            <div class="btn-group" role="group">
+                                <button class="btn btn-outline-secondary btn-sm" onclick="showEditListenerModal()" id="edit-listener-btn" disabled>
+                                    <i class="fas fa-edit"></i> 编辑
+                                </button>
+                                <button class="btn btn-outline-danger btn-sm" onclick="showDeleteListenerModal()" id="delete-listener-btn" disabled>
+                                    <i class="fas fa-trash"></i> 删除
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -528,5 +811,352 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', path='/js/pages/messages.js') }}"></script>
+<script src="{{ url_for('static', path='/js/pages/messages.js') }}?v={{ timestamp }}"></script>
+<script>
+// 简单的抽屉数据加载脚本
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('加载抽屉数据脚本');
+
+    // 监听抽屉打开事件
+    const drawerToggle = document.getElementById('listeners-drawer-toggle');
+    if (drawerToggle) {
+        drawerToggle.addEventListener('change', function() {
+            if (this.checked) {
+                console.log('抽屉打开，加载数据');
+                loadDrawerListeners();
+            }
+        });
+    }
+
+    // 刷新按钮事件
+    const refreshBtn = document.getElementById('refresh-listeners-drawer');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', function() {
+            console.log('刷新抽屉数据');
+            loadDrawerListeners();
+        });
+    }
+});
+
+function loadDrawerListeners() {
+    const listContainer = document.getElementById('listeners-list-drawer');
+    const countElement = document.getElementById('listeners-count-drawer');
+
+    if (!listContainer) return;
+
+    // 显示加载状态
+    listContainer.innerHTML = `
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">加载中...</span>
+            </div>
+            <p class="mt-2">加载监听对象...</p>
+        </div>
+    `;
+
+    // 获取监听对象数据
+    fetch('/api/listeners')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            return response.json();
+        })
+        .then(listeners => {
+            console.log('抽屉监听对象数据:', listeners);
+            // API直接返回listeners数组
+            if (Array.isArray(listeners)) {
+                renderDrawerListeners(listeners);
+                if (countElement) {
+                    countElement.textContent = listeners.length;
+                }
+            } else {
+                throw new Error('返回数据格式错误');
+            }
+        })
+        .catch(error => {
+            console.error('加载监听对象失败:', error);
+            listContainer.innerHTML = `
+                <div class="text-center py-5">
+                    <i class="fas fa-exclamation-triangle text-warning" style="font-size: 2rem;"></i>
+                    <p class="mt-2 text-muted">加载失败: ${error.message}</p>
+                    <button class="btn btn-sm btn-outline-primary" onclick="loadDrawerListeners()">
+                        <i class="fas fa-redo"></i> 重试
+                    </button>
+                </div>
+            `;
+        });
+}
+
+function renderDrawerListeners(listeners) {
+    const listContainer = document.getElementById('listeners-list-drawer');
+
+    if (!listeners || listeners.length === 0) {
+        listContainer.innerHTML = `
+            <div class="text-center py-5">
+                <i class="fas fa-users text-muted" style="font-size: 2rem;"></i>
+                <p class="mt-2 text-muted">暂无监听对象</p>
+            </div>
+        `;
+        updateDrawerActionButtons(false);
+        return;
+    }
+
+    const html = listeners.map(listener => {
+        // 使用数据库中的字段名
+        const listenerId = `${listener.instance_id}_${listener.who || listener.chat_name}`;
+        const listenerName = listener.who || listener.chat_name || '未知';
+        const isActive = listener.status === 'active';
+        const instanceId = listener.instance_id || '未知实例';
+
+        console.log('生成抽屉监听对象:', {
+            listener,
+            listenerId,
+            listenerName,
+            instanceId,
+            who: listener.who,
+            chat_name: listener.chat_name
+        });
+
+        return `
+        <div class="listener-item drawer-listener-item ${listenerId === window.currentListenerId ? 'active' : ''}"
+             data-listener-id="${escapeHtml(listenerId)}"
+             data-instance-id="${escapeHtml(listener.instance_id)}"
+             data-who="${escapeHtml(listener.who || listener.chat_name)}"
+             data-chat-name="${escapeHtml(listener.chat_name || '')}"
+             data-who-field="${escapeHtml(listener.who || '')}"
+             style="cursor: pointer;">
+            <div class="listener-info">
+                <div class="listener-name">${escapeHtml(listenerName)}</div>
+                <div class="listener-details">
+                    <small class="text-muted">
+                        实例: ${escapeHtml(instanceId)}
+                        ${listener.manual_added ? ' • 手动添加' : ''}
+                    </small>
+                </div>
+            </div>
+            <div class="listener-status">
+                <span class="badge ${isActive ? 'bg-success' : 'bg-secondary'}">
+                    ${isActive ? '活跃' : '离线'}
+                </span>
+            </div>
+        </div>
+        `;
+    }).join('');
+
+    listContainer.innerHTML = html;
+
+    // 添加点击事件监听器
+    const listenerItems = listContainer.querySelectorAll('.listener-item');
+    listenerItems.forEach(item => {
+        item.addEventListener('click', function() {
+            const listenerId = this.getAttribute('data-listener-id');
+            const instanceId = this.getAttribute('data-instance-id');
+            const who = this.getAttribute('data-who');
+
+            console.log('抽屉监听对象被点击:', {
+                listenerId,
+                instanceId,
+                who,
+                element: this
+            });
+
+            // 移除其他项的active类
+            listenerItems.forEach(i => i.classList.remove('active'));
+            // 添加当前项的active类
+            this.classList.add('active');
+            // 启用操作按钮
+            updateDrawerActionButtons(true);
+
+            // 调用选择函数，传递正确的参数
+            selectDrawerListenerWithData(instanceId, who);
+        });
+    });
+
+    // 如果有选中的监听对象，启用按钮
+    const hasActive = listeners.some(l => {
+        const listenerId = `${l.instance_id}_${l.who || l.chat_name}`;
+        return listenerId === window.currentListenerId;
+    });
+    updateDrawerActionButtons(hasActive);
+}
+
+function selectDrawerListenerWithData(instanceId, who) {
+    console.log('=== 从抽屉选择监听对象（使用数据属性）===');
+    console.log('传入的参数:', { instanceId, who });
+
+    // 关闭抽屉
+    const drawerToggle = document.getElementById('listeners-drawer-toggle');
+    if (drawerToggle) {
+        drawerToggle.checked = false;
+    }
+
+    console.log('即将切换到会话:', who);
+
+        // 直接调用主页面的loadMessages函数来切换会话
+        if (typeof loadMessages === 'function') {
+            console.log('调用loadMessages切换会话');
+
+            // 先更新全局变量，确保currentListener在loadMessages调用前就设置好
+            if (typeof currentListener !== 'undefined') {
+                window.currentListener = {
+                    instance_id: instanceId,
+                    chat_name: who
+                };
+                console.log('已更新currentListener:', window.currentListener);
+            }
+
+            // 更新消息标题中的会话名称
+            updateChatNameDisplay(who);
+
+            // 更新主页面的监听对象列表选中状态
+            updateMainListenerSelection(instanceId, who);
+
+            // 最后调用loadMessages
+            loadMessages(instanceId, who, true);
+
+        } else {
+            console.error('loadMessages函数不存在');
+            alert('切换会话功能暂不可用');
+        }
+}
+
+// 更新会话名称显示
+function updateChatNameDisplay(chatName) {
+    const chatNameElement = document.getElementById('current-chat-name');
+    if (chatNameElement && chatName) {
+        chatNameElement.textContent = `（${chatName}）`;
+    }
+}
+
+// 更新主页面监听对象列表的选中状态
+function updateMainListenerSelection(instanceId, who) {
+    // 查找并选中对应的监听对象项
+    const listenerItems = document.querySelectorAll('#listeners-list .listener-item');
+    listenerItems.forEach(item => {
+        item.classList.remove('active');
+
+        // 检查是否匹配当前选择的监听对象
+        const itemInstanceId = item.querySelector('.listener-instance')?.textContent?.trim();
+        const itemChatName = item.querySelector('.listener-name')?.textContent?.trim();
+
+        if (itemInstanceId === instanceId && itemChatName === who) {
+            item.classList.add('active');
+            console.log('已更新主页面监听对象选中状态:', { instanceId, who });
+        }
+    });
+
+    // 启用删除按钮
+    const deleteButton = document.getElementById('delete-listener');
+    if (deleteButton) {
+        deleteButton.disabled = false;
+    }
+}
+
+function updateDrawerActionButtons(hasSelection) {
+    const editBtn = document.getElementById('edit-listener-btn');
+    const deleteBtn = document.getElementById('delete-listener-btn');
+
+    if (editBtn) editBtn.disabled = !hasSelection;
+    if (deleteBtn) deleteBtn.disabled = !hasSelection;
+}
+
+function showAddListenerModal() {
+    console.log('显示添加监听对象模态框');
+    // 如果主页面的函数存在，调用它
+    if (typeof showListenerModal === 'function') {
+        showListenerModal();
+    } else {
+        alert('添加监听对象功能暂未实现');
+    }
+}
+
+function showEditListenerModal() {
+    console.log('显示编辑监听对象模态框');
+    const activeItem = document.querySelector('#listeners-list-drawer .listener-item.active');
+    if (activeItem) {
+        const listenerId = activeItem.dataset.listenerId;
+        const instanceId = activeItem.dataset.instanceId;
+        const who = activeItem.dataset.who;
+
+        console.log('编辑监听对象:', { listenerId, instanceId, who });
+
+        // 如果主页面的函数存在，调用它
+        if (typeof showListenerModal === 'function') {
+            // 尝试传递更详细的信息
+            showListenerModal({ instanceId, who, listenerId });
+        } else {
+            alert('编辑监听对象功能暂未实现');
+        }
+    }
+}
+
+function showDeleteListenerModal() {
+    console.log('显示删除监听对象确认框');
+    const activeItem = document.querySelector('#listeners-list-drawer .listener-item.active');
+    if (activeItem) {
+        const listenerId = activeItem.dataset.listenerId;
+        const instanceId = activeItem.dataset.instanceId;
+        const who = activeItem.dataset.who;
+        const listenerName = activeItem.querySelector('.listener-name').textContent;
+
+        if (confirm(`确定要删除监听对象"${listenerName}"吗？`)) {
+            console.log('删除监听对象:', { listenerId, instanceId, who });
+
+            // 调用删除API
+            deleteListener(instanceId, who, listenerName);
+        }
+    }
+}
+
+function deleteListener(instanceId, who, listenerName) {
+    // 显示加载状态
+    const activeItem = document.querySelector('#listeners-list-drawer .listener-item.active');
+    if (activeItem) {
+        activeItem.style.opacity = '0.5';
+        activeItem.style.pointerEvents = 'none';
+    }
+
+    // 调用删除API
+    fetch('/api/listeners', {
+        method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            instance_id: instanceId,
+            chat_name: who
+        })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        console.log('删除监听对象成功:', data);
+        alert(`监听对象"${listenerName}"删除成功`);
+
+        // 重新加载监听对象列表
+        loadDrawerListeners();
+    })
+    .catch(error => {
+        console.error('删除监听对象失败:', error);
+        alert(`删除监听对象失败: ${error.message}`);
+
+        // 恢复UI状态
+        if (activeItem) {
+            activeItem.style.opacity = '';
+            activeItem.style.pointerEvents = '';
+        }
+    });
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
 {% endblock %}

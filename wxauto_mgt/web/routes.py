@@ -153,11 +153,13 @@ def register_routes(app: FastAPI, templates: Jinja2Templates):
             return auth_response
 
         if templates:
+            import time
             return templates.TemplateResponse(
                 "messages.html",
                 {
                     "request": request,
-                    "title": "消息监控 - wxauto_Mgt"
+                    "title": "消息监控 - wxauto_Mgt",
+                    "timestamp": int(time.time())
                 }
             )
         else:

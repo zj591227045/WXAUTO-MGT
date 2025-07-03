@@ -27,6 +27,8 @@ body {
     padding: 0;
     height: 56px;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    z-index: 1030 !important;
+    position: relative;
 }
 
 .custom-navbar .navbar-brand {
@@ -247,6 +249,110 @@ body {
     .message-status-badges .badge {
         font-size: 0.6rem;
         padding: 0.15rem 0.3rem;
+    }
+
+    /* 移动端导航栏优化 */
+    .navbar {
+        z-index: 1030 !important;
+        position: relative;
+    }
+
+    .navbar-collapse {
+        z-index: 9999 !important;
+        position: relative;
+        background-color: #343a40 !important;
+        border-radius: 0 0 8px 8px;
+        margin-top: 1px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .navbar-nav {
+        padding: 10px 0;
+    }
+
+    .navbar .nav-item {
+        width: 100% !important;
+        height: auto !important;
+        display: block !important;
+    }
+
+    .navbar .nav-link {
+        color: #fff !important;
+        padding: 12px 20px !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        height: auto !important;
+        display: flex !important;
+        align-items: center !important;
+        white-space: nowrap;
+        width: 100%;
+        font-size: 1rem !important;
+    }
+
+    .navbar .nav-link i {
+        font-size: 1.1rem !important;
+        margin-right: 10px !important;
+        min-width: 20px;
+        text-align: center;
+    }
+
+    .navbar .nav-link:hover {
+        background-color: rgba(255, 255, 255, 0.1) !important;
+        color: #fff !important;
+    }
+
+    .navbar .nav-link.active {
+        background-color: rgba(24, 144, 255, 0.2) !important;
+        color: #fff !important;
+        border-left: 3px solid #1890ff;
+    }
+
+    .navbar .nav-link.active::after {
+        display: none !important;
+    }
+
+    .navbar-toggler {
+        border: none;
+        padding: 0.25rem 0.5rem;
+        z-index: 1031;
+    }
+
+    .navbar-toggler:focus {
+        box-shadow: none;
+    }
+
+    /* 移动端表格优化 */
+    .table-responsive {
+        font-size: 0.9rem;
+    }
+
+    .table th,
+    .table td {
+        padding: 0.5rem 0.25rem;
+        vertical-align: middle;
+    }
+
+    /* 移动端按钮优化 */
+    .btn-group-sm > .btn,
+    .btn-sm {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.8rem;
+    }
+
+    /* 移动端模态框优化 */
+    .modal-dialog {
+        margin: 0.5rem;
+    }
+
+    .modal-header {
+        padding: 0.75rem 1rem;
+    }
+
+    .modal-body {
+        padding: 1rem;
+    }
+
+    .modal-footer {
+        padding: 0.75rem 1rem;
     }
 }
 

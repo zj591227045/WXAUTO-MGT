@@ -78,6 +78,84 @@
     .filter-select {
         min-width: 200px;
     }
+
+    /* 移动端响应式样式 */
+    @media (max-width: 768px) {
+        .table-header {
+            flex-direction: column;
+            gap: 10px;
+            align-items: stretch;
+        }
+
+        .table-title {
+            font-size: 1.1rem;
+            text-align: center;
+        }
+
+        .table-actions {
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .table-actions .btn {
+            flex: 1;
+            min-width: 120px;
+        }
+
+        .table th,
+        .table td {
+            padding: 0.5rem 0.25rem;
+            font-size: 0.9rem;
+        }
+
+        .action-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .action-buttons .btn {
+            margin-right: 0;
+            font-size: 0.8rem;
+            padding: 0.25rem 0.5rem;
+        }
+
+        .filter-select {
+            min-width: auto;
+            width: 100%;
+        }
+
+        .table-footer {
+            text-align: center;
+            font-size: 0.8rem;
+        }
+    }
+
+    @media (max-width: 480px) {
+        .table-header {
+            padding: 10px;
+        }
+
+        .table-title {
+            font-size: 1rem;
+        }
+
+        .table-actions .btn {
+            font-size: 0.8rem;
+            padding: 0.4rem 0.8rem;
+        }
+
+        .table th,
+        .table td {
+            padding: 0.4rem 0.2rem;
+            font-size: 0.8rem;
+        }
+
+        .action-buttons .btn {
+            font-size: 0.75rem;
+            padding: 0.2rem 0.4rem;
+        }
+    }
 </style>
 {% endblock %}
 

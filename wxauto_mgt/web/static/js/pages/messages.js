@@ -2,6 +2,9 @@
  * 消息监控页面JavaScript
  */
 
+// 立即执行测试
+console.log('=== messages.js 文件开始加载 ===');
+
 // 当前选中的监听对象
 let currentListener = null;
 // 最后一条消息的时间戳
@@ -70,7 +73,14 @@ function showFixedListenersModal() {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM内容已加载，开始初始化消息页面');
+    console.log('=== DOM内容已加载，开始初始化消息页面 ===');
+
+    // 立即添加全局测试函数
+    window.testListenersDrawer = function() {
+        console.log('手动测试监听抽屉');
+        openListenersDrawer();
+    };
+    console.log('全局测试函数已添加');
 
     // 初始化页面
     initMessagesPage();
@@ -109,6 +119,30 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('close-logs-drawer').addEventListener('click', closeLogsDrawer);
     document.getElementById('logs-drawer-overlay').addEventListener('click', closeLogsDrawer);
 
+    // 绑定监听列表抽屉事件（使用纯CSS抽屉系统）
+    const listenersDrawerToggle = document.getElementById('listeners-drawer-toggle');
+    console.log('监听抽屉切换元素:', listenersDrawerToggle);
+    if (listenersDrawerToggle) {
+        console.log('监听抽屉切换事件已绑定');
+    } else {
+        console.error('未找到监听抽屉切换元素');
+    }
+
+    const listenersOverlay = document.querySelector('.listeners-drawer-overlay');
+    console.log('监听遮罩元素:', listenersOverlay);
+    if (listenersOverlay) {
+        console.log('监听遮罩事件已绑定');
+    } else {
+        console.error('未找到监听遮罩元素');
+    }
+
+    // 移动端功能已集成到抽屉系统中
+
+    // 5秒后自动测试（仅用于调试）
+    setTimeout(() => {
+        console.log('页面加载完成，可以使用 testListenersDrawer() 测试抽屉功能');
+    }, 5000);
+
     // 绑定日志过滤事件（延迟绑定，确保元素存在）
     setTimeout(() => {
         const hideDebugEl = document.getElementById('hide-debug-logs');
@@ -142,6 +176,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
             closeLogsDrawer();
+            closeListenersDrawer();
         }
     });
 });
@@ -153,28 +188,41 @@ function initMessagesPage() {
     // 加载监听对象列表
     loadListeners();
 
-    // 加载日志
-    loadLogs();
+    // 不在初始化时加载日志，只在打开日志窗口时加载
+    // loadLogs();
 
     // 加载实例列表（用于添加监听对象表单）
     loadInstances();
 
-    // 设置轮询刷新
-    pollingManager.addTask('listeners', loadListeners, 5000);  // 更频繁地刷新监听对象列表
+    // 设置轮询刷新 - 降低频率避免API冲突
+    pollingManager.addTask('listeners', loadListeners, 30000);  // 30秒刷新监听对象列表
     pollingManager.addTask('messages', function() {
         if (currentListener) {
             loadMessages(currentListener.instance_id, currentListener.chat_name);
         }
-    }, 2000);  // 更频繁地刷新消息
-    pollingManager.addTask('logs', loadLogs, 2000);  // 更频繁地刷新日志
+    }, 10000);  // 10秒刷新消息
+
+    // 注意：日志轮询将在打开日志窗口时启动，关闭时停止
 }
+
+// 防止重复请求的标志
+let isLoadingListeners = false;
+let isLoadingMessages = false;
 
 /**
  * 加载监听对象列表
  * @param {boolean} forceRefresh - 是否强制刷新（不使用缓存）
  */
 async function loadListeners(forceRefresh = false) {
+    // 防止重复请求
+    if (isLoadingListeners) {
+        console.log('loadListeners已在执行中，跳过重复请求');
+        return;
+    }
+
     try {
+        isLoadingListeners = true;
+        console.log('loadListeners调用:', { forceRefresh, currentListener: currentListener?.chat_name });
         const listenersContainer = document.getElementById('listeners-list');
 
         // 获取监听对象列表（添加时间戳参数避免缓存）
@@ -281,6 +329,9 @@ async function loadListeners(forceRefresh = false) {
                 // 启用删除按钮
                 document.getElementById('delete-listener').disabled = false;
 
+                // 更新会话名称显示
+                updateChatNameDisplay(listener.chat_name);
+
                 // 加载消息
                 loadMessages(listener.instance_id, listener.chat_name, true);
             });
@@ -288,8 +339,29 @@ async function loadListeners(forceRefresh = false) {
             listenersContainer.appendChild(listenerItem);
         });
 
-        // 如果当前没有选中的监听对象，但有监听对象，则选中第一个
-        if (!currentListener && listeners.length > 0) {
+        // 智能选择逻辑：优先保持当前选中的监听对象
+        if (currentListener && listeners.length > 0) {
+            // 如果当前有选中的监听对象，尝试在新列表中找到它
+            const currentExists = listeners.some(l =>
+                l.instance_id === currentListener.instance_id &&
+                l.chat_name === currentListener.chat_name
+            );
+
+            if (currentExists) {
+                // 当前选中的监听对象仍然存在，更新会话名称显示
+                updateChatNameDisplay(currentListener.chat_name);
+                console.log('保持当前选中的监听对象:', currentListener.chat_name);
+            } else {
+                // 当前选中的监听对象不存在了，选择第一个
+                console.log('当前选中的监听对象已不存在，选择第一个');
+                const firstListenerItem = listenersContainer.querySelector('.listener-item');
+                if (firstListenerItem) {
+                    firstListenerItem.click();
+                }
+            }
+        } else if (!currentListener && listeners.length > 0) {
+            // 如果当前没有选中的监听对象，但有监听对象，则选中第一个
+            console.log('没有选中的监听对象，选择第一个');
             const firstListenerItem = listenersContainer.querySelector('.listener-item');
             if (firstListenerItem) {
                 firstListenerItem.click();
@@ -303,6 +375,21 @@ async function loadListeners(forceRefresh = false) {
                 <p>加载失败，请重试</p>
             </div>
         `;
+    } finally {
+        isLoadingListeners = false;
+    }
+}
+
+/**
+ * 更新会话名称显示
+ * @param {string} chatName - 会话名称
+ */
+function updateChatNameDisplay(chatName) {
+    const chatNameElement = document.getElementById('current-chat-name');
+    if (chatNameElement && chatName) {
+        chatNameElement.textContent = `（${chatName}）`;
+    } else if (chatNameElement) {
+        chatNameElement.textContent = '';
     }
 }
 
@@ -313,7 +400,14 @@ async function loadListeners(forceRefresh = false) {
  * @param {boolean} reset - 是否重置（清空现有消息）
  */
 async function loadMessages(instanceId, chatName, reset = false) {
+    // 防止重复请求（除非是重置操作）
+    if (!reset && isLoadingMessages) {
+        console.log('loadMessages已在执行中，跳过重复请求');
+        return;
+    }
+
     try {
+        isLoadingMessages = true;
         const messagesContainer = document.getElementById('messages-list');
 
         // 如果是重置，则清空容器并显示加载中
@@ -337,7 +431,9 @@ async function loadMessages(instanceId, chatName, reset = false) {
         }
 
         // 获取消息
+        console.log('请求消息URL:', url);
         const messages = await fetchAPI(url);
+        console.log('获取到消息数量:', messages.length);
 
         // 如果是重置或有新消息，则更新容器
         if (reset || messages.length > 0) {
@@ -501,14 +597,24 @@ async function loadMessages(instanceId, chatName, reset = false) {
         }
     } catch (error) {
         console.error('加载消息失败:', error);
+        console.error('当前监听对象:', currentListener);
+        console.error('请求参数:', { instanceId, chatName, reset });
+
         if (reset) {
             document.getElementById('messages-list').innerHTML = `
                 <div class="empty-state">
                     <i class="fas fa-exclamation-circle text-danger"></i>
                     <p>加载失败，请重试</p>
+                    <p class="text-muted small">错误: ${error.message}</p>
+                    <p class="text-muted small">会话: ${chatName}</p>
                 </div>
             `;
         }
+        // 注意：不要在这里重置currentListener，保持当前选中状态
+        console.warn('保持当前监听对象选中状态，避免自动切换到第一个');
+        console.warn('currentListener保持为:', currentListener);
+    } finally {
+        isLoadingMessages = false;
     }
 }
 
@@ -782,6 +888,10 @@ function openLogsDrawer() {
     if (logsList.children.length === 0 || logsList.querySelector('.spinner-border')) {
         loadLogs(true);
     }
+
+    // 启动日志轮询（只在日志窗口打开时轮询）
+    console.log('启动日志轮询');
+    pollingManager.addTask('logs', loadLogs, 2000);
 }
 
 /**
@@ -797,6 +907,181 @@ function closeLogsDrawer() {
 
     // 恢复页面滚动
     document.body.style.overflow = '';
+
+    // 停止日志轮询（节省性能）
+    console.log('停止日志轮询');
+    pollingManager.stopTask('logs');
+}
+
+/**
+ * 打开监听列表抽屉
+ */
+function openListenersDrawer() {
+    console.log('=== 开始打开监听列表抽屉 ===');
+    const listenersDrawer = document.getElementById('listeners-drawer');
+    const overlay = document.getElementById('listeners-drawer-overlay');
+
+    console.log('抽屉元素查找结果:', {
+        listenersDrawer: !!listenersDrawer,
+        overlay: !!overlay,
+        drawerElement: listenersDrawer,
+        overlayElement: overlay
+    });
+
+    if (!listenersDrawer || !overlay) {
+        console.error('监听列表抽屉元素未找到', {
+            listenersDrawer: !!listenersDrawer,
+            overlay: !!overlay
+        });
+        return;
+    }
+
+    console.log('添加CSS类之前的状态:', {
+        drawerClasses: listenersDrawer.className,
+        overlayClasses: overlay.className
+    });
+
+    // 显示遮罩层和抽屉
+    overlay.classList.add('show');
+    listenersDrawer.classList.add('open');
+
+    console.log('添加CSS类之后的状态:', {
+        drawerClasses: listenersDrawer.className,
+        overlayClasses: overlay.className
+    });
+
+    // 禁用页面滚动
+    document.body.style.overflow = 'hidden';
+
+    console.log('页面滚动已禁用，开始加载监听对象列表');
+
+    // 加载监听对象列表
+    loadListenersForDrawer();
+}
+
+/**
+ * 关闭监听列表抽屉
+ */
+function closeListenersDrawer() {
+    console.log('关闭监听列表抽屉');
+    const listenersDrawer = document.getElementById('listeners-drawer');
+    const overlay = document.getElementById('listeners-drawer-overlay');
+
+    if (!listenersDrawer || !overlay) {
+        return;
+    }
+
+    // 隐藏遮罩层和抽屉
+    overlay.classList.remove('show');
+    listenersDrawer.classList.remove('open');
+
+    // 恢复页面滚动
+    document.body.style.overflow = '';
+}
+
+/**
+ * 为抽屉加载监听对象列表
+ */
+function loadListenersForDrawer() {
+    console.log('为抽屉加载监听对象列表');
+    const listenersList = document.getElementById('listeners-list');
+    const listenersCount = document.getElementById('listeners-count');
+
+    if (!listenersList) {
+        console.error('监听列表容器未找到');
+        return;
+    }
+
+    // 显示加载状态
+    listenersList.innerHTML = `
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">加载中...</span>
+            </div>
+            <p class="mt-2">加载监听对象...</p>
+        </div>
+    `;
+
+    // 获取监听对象列表
+    fetch('/api/listeners')
+        .then(response => response.json())
+        .then(data => {
+            console.log('监听对象数据:', data);
+            if (data.success) {
+                renderListenersForDrawer(data.listeners);
+                if (listenersCount) {
+                    listenersCount.textContent = data.listeners.length;
+                }
+            } else {
+                throw new Error(data.message || '获取监听对象失败');
+            }
+        })
+        .catch(error => {
+            console.error('加载监听对象失败:', error);
+            listenersList.innerHTML = `
+                <div class="text-center py-5">
+                    <i class="fas fa-exclamation-triangle text-warning" style="font-size: 2rem;"></i>
+                    <p class="mt-2 text-muted">加载失败: ${error.message}</p>
+                    <button class="btn btn-sm btn-outline-primary" onclick="loadListenersForDrawer()">
+                        <i class="fas fa-redo"></i> 重试
+                    </button>
+                </div>
+            `;
+        });
+}
+
+/**
+ * 渲染抽屉中的监听对象列表
+ */
+function renderListenersForDrawer(listeners) {
+    console.log('渲染抽屉监听对象列表:', listeners);
+    const listenersList = document.getElementById('listeners-list');
+
+    if (!listeners || listeners.length === 0) {
+        listenersList.innerHTML = `
+            <div class="text-center py-5">
+                <i class="fas fa-users text-muted" style="font-size: 2rem;"></i>
+                <p class="mt-2 text-muted">暂无监听对象</p>
+            </div>
+        `;
+        return;
+    }
+
+    const html = listeners.map(listener => `
+        <div class="listener-item ${listener.id === currentListenerId ? 'active' : ''}"
+             data-listener-id="${listener.id}"
+             onclick="selectListenerFromDrawer('${listener.id}')">
+            <div class="listener-info">
+                <div class="listener-name">${escapeHtml(listener.name)}</div>
+                <div class="listener-details">
+                    <small class="text-muted">
+                        ${listener.type === 'group' ? '群聊' : '好友'} •
+                        ${listener.platform || '未知平台'}
+                    </small>
+                </div>
+            </div>
+            <div class="listener-status">
+                <span class="badge ${listener.is_active ? 'bg-success' : 'bg-secondary'}">
+                    ${listener.is_active ? '活跃' : '离线'}
+                </span>
+            </div>
+        </div>
+    `).join('');
+
+    listenersList.innerHTML = html;
+}
+
+/**
+ * 从抽屉中选择监听对象
+ */
+function selectListenerFromDrawer(listenerId) {
+    console.log('从抽屉选择监听对象:', listenerId);
+
+    // 调用现有的选择监听对象函数
+    selectListener(listenerId);
+
+    // 关闭抽屉
+    closeListenersDrawer();
 }
 
 /**
@@ -1276,3 +1561,9 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+
+// 移动端交互功能已集成到抽屉系统中
+
+
+
+
