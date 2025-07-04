@@ -96,8 +96,8 @@ WxAuto管理工具是一个基于Python开发的桌面应用程序，用于管�
 ### 🖥️ 多平台管理
 - **🔄 多实例管理**：支持同时管理多个WxAuto实例，统一控制台管理
 - **🌐 Web端管理**：全新Web管理界面，支持远程访问和管理
-- **� 移动端支持**：完整的移动端管理体验，随时随地管理微信实例
-- **📲 移动端微信登录**：支持移动端一键重登微信、获取登录二维码
+- **� 移动端支持**：完整的移动端管理页面体验，随时随地管理微信实例
+- **📲 移动端微信登录**：支持Web管理端一键重登微信、获取登录二维码
 
 ### �📊 监控与消息处理
 - **📊 状态监控**：实时监控微信实例的状态和性能指标
@@ -334,7 +334,7 @@ data/
 - [Dify平台](https://dify.ai) - 开源LLM应用开发平台
 - [OpenAI API](https://platform.openai.com/docs/api-reference) - OpenAI官方API文档
 - [扣子(Coze)平台](https://www.coze.cn) - 字节跳动AI机器人平台
-- [只为记账平台](https://www.zhiweijz.com) - 智能记账服务平台
+- [只为记账平台](https://www.zhiweijz.cn) - 智能记账服务平台
 
 ### 🛠️ 技术文档
 - [PySide6文档](https://doc.qt.io/qtforpython-6/) - Python Qt框架文档
