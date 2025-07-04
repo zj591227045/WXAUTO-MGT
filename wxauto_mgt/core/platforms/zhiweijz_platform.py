@@ -92,41 +92,49 @@ class ZhiWeiJZPlatform(ServicePlatform):
     async def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
         处理记账消息
-        
+
         Args:
             message: 消息字典，包含content、sender等字段
-            
+
         Returns:
             Dict[str, Any]: 处理结果
         """
         try:
+            # 添加详细的调试日志
+            logger.info(f"[记账平台] 开始处理消息，平台初始化状态: {self._initialized}")
+            logger.info(f"[记账平台] 记账管理器状态: {self.accounting_manager is not None}")
+
             if not self._initialized or not self.accounting_manager:
+                error_msg = f"平台未初始化 - initialized: {self._initialized}, manager: {self.accounting_manager is not None}"
+                logger.error(f"[记账平台] {error_msg}")
                 return {
                     'success': False,
                     'response': '平台未初始化',
                     'platform': 'zhiweijz',
                     'should_reply': False
                 }
-            
+
             # 提取消息内容和发送者
             content = message.get('content', '')
             # 优先使用sender_remark字段，如果没有值则回退使用sender字段
             sender_name = message.get('sender_remark') or message.get('sender', '')
 
             # 记录处理开始
-            logger.info(f"开始处理记账消息: {content[:50]}... (发送者: {sender_name})")
+            logger.info(f"[记账平台] 开始处理记账消息: {content[:50]}... (发送者: {sender_name})")
             
             # 调用智能记账API
+            logger.info(f"[记账平台] 准备调用智能记账API...")
             success, result = await self.accounting_manager.smart_accounting(
                 description=content,
                 sender_name=sender_name
             )
+            logger.info(f"[记账平台] 智能记账API调用完成，成功: {success}")
 
             # 判断是否应该发送回复（参考旧版代码逻辑）
             should_reply = self._should_send_reply(result)
 
             if success:
-                logger.info(f"记账成功: {result}")
+                logger.info(f"[记账平台] 记账成功: {result}")
                 return {
                     'success': True,
                     'response': result,
@@ -135,7 +143,7 @@ class ZhiWeiJZPlatform(ServicePlatform):
                     'reply_content': result  # 直接使用格式化后的结果
                 }
             else:
-                logger.warning(f"记账失败: {result}")
+                logger.warning(f"[记账平台] 记账失败: {result}")
                 return {
                     'success': False,
                     'response': result,
@@ -146,7 +154,9 @@ class ZhiWeiJZPlatform(ServicePlatform):
                 
         except Exception as e:
             error_msg = f"记账处理异常: {str(e)}"
-            logger.error(error_msg)
+            logger.error(f"[记账平台] {error_msg}")
+            import traceback
+            logger.error(f"[记账平台] 异常堆栈: {traceback.format_exc()}")
             return {
                 'success': False,
                 'response': error_msg,

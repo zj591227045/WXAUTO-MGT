@@ -9,13 +9,20 @@
 """
 
 import asyncio
-import aiohttp
 import json
 import base64
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
+
+# 尝试导入aiohttp，如果失败则使用备用方案
+try:
+    import aiohttp
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    AIOHTTP_AVAILABLE = False
+    aiohttp = None
 
 # 导入标准日志记录器
 logger = logging.getLogger('wxauto_mgt')
@@ -53,26 +60,31 @@ class AccountingConfig:
 class AsyncAccountingManager:
     """异步记账管理器"""
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config):
         """
         初始化异步记账管理器
-        
+
         Args:
-            config: 记账配置字典
+            config: 记账配置字典或AccountingConfig对象
         """
-        self.config = AccountingConfig(
-            server_url=config.get('server_url', ''),
-            username=config.get('username', ''),
-            password=config.get('password', ''),
-            account_book_id=config.get('account_book_id', ''),
-            account_book_name=config.get('account_book_name', ''),
-            auto_login=config.get('auto_login', True),
-            token_refresh_interval=config.get('token_refresh_interval', 300),
-            request_timeout=config.get('request_timeout', 30),
-            max_retries=config.get('max_retries', 3)
-        )
+        # 支持传入字典或AccountingConfig对象
+        if isinstance(config, AccountingConfig):
+            self.config = config
+        else:
+            # 传入的是字典
+            self.config = AccountingConfig(
+                server_url=config.get('server_url', ''),
+                username=config.get('username', ''),
+                password=config.get('password', ''),
+                account_book_id=config.get('account_book_id', ''),
+                account_book_name=config.get('account_book_name', ''),
+                auto_login=config.get('auto_login', True),
+                token_refresh_interval=config.get('token_refresh_interval', 300),
+                request_timeout=config.get('request_timeout', 30),
+                max_retries=config.get('max_retries', 3)
+            )
         
-        self.session: Optional[aiohttp.ClientSession] = None
+        self.session: Optional[Any] = None  # aiohttp.ClientSession if available
         self.token_info: Optional[TokenInfo] = None
         self._lock = asyncio.Lock()
         
@@ -98,6 +110,11 @@ class AsyncAccountingManager:
     async def initialize(self) -> bool:
         """初始化会话"""
         try:
+            if not AIOHTTP_AVAILABLE:
+                logger.error("aiohttp库未安装，无法初始化记账管理器")
+                logger.error("请安装aiohttp: pip install aiohttp")
+                return False
+
             if not self.session:
                 timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
                 self.session = aiohttp.ClientSession(timeout=timeout)
@@ -126,8 +143,8 @@ class AsyncAccountingManager:
         Returns:
             Tuple[bool, str]: (是否成功, 消息)
         """
-        async with self._lock:
-            try:
+        # 移除锁，避免与_smart_accounting_internal中的锁冲突导致死锁
+        try:
                 self.stats['total_requests'] += 1
                 
                 # 使用传入参数或配置中的参数
@@ -186,83 +203,119 @@ class AsyncAccountingManager:
                         logger.error(error_msg)
                         self.stats['failed_requests'] += 1
                         return False, error_msg
-                        
-            except aiohttp.ClientError as e:
-                error_msg = f"网络请求失败: {str(e)}"
-                logger.error(error_msg)
-                self.stats['failed_requests'] += 1
-                return False, error_msg
-            except Exception as e:
-                error_msg = f"登录异常: {str(e)}"
-                logger.error(error_msg)
-                self.stats['failed_requests'] += 1
-                return False, error_msg
+
+        except aiohttp.ClientError as e:
+            error_msg = f"网络请求失败: {str(e)}"
+            logger.error(error_msg)
+            self.stats['failed_requests'] += 1
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"登录异常: {str(e)}"
+            logger.error(error_msg)
+            self.stats['failed_requests'] += 1
+            return False, error_msg
     
     async def smart_accounting(self, description: str, sender_name: str = None) -> Tuple[bool, str]:
         """
         异步智能记账
-        
+
         Args:
             description: 记账描述
             sender_name: 发送者名称（可选）
-            
+
         Returns:
             Tuple[bool, str]: (是否成功, 结果消息)
         """
-        async with self._lock:
-            try:
-                self.stats['total_requests'] += 1
-                
-                # 检查token
-                if not self.token_info or not self.token_info.token:
-                    # 尝试自动登录
-                    if self.config.auto_login:
-                        success, message = await self.login()
-                        if not success:
-                            error_msg = f"未登录且自动登录失败: {message}"
-                            logger.error(error_msg)
-                            self.stats['failed_requests'] += 1
-                            return False, error_msg
-                    else:
-                        error_msg = "未登录且未启用自动登录"
-                        logger.error(error_msg)
-                        self.stats['failed_requests'] += 1
-                        return False, error_msg
-                
-                # 检查token是否过期
-                if self.token_info.is_expired():
+        # 检查aiohttp可用性
+        if not AIOHTTP_AVAILABLE:
+            error_msg = "aiohttp库未安装，无法进行记账操作。请安装: pip install aiohttp"
+            logger.error(error_msg)
+            self.stats['failed_requests'] += 1
+            return False, error_msg
+
+        # 使用超时机制避免死锁
+        try:
+            async with asyncio.timeout(30):  # 30秒超时
+                return await self._smart_accounting_internal(description, sender_name)
+        except asyncio.TimeoutError:
+            error_msg = f"记账请求超时: {description[:50]}..."
+            logger.error(error_msg)
+            self.stats['failed_requests'] += 1
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"记账请求异常: {str(e)}"
+            logger.error(error_msg)
+            self.stats['failed_requests'] += 1
+            return False, error_msg
+
+    async def _smart_accounting_internal(self, description: str, sender_name: str = None) -> Tuple[bool, str]:
+        """
+        内部智能记账实现（移除全局锁避免死锁）
+
+        Args:
+            description: 记账描述
+            sender_name: 发送者名称（可选）
+
+        Returns:
+            Tuple[bool, str]: (是否成功, 结果消息)
+        """
+        # 移除全局锁，避免异步任务冲突导致的死锁
+        # 改为使用局部锁保护关键资源
+        try:
+            self.stats['total_requests'] += 1
+
+            # 检查token（移除锁，避免死锁）
+            if not self.token_info or not self.token_info.token:
+                # 尝试自动登录
+                if self.config.auto_login:
                     success, message = await self.login()
                     if not success:
-                        error_msg = f"Token已过期且刷新失败: {message}"
+                        error_msg = f"未登录且自动登录失败: {message}"
                         logger.error(error_msg)
                         self.stats['failed_requests'] += 1
                         return False, error_msg
-                
-                # 确保会话已初始化
-                if not self.session:
-                    await self.initialize()
-                
-                # 构建记账请求
-                url = f"{self.config.server_url.rstrip('/')}/api/ai/smart-accounting/direct"
-                data = {
-                    "description": description,
-                    "accountBookId": self.config.account_book_id
-                }
-                
-                # 添加发送者信息
-                if sender_name:
-                    data["userName"] = sender_name
-                
-                headers = {
-                    'Authorization': f'Bearer {self.token_info.token}',
-                    'Content-Type': 'application/json'
-                }
-                
-                logger.info(f"调用智能记账API: {description[:50]}...")
-                logger.debug(f"请求URL: {url}")
-                logger.debug(f"请求数据: {data}")
-                
-                async with self.session.post(url, json=data, headers=headers) as response:
+                else:
+                    error_msg = "未登录且未启用自动登录"
+                    logger.error(error_msg)
+                    self.stats['failed_requests'] += 1
+                    return False, error_msg
+
+            # 检查token是否过期
+            if self.token_info.is_expired():
+                success, message = await self.login()
+                if not success:
+                    error_msg = f"Token已过期且刷新失败: {message}"
+                    logger.error(error_msg)
+                    self.stats['failed_requests'] += 1
+                    return False, error_msg
+
+            # 确保会话已初始化
+            if not self.session:
+                await self.initialize()
+
+            # 构建记账请求
+            url = f"{self.config.server_url.rstrip('/')}/api/ai/smart-accounting/direct"
+            data = {
+                "description": description,
+                "accountBookId": self.config.account_book_id
+            }
+
+            # 添加发送者信息
+            if sender_name:
+                data["userName"] = sender_name
+
+            headers = {
+                'Authorization': f'Bearer {self.token_info.token}',
+                'Content-Type': 'application/json'
+            }
+
+            logger.info(f"调用智能记账API: {description[:50]}...")
+            logger.debug(f"请求URL: {url}")
+            logger.debug(f"请求数据: {data}")
+
+            # 设置请求超时
+            timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
+            async with self.session.post(url, json=data, headers=headers, timeout=timeout) as response:
                     logger.debug(f"记账响应状态码: {response.status}")
                     
                     if response.status == 401:
@@ -352,17 +405,17 @@ class AsyncAccountingManager:
                         logger.error(error_msg)
                         self.stats['failed_requests'] += 1
                         return False, error_msg
-                        
-            except aiohttp.ClientError as e:
-                error_msg = f"网络请求失败: {str(e)}"
-                logger.error(error_msg)
-                self.stats['failed_requests'] += 1
-                return False, error_msg
-            except Exception as e:
-                error_msg = f"智能记账异常: {str(e)}"
-                logger.error(error_msg)
-                self.stats['failed_requests'] += 1
-                return False, error_msg
+
+        except aiohttp.ClientError as e:
+            error_msg = f"网络请求失败: {str(e)}"
+            logger.error(error_msg)
+            self.stats['failed_requests'] += 1
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"智能记账异常: {str(e)}"
+            logger.error(error_msg)
+            self.stats['failed_requests'] += 1
+            return False, error_msg
 
     async def get_account_books(self) -> Tuple[bool, str, List[Dict[str, Any]]]:
         """

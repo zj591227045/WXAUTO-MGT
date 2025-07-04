@@ -169,7 +169,7 @@ class MessageDeliveryService:
         """启动完全独立的轮询循环"""
         logger.info("🚀 启动独立的消息投递轮询循环")
 
-        # 创建独立的轮询任务
+        # 创建独立的轮询任务（保留这个，因为它是长期运行的后台任务）
         poll_task = asyncio.create_task(self._independent_poll_loop())
         self._tasks.add(poll_task)
 
@@ -260,10 +260,13 @@ class MessageDeliveryService:
 
                 logger.info(f"🚀 独立处理消息: {message_id}")
 
-                # 创建独立的处理任务
-                task = asyncio.create_task(self.process_message(message_dict))
-                self._tasks.add(task)
-                task.add_done_callback(self._tasks.discard)
+                # 直接处理消息，避免异步任务冲突
+                try:
+                    await self.process_message(message_dict)
+                except Exception as e:
+                    logger.error(f"❌ 处理消息 {message_id} 时出错: {e}")
+                    import traceback
+                    logger.error(f"错误堆栈: {traceback.format_exc()}")
 
         except Exception as e:
             logger.error(f"❌ 独立消息处理出错: {e}")
@@ -322,19 +325,25 @@ class MessageDeliveryService:
                         logger.info(f"合并后有 {len(merged_messages)} 条消息")
 
                         for message in merged_messages:
-                            file_logger.debug(f"创建处理任务: {message.get('message_id')}")
-                            # 创建处理任务
-                            task = asyncio.create_task(self.process_message(message))
-                            self._tasks.add(task)
-                            task.add_done_callback(self._tasks.discard)
+                            file_logger.debug(f"处理消息: {message.get('message_id')}")
+                            # 直接处理消息，避免异步任务冲突
+                            try:
+                                await self.process_message(message)
+                            except Exception as e:
+                                logger.error(f"❌ 处理合并消息 {message.get('message_id')} 时出错: {e}")
+                                import traceback
+                                logger.error(f"错误堆栈: {traceback.format_exc()}")
                     else:
                         # 逐条处理
                         for message in messages:
-                            file_logger.debug(f"创建处理任务: {message.get('message_id')}")
-                            # 创建处理任务
-                            task = asyncio.create_task(self.process_message(message))
-                            self._tasks.add(task)
-                            task.add_done_callback(self._tasks.discard)
+                            file_logger.debug(f"处理消息: {message.get('message_id')}")
+                            # 直接处理消息，避免异步任务冲突
+                            try:
+                                await self.process_message(message)
+                            except Exception as e:
+                                logger.error(f"❌ 处理消息 {message.get('message_id')} 时出错: {e}")
+                                import traceback
+                                logger.error(f"错误堆栈: {traceback.format_exc()}")
 
                 # 等待下一次轮询
                 file_logger.debug(f"等待下一次轮询，间隔: {self.poll_interval}秒")
@@ -816,7 +825,7 @@ class MessageDeliveryService:
                     logger.error(f"❌ 监控循环出错: {e}")
                     await asyncio.sleep(60)  # 出错后也等待60秒再重试
 
-        # 创建监控任务
+        # 创建监控任务（保留这个，因为它是长期运行的后台任务）
         monitor_task = asyncio.create_task(monitor_loop())
         self._tasks.add(monitor_task)
         monitor_task.add_done_callback(self._tasks.discard)

@@ -385,8 +385,8 @@ class ServicePlatformPanel(QWidget):
         # 发出信号
         self.platform_added.emit(platform_id)
 
-        # 刷新平台列表
-        self.refresh_platforms()
+        # 延迟刷新平台列表，确保数据库操作已完成
+        QTimer.singleShot(500, self.refresh_platforms)
 
         # 显示成功消息
         QMessageBox.information(self, "成功",
@@ -561,8 +561,8 @@ class ServicePlatformPanel(QWidget):
         # 发出信号
         self.platform_updated.emit(platform_id)
 
-        # 刷新平台列表
-        self.refresh_platforms()
+        # 延迟刷新平台列表，确保数据库操作已完成
+        QTimer.singleShot(500, self.refresh_platforms)
 
         # 显示成功消息
         QMessageBox.information(self, "成功",
