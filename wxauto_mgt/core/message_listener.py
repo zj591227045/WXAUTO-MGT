@@ -55,11 +55,12 @@ class MessageListener:
         初始化消息监听器
 
         Args:
-            poll_interval: 轮询间隔（秒）
+            poll_interval: 轮询间隔（秒，最小值为5秒）
             max_listeners_per_instance: 每个实例的最大监听对象数量
             timeout_minutes: 监听对象超时时间（分钟）
         """
-        self.poll_interval = poll_interval
+        # 强制执行最小5秒的轮询间隔
+        self._poll_interval = max(poll_interval, 5)
         self.max_listeners_per_instance = max_listeners_per_instance
         self.timeout_minutes = timeout_minutes
 
@@ -81,6 +82,20 @@ class MessageListener:
 
         # 配置变更监听标志
         self._config_listeners_registered = False
+
+    @property
+    def poll_interval(self) -> int:
+        """获取轮询间隔"""
+        return self._poll_interval
+
+    @poll_interval.setter
+    def poll_interval(self, value: int):
+        """设置轮询间隔，强制执行最小5秒限制"""
+        if value < 5:
+            logger.warning(f"轮询间隔 {value} 秒小于最小值5秒，已自动调整为5秒")
+            value = 5
+        self._poll_interval = value
+        logger.debug(f"轮询间隔已设置为 {value} 秒")
 
         # 连接状态监控
         self._instance_connection_states = {}  # 实例连接状态跟踪 {instance_id: {"connected": bool, "last_check": float}}

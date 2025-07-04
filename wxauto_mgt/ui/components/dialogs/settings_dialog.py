@@ -77,7 +77,7 @@ class SettingsDialog(QDialog):
 
         # 轮询间隔
         self.poll_interval_spin = QSpinBox()
-        self.poll_interval_spin.setRange(1, 60)
+        self.poll_interval_spin.setRange(5, 60)  # 强制最小5秒
         self.poll_interval_spin.setValue(5)
         self.poll_interval_spin.setSuffix(" 秒")
         message_layout.addRow("轮询间隔:", self.poll_interval_spin)

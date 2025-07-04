@@ -901,7 +901,7 @@ class MessageListenerPanel(QWidget):
         self.poll_interval_edit = QLineEdit()
         self.poll_interval_edit.setMaximumWidth(50)
         self.poll_interval_edit.setText(str(5))  # 默认值5秒
-        self.poll_interval_edit.setValidator(QIntValidator(1, 60))  # 限制输入1-60之间的整数
+        self.poll_interval_edit.setValidator(QIntValidator(5, 60))  # 限制输入5-60之间的整数，强制最小5秒
         self.poll_interval_edit.editingFinished.connect(self._update_poll_interval)
         settings_layout.addWidget(self.poll_interval_edit)
 
@@ -1090,33 +1090,22 @@ class MessageListenerPanel(QWidget):
         try:
             poll_interval = int(self.poll_interval_edit.text())
 
-            # 如果输入值小于1，重置为默认值5秒
-            if poll_interval < 1:
+            # 强制执行最小5秒限制
+            if poll_interval < 5:
+                QMessageBox.warning(
+                    self,
+                    "轮询间隔限制",
+                    f"轮询间隔不得低于5秒钟。\n\n"
+                    f"您输入的 {poll_interval} 秒已被自动调整为 5 秒。\n\n"
+                    f"这是为了避免过度频繁的API调用，确保系统稳定性。",
+                    QMessageBox.StandardButton.Ok
+                )
                 poll_interval = 5
                 self.poll_interval_edit.setText(str(poll_interval))
-                return
 
             # 如果当前轮询间隔已经是输入值，不需要更新
             if hasattr(self, 'poll_interval') and self.poll_interval == poll_interval:
                 return
-
-            # 如果设置的间隔小于5秒，需要确认
-            if poll_interval < 5:
-                reply = QMessageBox.question(
-                    self,
-                    "确认修改轮询间隔",
-                    f"您正在将轮询间隔设置为 {poll_interval} 秒，这可能会增加系统负载和API调用频率。\n\n"
-                    f"建议使用默认值 5 秒以获得最佳性能。\n\n"
-                    f"是否确认修改为 {poll_interval} 秒？",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
-                )
-
-                if reply == QMessageBox.No:
-                    # 用户取消，恢复为之前的值或默认值5秒
-                    previous_interval = getattr(self, 'poll_interval', 5)
-                    self.poll_interval_edit.setText(str(previous_interval))
-                    return
 
             # 更新轮询间隔
             self.poll_interval = poll_interval
@@ -1146,6 +1135,17 @@ class MessageListenerPanel(QWidget):
             self.countdown_timer.setInterval(poll_interval * 1000)
 
             logger.debug(f"轮询间隔已更新为 {poll_interval} 秒")
+        except ValueError:
+            # 处理非数字输入
+            QMessageBox.warning(
+                self,
+                "输入错误",
+                "请输入有效的数字（最小值为5秒）。",
+                QMessageBox.StandardButton.Ok
+            )
+            # 恢复为之前的值或默认值5秒
+            previous_interval = getattr(self, 'poll_interval', 5)
+            self.poll_interval_edit.setText(str(previous_interval))
         except Exception as e:
             logger.error(f"更新轮询间隔时出错: {e}")
 
