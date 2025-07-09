@@ -587,6 +587,13 @@ class MainWindow(QMainWindow):
             # 更新暂停/继续按钮的可见性
             self._update_pause_resume_buttons_visibility(is_running)
 
+            # 如果监听服务正在运行，同步暂停/继续按钮的状态
+            if is_running:
+                # 检查监听服务是否暂停
+                is_paused = getattr(message_listener, '_paused', False)
+                self._is_listening_paused = is_paused
+                self._update_pause_resume_button(is_paused)
+
         except Exception as e:
             logger.error(f"更新消息监听状态失败: {e}")
             # 如果出错，默认显示为未运行状态
@@ -653,37 +660,56 @@ class MainWindow(QMainWindow):
         try:
             from wxauto_mgt.core.message_listener import message_listener
 
+            # 记录当前状态，用于异常时恢复
+            original_running_state = message_listener.running
+
             if message_listener.running:
-                # 停止监听
+                # 停止监听 - 立即更新按钮状态为"正在停止"
+                self._update_message_listener_button_processing("正在停止...")
                 self.status_changed.emit("正在停止消息监听...", 0)
-                await message_listener.stop()
-                self.status_changed.emit("消息监听已停止", 3000)
-                logger.info("消息监听已停止")
 
-                # 更新按钮状态
-                self._update_message_listener_button(False)
+                try:
+                    await message_listener.stop()
+                    self.status_changed.emit("消息监听已停止", 3000)
+                    logger.info("消息监听已停止")
 
-                # 隐藏暂停/继续监听按钮
-                self._update_pause_resume_buttons_visibility(False)
+                    # 更新按钮状态为最终状态
+                    self._update_message_listener_button(False)
 
-                # 通知消息面板刷新监听列表
-                self._notify_message_panel_refresh()
+                    # 隐藏暂停/继续监听按钮
+                    self._update_pause_resume_buttons_visibility(False)
+
+                    # 通知消息面板刷新监听列表
+                    self._notify_message_panel_refresh()
+
+                except Exception as e:
+                    # 停止失败，恢复到原始状态
+                    self._update_message_listener_button(original_running_state)
+                    raise e
 
             else:
-                # 开始监听
+                # 开始监听 - 立即更新按钮状态为"正在启动"
+                self._update_message_listener_button_processing("正在启动...")
                 self.status_changed.emit("正在启动消息监听...", 0)
-                await message_listener.start()
-                self.status_changed.emit("消息监听已启动", 3000)
-                logger.info("消息监听已启动")
 
-                # 更新按钮状态
-                self._update_message_listener_button(True)
+                try:
+                    await message_listener.start()
+                    self.status_changed.emit("消息监听已启动", 3000)
+                    logger.info("消息监听已启动")
 
-                # 显示暂停/继续监听按钮
-                self._update_pause_resume_buttons_visibility(True)
+                    # 更新按钮状态为最终状态
+                    self._update_message_listener_button(True)
 
-                # 通知消息面板刷新监听列表
-                self._notify_message_panel_refresh()
+                    # 显示暂停/继续监听按钮
+                    self._update_pause_resume_buttons_visibility(True)
+
+                    # 通知消息面板刷新监听列表
+                    self._notify_message_panel_refresh()
+
+                except Exception as e:
+                    # 启动失败，恢复到原始状态
+                    self._update_message_listener_button(original_running_state)
+                    raise e
 
         except Exception as e:
             error_msg = f"切换消息监听状态失败: {str(e)}"
@@ -728,6 +754,7 @@ class MainWindow(QMainWindow):
                     background-color: #ff7875;
                 }
             """)
+            self.message_listener_btn.setEnabled(True)
         else:
             self.message_listener_btn.setText("开始监听")
             self.message_listener_btn.setStyleSheet("""
@@ -742,6 +769,25 @@ class MainWindow(QMainWindow):
                     background-color: #73d13d;
                 }
             """)
+            self.message_listener_btn.setEnabled(True)
+
+    def _update_message_listener_button_processing(self, text: str):
+        """更新消息监听按钮为处理中状态"""
+        self.message_listener_btn.setText(text)
+        self.message_listener_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #faad14;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #ffc53d;
+            }
+        """)
+        # 禁用按钮，防止重复点击
+        self.message_listener_btn.setEnabled(False)
 
     def _update_pause_resume_buttons_visibility(self, visible: bool):
         """更新暂停/继续监听按钮的可见性"""
@@ -751,6 +797,58 @@ class MainWindow(QMainWindow):
                 self.message_panel.pause_btn.setVisible(visible)
             if hasattr(self.message_panel, 'resume_btn'):
                 self.message_panel.resume_btn.setVisible(visible)
+
+    def _update_pause_resume_button(self, is_paused: bool):
+        """更新暂停/继续监听按钮状态"""
+        if is_paused:
+            # 暂停状态 - 显示"继续监听"
+            self.pause_resume_btn.setText("继续监听")
+            self.pause_resume_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #FF4500;
+                    color: white;
+                    border: none;
+                    padding: 6px 12px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #FF6347;
+                }
+            """)
+        else:
+            # 运行状态 - 显示"暂停监听"
+            self.pause_resume_btn.setText("暂停监听")
+            self.pause_resume_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #FFA500;
+                    color: white;
+                    border: none;
+                    padding: 6px 12px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #FFB84D;
+                }
+            """)
+        self.pause_resume_btn.setEnabled(True)
+
+    def _update_pause_resume_button_processing(self, text: str):
+        """更新暂停/继续监听按钮为处理中状态"""
+        self.pause_resume_btn.setText(text)
+        self.pause_resume_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #faad14;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #ffc53d;
+            }
+        """)
+        # 禁用按钮，防止重复点击
+        self.pause_resume_btn.setEnabled(False)
 
     def _toggle_listening_service(self):
         """暂停/继续消息监听服务"""
@@ -763,59 +861,56 @@ class MainWindow(QMainWindow):
             # 导入消息监听器
             from wxauto_mgt.core.message_listener import message_listener
 
-            if self._is_listening_paused:
-                # 如果当前是暂停状态，则恢复监听
-                await message_listener.resume_listening()
-                self._is_listening_paused = False
-                self.pause_resume_btn.setText("暂停监听")
-                self.pause_resume_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #FFA500;
-                        color: white;
-                        border: none;
-                        padding: 6px 12px;
-                        border-radius: 4px;
-                    }
-                    QPushButton:hover {
-                        background-color: #FFB84D;
-                    }
-                """)
-                logger.info("已恢复消息监听服务")
-                self.status_changed.emit("已恢复消息监听服务", 3000)
+            # 记录当前状态，用于异常时恢复
+            original_paused_state = self._is_listening_paused
 
-                # 同步消息面板的状态
-                if hasattr(self, 'message_panel'):
-                    self.message_panel._is_listening_paused = False
-                    if hasattr(self.message_panel, 'pause_resume_btn'):
-                        self.message_panel.pause_resume_btn.setText("暂停监听")
-                        self.message_panel.pause_resume_btn.setStyleSheet("QPushButton { background-color: #FFA500; }")
+            if self._is_listening_paused:
+                # 如果当前是暂停状态，则恢复监听 - 立即更新按钮状态
+                self._update_pause_resume_button_processing("正在恢复...")
+
+                try:
+                    await message_listener.resume_listening()
+                    self._is_listening_paused = False
+                    self._update_pause_resume_button(False)  # False表示未暂停状态
+                    logger.info("已恢复消息监听服务")
+                    self.status_changed.emit("已恢复消息监听服务", 3000)
+
+                    # 同步消息面板的状态
+                    if hasattr(self, 'message_panel'):
+                        self.message_panel._is_listening_paused = False
+                        if hasattr(self.message_panel, 'pause_resume_btn'):
+                            self.message_panel.pause_resume_btn.setText("暂停监听")
+                            self.message_panel.pause_resume_btn.setStyleSheet("QPushButton { background-color: #FFA500; }")
+
+                except Exception as e:
+                    # 恢复失败，恢复到原始状态
+                    self._is_listening_paused = original_paused_state
+                    self._update_pause_resume_button(original_paused_state)
+                    raise e
 
             else:
-                # 如果当前是运行状态，则暂停监听
-                await message_listener.pause_listening()
-                self._is_listening_paused = True
-                self.pause_resume_btn.setText("继续监听")
-                self.pause_resume_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #FF4500;
-                        color: white;
-                        border: none;
-                        padding: 6px 12px;
-                        border-radius: 4px;
-                    }
-                    QPushButton:hover {
-                        background-color: #FF6347;
-                    }
-                """)
-                logger.info("已暂停消息监听服务")
-                self.status_changed.emit("已暂停消息监听服务", 3000)
+                # 如果当前是运行状态，则暂停监听 - 立即更新按钮状态
+                self._update_pause_resume_button_processing("正在暂停...")
 
-                # 同步消息面板的状态
-                if hasattr(self, 'message_panel'):
-                    self.message_panel._is_listening_paused = True
-                    if hasattr(self.message_panel, 'pause_resume_btn'):
-                        self.message_panel.pause_resume_btn.setText("继续监听")
-                        self.message_panel.pause_resume_btn.setStyleSheet("QPushButton { background-color: #FF4500; }")
+                try:
+                    await message_listener.pause_listening()
+                    self._is_listening_paused = True
+                    self._update_pause_resume_button(True)  # True表示暂停状态
+                    logger.info("已暂停消息监听服务")
+                    self.status_changed.emit("已暂停消息监听服务", 3000)
+
+                    # 同步消息面板的状态
+                    if hasattr(self, 'message_panel'):
+                        self.message_panel._is_listening_paused = True
+                        if hasattr(self.message_panel, 'pause_resume_btn'):
+                            self.message_panel.pause_resume_btn.setText("继续监听")
+                            self.message_panel.pause_resume_btn.setStyleSheet("QPushButton { background-color: #FF4500; }")
+
+                except Exception as e:
+                    # 暂停失败，恢复到原始状态
+                    self._is_listening_paused = original_paused_state
+                    self._update_pause_resume_button(original_paused_state)
+                    raise e
 
         except Exception as e:
             logger.error(f"切换监听服务状态时出错: {e}")
