@@ -848,6 +848,10 @@ class MessageListenerPanel(QWidget):
         # 超时移除状态标志
         self._removing_timeout_listeners = False
 
+        # 异步操作锁，防止任务冲突
+        import asyncio
+        self._operation_lock = asyncio.Lock()
+
         # 创建定时器
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self._auto_refresh)
@@ -1498,66 +1502,68 @@ class MessageListenerPanel(QWidget):
             who: 监听对象
             show_dialog: 是否显示对话框
         """
-        try:
-            # 如果是超时移除，不需要输出详细日志，由_update_countdown统一记录
-            is_timeout_removal = not show_dialog
-            timestamp = datetime.now().strftime('%H:%M:%S')
+        # 使用异步锁防止与其他操作冲突
+        async with self._operation_lock:
+            try:
+                # 如果是超时移除，不需要输出详细日志，由_update_countdown统一记录
+                is_timeout_removal = not show_dialog
+                timestamp = datetime.now().strftime('%H:%M:%S')
 
-            # 只记录一条日志，避免重复
-            if not is_timeout_removal:
-                # 记录手动移除日志 - 日志处理器会自动处理并显示在UI中
-                logger.info(f"手动移除监听对象: 实例={instance_id}, 聊天={who}")
-                # 不再直接调用appendLogMessage，避免重复显示
-            else:
-                # 记录超时移除日志 - 日志处理器会自动处理并显示在UI中
-                logger.info(f"超时移除监听对象: 实例={instance_id}, 聊天={who}")
-                # 不再直接调用appendLogMessage，避免重复显示
-
-            # 确保message_listener已经初始化
-            from wxauto_mgt.core.message_listener import message_listener
-            logger.debug(f"开始调用message_listener.remove_listener: {instance_id}-{who}")
-
-            # 移除监听对象
-            success = await message_listener.remove_listener(instance_id, who)
-            logger.debug(f"message_listener.remove_listener返回结果: {instance_id}-{who} = {success}")
-
-            if success:
-                # 不再记录成功日志，避免重复
-                # 发送信号
-                self.listener_removed.emit(instance_id, who)
-                # 强制刷新监听对象列表
+                # 只记录一条日志，避免重复
                 if not is_timeout_removal:
-                    await self.refresh_listeners(force_reload=True)
-                if show_dialog:
-                    QMessageBox.information(self, "移除成功", f"成功移除监听对象: {who}")
-            else:
-                if not is_timeout_removal:
-                    # 记录移除失败日志
-                    logger.warning(f"移除监听对象失败: {who}")
+                    # 记录手动移除日志 - 日志处理器会自动处理并显示在UI中
+                    logger.info(f"手动移除监听对象: 实例={instance_id}, 聊天={who}")
+                    # 不再直接调用appendLogMessage，避免重复显示
+                else:
+                    # 记录超时移除日志 - 日志处理器会自动处理并显示在UI中
+                    logger.info(f"超时移除监听对象: 实例={instance_id}, 聊天={who}")
+                    # 不再直接调用appendLogMessage，避免重复显示
 
-                    # 在日志窗口中显示移除失败信息（橙黄色）
-                    formatted_msg = f"{timestamp} - WARNING - 移除监听对象失败: 实例={instance_id}, 聊天={who}"
-                    self.appendLogMessage(formatted_msg, "orange")
+                # 确保message_listener已经初始化
+                from wxauto_mgt.core.message_listener import message_listener
+                logger.debug(f"开始调用message_listener.remove_listener: {instance_id}-{who}")
 
-                # 尝试强制刷新
-                if not is_timeout_removal:
-                    await self.refresh_listeners(force_reload=True)
-                if show_dialog:
-                    QMessageBox.warning(self, "移除失败", f"无法移除监听对象: {who}")
-        except Exception as e:
-            # 只在手动移除时记录详细错误
-            if not show_dialog:
-                # 记录超时移除错误日志 - 日志处理器会自动处理并显示在UI中
-                logger.error(f"超时移除监听对象时出错: 实例={instance_id}, 聊天={who}, 错误={str(e)}")
-                # 不再直接调用appendLogMessage，避免重复显示
-            else:
-                # 记录手动移除错误日志 - 日志处理器会自动处理并显示在UI中
-                logger.error(f"手动移除监听对象时出错: 实例={instance_id}, 聊天={who}, 错误={str(e)}")
-                logger.exception(e)  # 只在手动移除时记录完整的错误堆栈
-                # 不再直接调用appendLogMessage，避免重复显示
+                # 移除监听对象
+                success = await message_listener.remove_listener(instance_id, who)
+                logger.debug(f"message_listener.remove_listener返回结果: {instance_id}-{who} = {success}")
 
-                if show_dialog:
-                    QMessageBox.critical(self, "操作失败", f"移除监听对象时出错: {str(e)}")
+                if success:
+                    # 不再记录成功日志，避免重复
+                    # 发送信号
+                    self.listener_removed.emit(instance_id, who)
+                    # 强制刷新监听对象列表
+                    if not is_timeout_removal:
+                        await self.refresh_listeners(force_reload=True)
+                    if show_dialog:
+                        QMessageBox.information(self, "移除成功", f"成功移除监听对象: {who}")
+                else:
+                    if not is_timeout_removal:
+                        # 记录移除失败日志
+                        logger.warning(f"移除监听对象失败: {who}")
+
+                        # 在日志窗口中显示移除失败信息（橙黄色）
+                        formatted_msg = f"{timestamp} - WARNING - 移除监听对象失败: 实例={instance_id}, 聊天={who}"
+                        self.appendLogMessage(formatted_msg, "orange")
+
+                    # 尝试强制刷新
+                    if not is_timeout_removal:
+                        await self.refresh_listeners(force_reload=True)
+                    if show_dialog:
+                        QMessageBox.warning(self, "移除失败", f"无法移除监听对象: {who}")
+            except Exception as e:
+                # 只在手动移除时记录详细错误
+                if not show_dialog:
+                    # 记录超时移除错误日志 - 日志处理器会自动处理并显示在UI中
+                    logger.error(f"超时移除监听对象时出错: 实例={instance_id}, 聊天={who}, 错误={str(e)}")
+                    # 不再直接调用appendLogMessage，避免重复显示
+                else:
+                    # 记录手动移除错误日志 - 日志处理器会自动处理并显示在UI中
+                    logger.error(f"手动移除监听对象时出错: 实例={instance_id}, 聊天={who}, 错误={str(e)}")
+                    logger.exception(e)  # 只在手动移除时记录完整的错误堆栈
+                    # 不再直接调用appendLogMessage，避免重复显示
+
+                    if show_dialog:
+                        QMessageBox.critical(self, "操作失败", f"移除监听对象时出错: {str(e)}")
 
     async def _view_listener_messages(self, checked=False, instance_id=None, wxid=None, silent=False):
         """

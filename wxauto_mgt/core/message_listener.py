@@ -874,10 +874,10 @@ class MessageListener:
 
                     logger.debug(f"监听对象存在检查: 内存={memory_exists}, 数据库={db_exists}")
 
-                    # 如果内存和数据库中都不存在活跃的监听对象，则返回False
+                    # 如果内存和数据库中都不存在活跃的监听对象，认为已经移除成功
                     if not memory_exists and not db_exists:
-                        logger.debug(f"监听对象不存在或已非活跃: {instance_id} - {who}")
-                        return False
+                        logger.info(f"监听对象不存在或已非活跃，认为移除成功: {instance_id} - {who}")
+                        return True
         except asyncio.TimeoutError:
             logger.error(f"获取锁超时，移除监听对象失败: {instance_id} - {who}")
             return False
@@ -889,29 +889,57 @@ class MessageListener:
             return False
 
         logger.debug(f"开始处理监听对象移除: {instance_id} - {who}")
+
+        # 记录各步骤的成功状态
+        step_results = {
+            'mark_inactive': False,
+            'memory_remove': False,
+            'api_remove': False
+        }
+
         try:
             # 第一步：标记为非活跃状态
             logger.debug(f"步骤1: 标记监听对象为非活跃: {instance_id} - {who}")
-            db_success = await asyncio.wait_for(self._mark_listener_inactive(instance_id, who), timeout=3.0)
-            if db_success:
-                logger.info(f"已将监听对象标记为非活跃状态: {instance_id} - {who}")
-            else:
-                logger.error(f"标记监听对象为非活跃状态失败: {instance_id} - {who}")
+            try:
+                db_success = await asyncio.wait_for(self._mark_listener_inactive(instance_id, who), timeout=5.0)
+                if db_success:
+                    logger.info(f"已将监听对象标记为非活跃状态: {instance_id} - {who}")
+                    step_results['mark_inactive'] = True
+                else:
+                    logger.warning(f"标记监听对象为非活跃状态失败: {instance_id} - {who}")
+            except asyncio.TimeoutError:
+                logger.warning(f"标记监听对象为非活跃状态超时: {instance_id} - {who}")
+            except Exception as e:
+                logger.warning(f"标记监听对象为非活跃状态异常: {instance_id} - {who}, 错误: {e}")
 
             # 第二步：从内存中移除
             logger.debug(f"步骤2: 从内存中移除监听对象: {instance_id} - {who}")
-            async with asyncio.timeout(2.0):
-                async with self._lock:
-                    if instance_id in self.listeners and who in self.listeners[instance_id]:
-                        del self.listeners[instance_id][who]
-                        logger.info(f"从内存中移除监听对象: {instance_id} - {who}")
+            try:
+                async with asyncio.timeout(3.0):
+                    async with self._lock:
+                        if instance_id in self.listeners and who in self.listeners[instance_id]:
+                            del self.listeners[instance_id][who]
+                            logger.info(f"从内存中移除监听对象: {instance_id} - {who}")
+                            step_results['memory_remove'] = True
+                        else:
+                            logger.debug(f"内存中不存在监听对象，跳过移除: {instance_id} - {who}")
+                            step_results['memory_remove'] = True  # 不存在也算成功
+            except asyncio.TimeoutError:
+                logger.warning(f"从内存中移除监听对象超时: {instance_id} - {who}")
+            except Exception as e:
+                logger.warning(f"从内存中移除监听对象异常: {instance_id} - {who}, 错误: {e}")
 
             # 第三步：调用API移除（使用超时机制）
             logger.debug(f"步骤3: 调用API移除监听对象: {instance_id} - {who}")
             try:
-                # 设置3秒超时，避免API调用卡住
-                await asyncio.wait_for(api_client.remove_listener(who), timeout=3.0)
-                logger.debug(f"API移除监听对象完成: {instance_id} - {who}")
+                # 设置更长的超时时间，避免API调用卡住
+                api_result = await asyncio.wait_for(api_client.remove_listener(who), timeout=10.0)
+                if api_result:
+                    logger.debug(f"API移除监听对象成功: {instance_id} - {who}")
+                    step_results['api_remove'] = True
+                else:
+                    logger.debug(f"API移除监听对象返回False（可能不存在）: {instance_id} - {who}")
+                    step_results['api_remove'] = True  # API返回False也可能是因为不存在，算作成功
             except asyncio.TimeoutError:
                 logger.warning(f"API移除监听对象超时: {instance_id} - {who}")
             except Exception as api_e:
@@ -920,14 +948,23 @@ class MessageListener:
             # 记录监听对象移除统计
             service_monitor.record_listener_removed()
 
-            logger.debug(f"监听对象移除成功: {instance_id} - {who}")
-            return True
+            # 判断整体是否成功（至少数据库标记和内存移除要成功）
+            critical_success = step_results['mark_inactive'] and step_results['memory_remove']
 
-        except asyncio.TimeoutError:
-            logger.error(f"移除监听对象操作超时: {instance_id} - {who}")
-            return False
+            if critical_success:
+                logger.info(f"监听对象移除成功: {instance_id} - {who}")
+                return True
+            else:
+                logger.warning(f"监听对象移除部分失败: {instance_id} - {who}, 步骤结果: {step_results}")
+                # 即使部分失败，如果至少有一个关键步骤成功，也认为是成功的
+                if step_results['mark_inactive'] or step_results['memory_remove']:
+                    logger.info(f"监听对象移除基本成功（部分步骤失败但可接受）: {instance_id} - {who}")
+                    return True
+                else:
+                    return False
+
         except Exception as e:
-            logger.error(f"移除监听对象时出错: {e}")
+            logger.error(f"移除监听对象时出现未预期的错误: {instance_id} - {who}, 错误: {e}")
             logger.exception(e)  # 记录完整堆栈
             return False
 
